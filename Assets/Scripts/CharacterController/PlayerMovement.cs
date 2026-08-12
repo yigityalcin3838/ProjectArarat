@@ -19,23 +19,32 @@ public class PlayerMovement : MonoBehaviour
 
     [Header("Ground Check")]
     [SerializeField] private float groundCheckDistance = 0.15f;
+    [SerializeField] private float maxSlopeAngle = 45f;
+
+    [Header("Crouch")]
+    [SerializeField] private float crouchSpeed = 2.5f;
+    [SerializeField] private float standingHeight = 1.8f;
+    [SerializeField] private float crouchHeight = 1f;
 
     public bool IsGrounded { get; private set; }
+    public bool IsCrouching { get; private set; }
     public Vector3 Velocity => _rb.linearVelocity;
     public Vector2 MoveInput => _moveInput;
     public float WalkSpeed => walkSpeed;
     public float SprintSpeed => sprintSpeed;
-    public bool IsSprinting => _sprintAction.IsPressed();
+    public bool IsSprinting => IsGrounded && !IsCrouching && _sprintAction.IsPressed();
 
     private Rigidbody _rb;
     private CapsuleCollider _capsule;
     private InputAction _moveAction;
     private InputAction _jumpAction;
     private InputAction _sprintAction;
+    private InputAction _crouchAction;
 
     private Vector2 _moveInput;
     private bool _jumpQueued;
     private float _nextSpeedLogTime;
+    private Vector3 _groundNormal = Vector3.up;
 
     private void Awake()
     {
@@ -47,6 +56,7 @@ public class PlayerMovement : MonoBehaviour
         _moveAction = playerMap.FindAction("Move");
         _jumpAction = playerMap.FindAction("Jump");
         _sprintAction = playerMap.FindAction("Sprint");
+        _crouchAction = playerMap.FindAction("Crouch");
     }
 
     private void OnEnable()
@@ -54,6 +64,7 @@ public class PlayerMovement : MonoBehaviour
         _moveAction.Enable();
         _jumpAction.Enable();
         _sprintAction.Enable();
+        _crouchAction.Enable();
     }
 
     private void OnDisable()
@@ -61,14 +72,17 @@ public class PlayerMovement : MonoBehaviour
         _moveAction.Disable();
         _jumpAction.Disable();
         _sprintAction.Disable();
+        _crouchAction.Disable();
     }
 
     private void Update()
     {
         _moveInput = _moveAction.ReadValue<Vector2>();
 
-        if (_jumpAction.WasPerformedThisFrame() && IsGrounded)
+        if (_jumpAction.WasPerformedThisFrame() && IsGrounded && !IsCrouching)
             _jumpQueued = true;
+
+        UpdateCrouch();
 
         if (Time.time >= _nextSpeedLogTime)
         {
@@ -91,11 +105,22 @@ public class PlayerMovement : MonoBehaviour
         }
     }
 
+    private void UpdateCrouch()
+    {
+        IsCrouching = IsGrounded && _crouchAction.IsPressed();
+
+        _capsule.height = IsCrouching ? crouchHeight : standingHeight;
+        _capsule.center = new Vector3(0f, _capsule.height * 0.5f, 0f);
+    }
+
     private void CheckGrounded()
     {
         float radius = _capsule.radius * 0.9f;
         Vector3 origin = transform.position + Vector3.up * (radius + 0.05f);
-        IsGrounded = Physics.SphereCast(origin, radius, Vector3.down, out _, groundCheckDistance + 0.05f);
+
+        bool hitGround = Physics.SphereCast(origin, radius, Vector3.down, out RaycastHit hit, groundCheckDistance + 0.05f);
+        IsGrounded = hitGround && Vector3.Angle(hit.normal, Vector3.up) <= maxSlopeAngle;
+        _groundNormal = hitGround ? hit.normal : Vector3.up;
     }
 
     private void ApplyMovement()
@@ -103,14 +128,23 @@ public class PlayerMovement : MonoBehaviour
         Vector3 wishDir = transform.right * _moveInput.x + transform.forward * _moveInput.y;
         wishDir = Vector3.ClampMagnitude(wishDir, 1f);
 
-        float currentSpeed = IsSprinting ? sprintSpeed : walkSpeed;
+        float currentSpeed = IsCrouching ? crouchSpeed : (IsSprinting ? sprintSpeed : walkSpeed);
 
         float forceMultiplier = IsGrounded ? 1f : airMultiplier;
         _rb.AddForce(wishDir * currentSpeed * 10f * forceMultiplier, ForceMode.Force);
 
         _rb.linearDamping = IsGrounded ? groundDrag : 0f;
 
+        if (IsGrounded)
+            CancelSlopeSlide();
+
         ClampHorizontalSpeed(currentSpeed);
+    }
+
+    private void CancelSlopeSlide()
+    {
+        Vector3 tangentialGravity = Physics.gravity - Vector3.Project(Physics.gravity, _groundNormal);
+        _rb.AddForce(-tangentialGravity, ForceMode.Acceleration);
     }
 
     private void ClampHorizontalSpeed(float maxSpeed)
