@@ -21,6 +21,9 @@ public class PlayerLook : MonoBehaviour
     [SerializeField] private float sprintFovBoost = 10f;
     [SerializeField] private float fovSpeed = 8f;
 
+    [Header("Ladder Look")]
+    [SerializeField] private float climbLookYawLimit = 100f;
+
     public Transform CameraTransform => cameraTransform;
     public float Pitch { get; private set; }
     public float YawDelta { get; private set; }
@@ -29,6 +32,8 @@ public class PlayerLook : MonoBehaviour
     private Vector2 _lookInput;
     private float _currentTilt;
     private float _baseFov;
+    private float _climbCameraYaw;
+    private bool _wasClimbing;
 
     private void Awake()
     {
@@ -62,21 +67,38 @@ public class PlayerLook : MonoBehaviour
 
     private void ApplyLook()
     {
+        bool isClimbing = movement != null && movement.IsClimbingLadder;
+
+        if (_wasClimbing && !isClimbing)
+        {
+            transform.Rotate(Vector3.up * _climbCameraYaw);
+            _climbCameraYaw = 0f;
+        }
+        _wasClimbing = isClimbing;
+
         float yaw = _lookInput.x * mouseSensitivity;
         Pitch = Mathf.Clamp(Pitch - _lookInput.y * mouseSensitivity, -maxLookAngle, maxLookAngle);
 
-        transform.Rotate(Vector3.up * yaw);
-        YawDelta = yaw;
+        if (isClimbing)
+        {
+            _climbCameraYaw = Mathf.Clamp(_climbCameraYaw + yaw, -climbLookYawLimit, climbLookYawLimit);
+            YawDelta = 0f;
+        }
+        else
+        {
+            transform.Rotate(Vector3.up * yaw);
+            YawDelta = yaw;
+        }
 
         float targetTilt = movement != null ? -movement.MoveInput.x * tiltAmount : 0f;
         _currentTilt = Mathf.Lerp(_currentTilt, targetTilt, tiltSpeed * Time.deltaTime);
 
         if (cameraTransform != null)
-            cameraTransform.localRotation = Quaternion.Euler(Pitch, 0f, _currentTilt);
+            cameraTransform.localRotation = Quaternion.Euler(Pitch, _climbCameraYaw, _currentTilt);
 
         if (playerCamera != null)
         {
-            float targetFov = _baseFov + (movement != null && movement.IsSprinting ? sprintFovBoost : 0f);
+            float targetFov = _baseFov + (movement != null && movement.IsSprintingStable ? sprintFovBoost : 0f);
             playerCamera.fieldOfView = Mathf.Lerp(playerCamera.fieldOfView, targetFov, fovSpeed * Time.deltaTime);
         }
     }

@@ -29,7 +29,20 @@ public class PlayerMovement : MonoBehaviour
 
     [Header("Step Climb")]
     [SerializeField] private float stepHeight = 0.3f;
-    [SerializeField] private float stepClimbDuration = 0.12f;
+    [SerializeField] private float stepClimbDurationWalk = 0.12f;
+    [SerializeField] private float stepClimbDurationSprint = 0.12f;
+    [SerializeField] private float stepClimbDurationCrouch = 0.12f;
+
+    [Header("Animator Link")]
+    [SerializeField] private PlayerAnimator playerAnimator;
+
+    [Header("Ladder")]
+    [SerializeField] private string ladderTag = "Ladder";
+    [SerializeField] private float ladderInteractDistance = 1.5f;
+    [SerializeField] private float ladderClimbSpeed = 3f;
+    [SerializeField] private float ladderSnapSpeed = 10f;
+    [SerializeField] private float ladderEnterDuration = 0.4f;
+    [SerializeField] private float ladderJumpOffForce = 4f;
 
     public bool IsGrounded { get; private set; }
     public bool IsGroundedStable => IsGrounded || (Time.time - _lastGroundedTime) < airborneGraceTime;
@@ -38,7 +51,9 @@ public class PlayerMovement : MonoBehaviour
     public Vector2 MoveInput => _moveInput;
     public float WalkSpeed => walkSpeed;
     public float SprintSpeed => sprintSpeed;
-    public bool IsSprinting => IsGrounded && !IsCrouching && _sprintAction.IsPressed();
+    public bool IsSprinting => IsGrounded && !IsCrouching && _sprintAction.IsPressed() && _moveInput.sqrMagnitude > 0.01f;
+    public bool IsSprintingStable => IsGroundedStable && !IsCrouching && _sprintAction.IsPressed() && _moveInput.sqrMagnitude > 0.01f;
+    public bool IsClimbingLadder { get; private set; }
 
     private Rigidbody _rb;
     private CapsuleCollider _capsule;
@@ -46,16 +61,26 @@ public class PlayerMovement : MonoBehaviour
     private InputAction _jumpAction;
     private InputAction _sprintAction;
     private InputAction _crouchAction;
+    private InputAction _interactAction;
+
+    private Ladder _activeLadder;
+    private bool _isEnteringLadder;
+    private bool _isEnteringFromTop;
+    private Vector3 _ladderEnterStart;
+    private Quaternion _ladderEnterStartRotation;
+    private float _ladderEnterT;
+    private bool _isPlayingLadderTransition;
+    private bool _ladderTransitionReversed;
 
     private Vector2 _moveInput;
     private bool _jumpQueued;
-    private float _nextSpeedLogTime;
     private float _lastGroundedTime;
     private Vector3 _groundNormal = Vector3.up;
     private bool _isClimbingStep;
     private Vector3 _stepClimbStart;
     private Vector3 _stepClimbTarget;
     private float _stepClimbT;
+    private float _stepClimbDurationActual;
 
     private void Awake()
     {
@@ -68,6 +93,7 @@ public class PlayerMovement : MonoBehaviour
         _jumpAction = playerMap.FindAction("Jump");
         _sprintAction = playerMap.FindAction("Sprint");
         _crouchAction = playerMap.FindAction("Crouch");
+        _interactAction = playerMap.FindAction("Interact");
     }
 
     private void OnEnable()
@@ -76,6 +102,7 @@ public class PlayerMovement : MonoBehaviour
         _jumpAction.Enable();
         _sprintAction.Enable();
         _crouchAction.Enable();
+        _interactAction.Enable();
     }
 
     private void OnDisable()
@@ -84,28 +111,46 @@ public class PlayerMovement : MonoBehaviour
         _jumpAction.Disable();
         _sprintAction.Disable();
         _crouchAction.Disable();
+        _interactAction.Disable();
     }
 
     private void Update()
     {
         _moveInput = _moveAction.ReadValue<Vector2>();
 
-        if (_jumpAction.WasPerformedThisFrame() && IsGrounded && !IsCrouching)
-            _jumpQueued = true;
+        if (_jumpAction.WasPerformedThisFrame())
+        {
+            if (IsClimbingLadder && !_isEnteringLadder && !_isPlayingLadderTransition)
+                LetGoOfLadder();
+            else if (IsGrounded && !IsCrouching && !IsClimbingLadder)
+                _jumpQueued = true;
+        }
+
+        if (_interactAction.WasPerformedThisFrame())
+        {
+            if (IsClimbingLadder)
+                LetGoOfLadder();
+            else if (TryFindLadder(out Ladder ladder))
+            {
+                if (transform.position.y >= ladder.TipPoint.y)
+                    EnterLadderFromTop(ladder);
+                else
+                    EnterLadder(ladder);
+            }
+        }
 
         UpdateCrouch();
-
-        if (Time.time >= _nextSpeedLogTime)
-        {
-            Vector3 horizontalVelocity = new Vector3(Velocity.x, 0f, Velocity.z);
-            Debug.Log($"Speed: {horizontalVelocity.magnitude:F2} m/s");
-            _nextSpeedLogTime = Time.time + 1f;
-        }
     }
 
     private void FixedUpdate()
     {
         CheckGrounded();
+
+        if (IsClimbingLadder)
+        {
+            UpdateLadderClimb();
+            return;
+        }
 
         if (_isClimbingStep)
             UpdateStepClimb();
@@ -122,8 +167,204 @@ public class PlayerMovement : MonoBehaviour
         }
     }
 
+    private bool TryFindLadder(out Ladder ladder)
+    {
+        ladder = null;
+        Collider[] hits = Physics.OverlapSphere(transform.position, ladderInteractDistance);
+
+        foreach (Collider hit in hits)
+        {
+            if (!hit.CompareTag(ladderTag))
+                continue;
+
+            ladder = hit.GetComponentInParent<Ladder>();
+            if (ladder != null)
+                return true;
+        }
+
+        return false;
+    }
+
+    private void EnterLadder(Ladder ladder)
+    {
+        _activeLadder = ladder;
+        IsClimbingLadder = true;
+        _isPlayingLadderTransition = false;
+        _isEnteringLadder = true;
+        _isEnteringFromTop = false;
+        _ladderEnterStart = transform.position;
+        _ladderEnterStartRotation = transform.rotation;
+        _ladderEnterT = 0f;
+        _rb.useGravity = false;
+        _rb.linearVelocity = Vector3.zero;
+        _capsule.enabled = false;
+
+        if (playerAnimator != null)
+            playerAnimator.PlayLadderEnter();
+    }
+
+    private void EnterLadderFromTop(Ladder ladder)
+    {
+        _activeLadder = ladder;
+        IsClimbingLadder = true;
+        _isPlayingLadderTransition = false;
+        _isEnteringLadder = true;
+        _isEnteringFromTop = true;
+        _ladderEnterStart = transform.position;
+        _ladderEnterStartRotation = transform.rotation;
+        _ladderEnterT = 0f;
+        _rb.useGravity = false;
+        _rb.linearVelocity = Vector3.zero;
+        _capsule.enabled = false;
+    }
+
+    private void ExitLadder()
+    {
+        IsClimbingLadder = false;
+        _isEnteringLadder = false;
+        _isEnteringFromTop = false;
+        _isPlayingLadderTransition = false;
+        _ladderTransitionReversed = false;
+        _activeLadder = null;
+        _rb.useGravity = true;
+        _capsule.enabled = true;
+    }
+
+    private void LetGoOfLadder()
+    {
+        Vector3 jumpOffDirection = -_activeLadder.Forward;
+        ExitLadder();
+        _rb.linearVelocity = jumpOffDirection * ladderJumpOffForce;
+    }
+
+    private void UpdateLadderClimb()
+    {
+        if (_activeLadder == null)
+        {
+            ExitLadder();
+            return;
+        }
+
+        if (_isEnteringLadder)
+        {
+            UpdateLadderEnter();
+            return;
+        }
+
+        if (_isPlayingLadderTransition)
+        {
+            UpdateLadderTransition();
+            return;
+        }
+
+        if (_moveInput.y > 0.1f && transform.position.y >= _activeLadder.TipPoint.y)
+        {
+            StartLadderFinish();
+            return;
+        }
+
+        if (_moveInput.y < -0.1f && transform.position.y <= _activeLadder.BotStart.y)
+        {
+            ExitLadder();
+            return;
+        }
+
+        Vector3 horizontalOffset = _activeLadder.BotStart - transform.position;
+        horizontalOffset.y = 0f;
+
+        Vector3 verticalVelocity = Vector3.up * (_moveInput.y * ladderClimbSpeed);
+        _rb.linearVelocity = verticalVelocity + horizontalOffset * ladderSnapSpeed;
+    }
+
+    private void UpdateLadderEnter()
+    {
+        _ladderEnterT += Time.fixedDeltaTime / ladderEnterDuration;
+
+        Vector3 targetPosition;
+        if (_isEnteringFromTop)
+        {
+            targetPosition = _activeLadder.TopStart;
+        }
+        else
+        {
+            float grabHeight = Mathf.Clamp(_ladderEnterStart.y, _activeLadder.BotStart.y, _activeLadder.TipPoint.y);
+            targetPosition = new Vector3(_activeLadder.BotStart.x, grabHeight, _activeLadder.BotStart.z);
+        }
+
+        Quaternion targetRotation = Quaternion.LookRotation(_activeLadder.Forward, Vector3.up);
+
+        if (_ladderEnterT >= 1f)
+        {
+            _rb.MovePosition(targetPosition);
+            transform.rotation = targetRotation;
+            _isEnteringLadder = false;
+
+            if (_isEnteringFromTop)
+            {
+                _isEnteringFromTop = false;
+                StartLadderReverseEnter();
+            }
+
+            return;
+        }
+
+        _rb.MovePosition(Vector3.Lerp(_ladderEnterStart, targetPosition, _ladderEnterT));
+        transform.rotation = Quaternion.Slerp(_ladderEnterStartRotation, targetRotation, _ladderEnterT);
+    }
+
+    private void StartLadderFinish()
+    {
+        _isPlayingLadderTransition = true;
+        _ladderTransitionReversed = false;
+        _rb.linearVelocity = Vector3.zero;
+
+        if (playerAnimator != null)
+            playerAnimator.PlayLadderFinish();
+    }
+
+    private void StartLadderReverseEnter()
+    {
+        _isPlayingLadderTransition = true;
+        _ladderTransitionReversed = true;
+        _rb.linearVelocity = Vector3.zero;
+
+        if (playerAnimator != null)
+            playerAnimator.PlayLadderEnterFromTop();
+    }
+
+    private void UpdateLadderTransition()
+    {
+        float t = playerAnimator != null ? playerAnimator.LadderTransitionProgress : (_ladderTransitionReversed ? 0f : 1f);
+        bool complete = _ladderTransitionReversed ? t <= 0f : t >= 1f;
+
+        if (!complete)
+            return;
+
+        if (_ladderTransitionReversed)
+        {
+            _isPlayingLadderTransition = false;
+            _ladderTransitionReversed = false;
+
+            if (playerAnimator != null)
+                playerAnimator.PlayLadderEnterFromTopComplete();
+        }
+        else
+        {
+            ExitLadder();
+        }
+    }
+
+    public void ApplyLadderFinishMotion(Vector3 deltaPosition)
+    {
+        if (_isPlayingLadderTransition)
+            _rb.MovePosition(transform.position + deltaPosition);
+    }
+
     private void UpdateCrouch()
     {
+        if (IsClimbingLadder)
+            return;
+
         bool wantsCrouch = _crouchAction.IsPressed();
         bool blockedFromStanding = IsCrouching && !wantsCrouch && !HasHeadroomToStand();
 
@@ -191,11 +432,18 @@ public class PlayerMovement : MonoBehaviour
         _stepClimbStart = transform.position;
         _stepClimbTarget = new Vector3(probeOrigin.x, topHit.point.y + 0.02f, probeOrigin.z);
         _stepClimbT = 0f;
+        _stepClimbDurationActual = IsCrouching ? stepClimbDurationCrouch : (IsSprinting ? stepClimbDurationSprint : stepClimbDurationWalk);
     }
 
     private void UpdateStepClimb()
     {
-        _stepClimbT += Time.fixedDeltaTime / stepClimbDuration;
+        if (_moveInput.sqrMagnitude < 0.01f)
+        {
+            _isClimbingStep = false;
+            return;
+        }
+
+        _stepClimbT += Time.fixedDeltaTime / _stepClimbDurationActual;
 
         if (_stepClimbT >= 1f)
         {

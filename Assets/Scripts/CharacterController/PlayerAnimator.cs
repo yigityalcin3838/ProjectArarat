@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.Animations.Rigging;
 
 [RequireComponent(typeof(Animator))]
 public class PlayerAnimator : MonoBehaviour
@@ -9,8 +10,6 @@ public class PlayerAnimator : MonoBehaviour
     [SerializeField] private float forwardAmountDampTime = 0.15f;
     [SerializeField] private float turnInPlaceToleranceAngle = 90f;
     [SerializeField] private float turnAnimResetSpeed = 400f;
-    [SerializeField] private float lookBendAmount = 0.3f;
-    [SerializeField] private float upwardBendClamp = 10f;
     [SerializeField] private LayerMask groundLayer = ~0;
     [SerializeField] private float footIKRayDistance = 0.5f;
     [SerializeField] private float footIKGroundOffset = 0.05f;
@@ -18,35 +17,60 @@ public class PlayerAnimator : MonoBehaviour
     [SerializeField] private float footIKHeightSmoothSpeed = 10f;
     [SerializeField] private float pelvisAdjustSpeed = 8f;
 
+    [Header("Ladder Aim Lock")]
+    [SerializeField] private MultiAimConstraint spineAim;
+    [SerializeField] private MultiAimConstraint chestAim;
+    [SerializeField] private MultiAimConstraint upperChestAim;
+
     private static readonly int ForwardAmountHash = Animator.StringToHash("ForwardAmount");
     private static readonly int IsCrouchingHash = Animator.StringToHash("IsCrouching");
     private static readonly int TurnLeftHash = Animator.StringToHash("TurnLeft");
     private static readonly int TurnRightHash = Animator.StringToHash("TurnRight");
     private static readonly int IsMovingHash = Animator.StringToHash("IsMoving");
+    private static readonly int IsClimbingLadderHash = Animator.StringToHash("IsClimbingLadder");
+    private static readonly int ClimbSpeedHash = Animator.StringToHash("ClimbSpeed");
+    private static readonly int LadderEnterHash = Animator.StringToHash("LadderEnter");
+    private static readonly int LadderFinishHash = Animator.StringToHash("LadderFinish");
+    private static readonly int LadderTransitionSpeedHash = Animator.StringToHash("LadderTransitionSpeed");
+    private static readonly int LadderEnterFromTopHash = Animator.StringToHash("LadderEnterFromTop");
+    private static readonly int LadderEnterFromTopCompleteHash = Animator.StringToHash("LadderEnterFromTopComplete");
 
     private Animator _animator;
-    private Transform _spine;
-    private Transform _chest;
-    private Transform _head;
     private float _facingOffset;
     private bool _isRecoveringFromTurn;
     private float _currentPelvisOffset;
     private float _leftFootHeight;
     private float _rightFootHeight;
+    private float _spineAimBaseWeight;
+    private float _chestAimBaseWeight;
+    private float _upperChestAimBaseWeight;
 
     private void Awake()
     {
         _animator = GetComponent<Animator>();
-        _spine = _animator.GetBoneTransform(HumanBodyBones.Spine);
-        _chest = _animator.GetBoneTransform(HumanBodyBones.Chest);
-        _head = _animator.GetBoneTransform(HumanBodyBones.Head);
 
         _leftFootHeight = _animator.GetBoneTransform(HumanBodyBones.LeftFoot).position.y;
         _rightFootHeight = _animator.GetBoneTransform(HumanBodyBones.RightFoot).position.y;
+
+        if (spineAim != null) _spineAimBaseWeight = spineAim.weight;
+        if (chestAim != null) _chestAimBaseWeight = chestAim.weight;
+        if (upperChestAim != null) _upperChestAimBaseWeight = upperChestAim.weight;
     }
 
     private void Update()
     {
+        _animator.SetBool(IsClimbingLadderHash, movement.IsClimbingLadder);
+        _animator.SetFloat(ClimbSpeedHash, movement.IsClimbingLadder ? movement.MoveInput.y : 0f);
+
+        UpdateLadderAimLock();
+
+        if (movement.IsClimbingLadder)
+        {
+            _facingOffset = Mathf.MoveTowardsAngle(_facingOffset, 0f, turnAnimResetSpeed * Time.deltaTime);
+            transform.localRotation = Quaternion.Euler(0f, _facingOffset, 0f);
+            return;
+        }
+
         Vector2 moveDir = movement.MoveInput;
         float speed = moveDir.magnitude;
         bool isBackward = moveDir.y < 0f;
@@ -97,25 +121,75 @@ public class PlayerAnimator : MonoBehaviour
         _animator.SetBool(IsMovingHash, speed > 0.05f);
     }
 
-    private void LateUpdate()
+    public void PlayLadderEnter() => _animator.SetTrigger(LadderEnterHash);
+
+    public void PlayLadderFinish()
     {
-        float bodyPitch = look.Pitch * lookBendAmount;
-        if (look.Pitch < 0f)
-            bodyPitch = Mathf.Max(bodyPitch, -upwardBendClamp);
+        _animator.SetFloat(LadderTransitionSpeedHash, 1f);
+        _animator.SetTrigger(LadderFinishHash);
+    }
 
-        float pitchSegment = bodyPitch / 2f;
-        float yawSegment = -_facingOffset / 3f;
-        _spine.Rotate(pitchSegment, yawSegment, 0f, Space.Self);
-        _chest.Rotate(pitchSegment, yawSegment, 0f, Space.Self);
+    public void PlayLadderEnterFromTop()
+    {
+        _animator.SetFloat(LadderTransitionSpeedHash, -1f);
+        _animator.SetTrigger(LadderEnterFromTopHash);
+    }
 
-        float headPitch = look.Pitch - bodyPitch;
-        _head.Rotate(headPitch, yawSegment, 0f, Space.Self);
+    public void PlayLadderEnterFromTopComplete() => _animator.SetTrigger(LadderEnterFromTopCompleteHash);
+
+    public float LadderTransitionProgress
+    {
+        get
+        {
+            AnimatorStateInfo info = GetLadderFinishStateInfo(out bool isInLadderFinish);
+            return isInLadderFinish ? Mathf.Clamp01(info.normalizedTime) : 0f;
+        }
+    }
+
+    private void OnAnimatorMove()
+    {
+        GetLadderFinishStateInfo(out bool isInLadderFinish);
+
+        if (isInLadderFinish && movement != null)
+            movement.ApplyLadderFinishMotion(_animator.deltaPosition);
+    }
+
+    private AnimatorStateInfo GetLadderFinishStateInfo(out bool isInLadderFinish)
+    {
+        if (_animator.IsInTransition(0))
+        {
+            AnimatorStateInfo nextInfo = _animator.GetNextAnimatorStateInfo(0);
+            isInLadderFinish = nextInfo.IsName("LadderClimbFinish");
+            return nextInfo;
+        }
+
+        AnimatorStateInfo currentInfo = _animator.GetCurrentAnimatorStateInfo(0);
+        isInLadderFinish = currentInfo.IsName("LadderClimbFinish");
+        return currentInfo;
+    }
+
+    private void UpdateLadderAimLock()
+    {
+        float multiplier = movement.IsClimbingLadder ? 0f : 1f;
+
+        if (spineAim != null) spineAim.weight = _spineAimBaseWeight * multiplier;
+        if (chestAim != null) chestAim.weight = _chestAimBaseWeight * multiplier;
+        if (upperChestAim != null) upperChestAim.weight = _upperChestAimBaseWeight * multiplier;
     }
 
     private void OnAnimatorIK(int layerIndex)
     {
         if (layerIndex != 0)
             return;
+
+        if (movement.IsClimbingLadder)
+        {
+            _animator.SetIKPositionWeight(AvatarIKGoal.LeftFoot, 0f);
+            _animator.SetIKRotationWeight(AvatarIKGoal.LeftFoot, 0f);
+            _animator.SetIKPositionWeight(AvatarIKGoal.RightFoot, 0f);
+            _animator.SetIKRotationWeight(AvatarIKGoal.RightFoot, 0f);
+            return;
+        }
 
         Transform leftFootBone = _animator.GetBoneTransform(HumanBodyBones.LeftFoot);
         Transform rightFootBone = _animator.GetBoneTransform(HumanBodyBones.RightFoot);
