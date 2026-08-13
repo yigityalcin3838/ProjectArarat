@@ -1,5 +1,4 @@
 using UnityEngine;
-using UnityEngine.InputSystem;
 
 [RequireComponent(typeof(Animator))]
 public class PlayerAnimator : MonoBehaviour
@@ -8,26 +7,30 @@ public class PlayerAnimator : MonoBehaviour
     [SerializeField] private PlayerLook look;
     [SerializeField] private float turnSpeed = 720f;
     [SerializeField] private float forwardAmountDampTime = 0.15f;
+    [SerializeField] private float turnInPlaceToleranceAngle = 90f;
+    [SerializeField] private float turnAnimResetSpeed = 400f;
     [SerializeField] private float lookBendAmount = 0.3f;
-    [SerializeField] private float weaponLookBendAmount = 0f;
-    [SerializeField] private string upperBodyLayerName = "UpperBody";
     [SerializeField] private LayerMask groundLayer = ~0;
     [SerializeField] private float footIKRayDistance = 0.5f;
     [SerializeField] private float footIKGroundOffset = 0.05f;
     [SerializeField] private float footIKMaxOffset = 0.15f;
+    [SerializeField] private float footIKHeightSmoothSpeed = 10f;
     [SerializeField] private float pelvisAdjustSpeed = 8f;
 
     private static readonly int ForwardAmountHash = Animator.StringToHash("ForwardAmount");
     private static readonly int IsCrouchingHash = Animator.StringToHash("IsCrouching");
+    private static readonly int TurnLeftHash = Animator.StringToHash("TurnLeft");
+    private static readonly int TurnRightHash = Animator.StringToHash("TurnRight");
 
     private Animator _animator;
     private Transform _spine;
     private Transform _chest;
     private Transform _head;
     private float _facingOffset;
-    private int _upperBodyLayerIndex;
-    private bool _hasWeapon;
+    private bool _isRecoveringFromTurn;
     private float _currentPelvisOffset;
+    private float _leftFootHeight;
+    private float _rightFootHeight;
 
     private void Awake()
     {
@@ -35,50 +38,66 @@ public class PlayerAnimator : MonoBehaviour
         _spine = _animator.GetBoneTransform(HumanBodyBones.Spine);
         _chest = _animator.GetBoneTransform(HumanBodyBones.Chest);
         _head = _animator.GetBoneTransform(HumanBodyBones.Head);
-        _upperBodyLayerIndex = _animator.GetLayerIndex(upperBodyLayerName);
-        _animator.SetLayerWeight(_upperBodyLayerIndex, 0f);
+
+        _leftFootHeight = _animator.GetBoneTransform(HumanBodyBones.LeftFoot).position.y;
+        _rightFootHeight = _animator.GetBoneTransform(HumanBodyBones.RightFoot).position.y;
     }
 
     private void Update()
     {
         Vector2 moveDir = movement.MoveInput;
         float speed = moveDir.magnitude;
-
-        float targetFacingOffset = 0f;
+        bool isBackward = moveDir.y < 0f;
         float forwardAmount = 0f;
 
         if (speed > 0.05f)
         {
-            bool isBackward = moveDir.y < 0f;
-            bool useRunAnimation = movement.IsSprinting || !movement.IsGrounded;
+            bool useRunAnimation = movement.IsSprinting || !movement.IsGroundedStable;
             float sprintMultiplier = useRunAnimation ? 2f : 1f;
             forwardAmount = (isBackward ? -speed : speed) * sprintMultiplier;
 
             float rawAngle = Mathf.Atan2(moveDir.x, moveDir.y) * Mathf.Rad2Deg;
             float referenceAngle = isBackward ? (rawAngle >= 0f ? 180f : -180f) : 0f;
-            targetFacingOffset = rawAngle - referenceAngle;
+            float targetFacingOffset = rawAngle - referenceAngle;
+
+            _facingOffset = Mathf.MoveTowardsAngle(_facingOffset, targetFacingOffset, turnSpeed * Time.deltaTime);
+            _isRecoveringFromTurn = false;
+        }
+        else if (_isRecoveringFromTurn)
+        {
+            _facingOffset = Mathf.MoveTowardsAngle(_facingOffset, 0f, turnAnimResetSpeed * Time.deltaTime);
+            if (Mathf.Abs(_facingOffset) < 0.5f)
+            {
+                _facingOffset = 0f;
+                _isRecoveringFromTurn = false;
+            }
+        }
+        else
+        {
+            _facingOffset -= look.YawDelta;
+
+            if (_facingOffset <= -turnInPlaceToleranceAngle)
+            {
+                _animator.SetTrigger(TurnRightHash);
+                _isRecoveringFromTurn = true;
+            }
+            else if (_facingOffset >= turnInPlaceToleranceAngle)
+            {
+                _animator.SetTrigger(TurnLeftHash);
+                _isRecoveringFromTurn = true;
+            }
         }
 
-        _facingOffset = Mathf.MoveTowardsAngle(_facingOffset, targetFacingOffset, turnSpeed * Time.deltaTime);
         transform.localRotation = Quaternion.Euler(0f, _facingOffset, 0f);
 
         _animator.SetFloat(ForwardAmountHash, forwardAmount, forwardAmountDampTime, Time.deltaTime);
         _animator.SetBool(IsCrouchingHash, movement.IsCrouching);
-
-        if (Keyboard.current != null && Keyboard.current.nKey.wasPressedThisFrame)
-        {
-            _hasWeapon = !_hasWeapon;
-            _animator.SetLayerWeight(_upperBodyLayerIndex, _hasWeapon ? 1f : 0f);
-        }
     }
 
     private void LateUpdate()
     {
-        float currentLookBendAmount = _hasWeapon ? weaponLookBendAmount : lookBendAmount;
-
+        float pitchSegment = look.Pitch * lookBendAmount / 2f;
         float yawSegment = -_facingOffset / 3f;
-        float pitchSegment = look.Pitch * currentLookBendAmount / 2f;
-
         _spine.Rotate(pitchSegment, yawSegment, 0f, Space.Self);
         _chest.Rotate(pitchSegment, yawSegment, 0f, Space.Self);
         _head.Rotate(0f, yawSegment, 0f, Space.Self);
@@ -110,11 +129,11 @@ public class PlayerAnimator : MonoBehaviour
         _currentPelvisOffset = Mathf.Lerp(_currentPelvisOffset, targetPelvisOffset, pelvisAdjustSpeed * Time.deltaTime);
         _animator.bodyPosition += Vector3.up * _currentPelvisOffset;
 
-        ApplyFootIK(AvatarIKGoal.LeftFoot, leftHitInfo, leftWeight);
-        ApplyFootIK(AvatarIKGoal.RightFoot, rightHitInfo, rightWeight);
+        ApplyFootIK(AvatarIKGoal.LeftFoot, leftHitInfo, leftWeight, ref _leftFootHeight);
+        ApplyFootIK(AvatarIKGoal.RightFoot, rightHitInfo, rightWeight, ref _rightFootHeight);
     }
 
-    private void ApplyFootIK(AvatarIKGoal goal, RaycastHit hitInfo, float weight)
+    private void ApplyFootIK(AvatarIKGoal goal, RaycastHit hitInfo, float weight, ref float smoothedHeight)
     {
         _animator.SetIKPositionWeight(goal, weight);
         _animator.SetIKRotationWeight(goal, weight);
@@ -122,7 +141,10 @@ public class PlayerAnimator : MonoBehaviour
         if (weight <= 0f)
             return;
 
-        _animator.SetIKPosition(goal, hitInfo.point + Vector3.up * footIKGroundOffset);
+        float targetHeight = hitInfo.point.y + footIKGroundOffset;
+        smoothedHeight = Mathf.Lerp(smoothedHeight, targetHeight, footIKHeightSmoothSpeed * Time.deltaTime);
+
+        _animator.SetIKPosition(goal, new Vector3(hitInfo.point.x, smoothedHeight, hitInfo.point.z));
 
         Quaternion targetRotation = Quaternion.FromToRotation(Vector3.up, hitInfo.normal) * _animator.GetIKRotation(goal);
         _animator.SetIKRotation(goal, targetRotation);
