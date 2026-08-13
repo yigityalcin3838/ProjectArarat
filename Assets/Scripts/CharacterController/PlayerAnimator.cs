@@ -10,6 +10,7 @@ public class PlayerAnimator : MonoBehaviour
     [SerializeField] private float turnInPlaceToleranceAngle = 90f;
     [SerializeField] private float turnAnimResetSpeed = 400f;
     [SerializeField] private float lookBendAmount = 0.3f;
+    [SerializeField] private float upwardBendClamp = 10f;
     [SerializeField] private LayerMask groundLayer = ~0;
     [SerializeField] private float footIKRayDistance = 0.5f;
     [SerializeField] private float footIKGroundOffset = 0.05f;
@@ -21,6 +22,7 @@ public class PlayerAnimator : MonoBehaviour
     private static readonly int IsCrouchingHash = Animator.StringToHash("IsCrouching");
     private static readonly int TurnLeftHash = Animator.StringToHash("TurnLeft");
     private static readonly int TurnRightHash = Animator.StringToHash("TurnRight");
+    private static readonly int IsMovingHash = Animator.StringToHash("IsMoving");
 
     private Animator _animator;
     private Transform _spine;
@@ -92,15 +94,22 @@ public class PlayerAnimator : MonoBehaviour
 
         _animator.SetFloat(ForwardAmountHash, forwardAmount, forwardAmountDampTime, Time.deltaTime);
         _animator.SetBool(IsCrouchingHash, movement.IsCrouching);
+        _animator.SetBool(IsMovingHash, speed > 0.05f);
     }
 
     private void LateUpdate()
     {
-        float pitchSegment = look.Pitch * lookBendAmount / 2f;
+        float bodyPitch = look.Pitch * lookBendAmount;
+        if (look.Pitch < 0f)
+            bodyPitch = Mathf.Max(bodyPitch, -upwardBendClamp);
+
+        float pitchSegment = bodyPitch / 2f;
         float yawSegment = -_facingOffset / 3f;
         _spine.Rotate(pitchSegment, yawSegment, 0f, Space.Self);
         _chest.Rotate(pitchSegment, yawSegment, 0f, Space.Self);
-        _head.Rotate(0f, yawSegment, 0f, Space.Self);
+
+        float headPitch = look.Pitch - bodyPitch;
+        _head.Rotate(headPitch, yawSegment, 0f, Space.Self);
     }
 
     private void OnAnimatorIK(int layerIndex)
