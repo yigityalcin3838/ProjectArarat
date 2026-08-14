@@ -1,20 +1,22 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-[RequireComponent(typeof(Rigidbody))]
-[RequireComponent(typeof(CapsuleCollider))]
+[RequireComponent(typeof(CharacterController))]
 public class PlayerMovement : MonoBehaviour
 {
     [Header("Input")]
     [SerializeField] private InputActionAsset inputActions;
+
+    [Header("Debug")]
+    [SerializeField] private float slowMoTimeScale = 0.2f;
 
     [Header("Movement")]
     [SerializeField] private float walkSpeed = 5f;
     [SerializeField] private float sprintSpeed = 8f;
     [SerializeField] private float jumpForce = 6f;
 
-    [Header("Drag & Air Control")]
-    [SerializeField] private float groundDrag = 6f;
+    [Header("Movement Feel")]
+    [SerializeField] private float acceleration = 40f;
     [SerializeField] private float airMultiplier = 0.4f;
 
     [Header("Ground Check")]
@@ -26,12 +28,6 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] private float crouchSpeed = 2.5f;
     [SerializeField] private float standingHeight = 1.8f;
     [SerializeField] private float crouchHeight = 1f;
-
-    [Header("Step Climb")]
-    [SerializeField] private float stepHeight = 0.3f;
-    [SerializeField] private float stepClimbDurationWalk = 0.12f;
-    [SerializeField] private float stepClimbDurationSprint = 0.12f;
-    [SerializeField] private float stepClimbDurationCrouch = 0.12f;
 
     [Header("Animator Link")]
     [SerializeField] private PlayerAnimator playerAnimator;
@@ -49,24 +45,31 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] private string doorTag = "Door";
     [SerializeField] private float doorInteractDistance = 2f;
 
+    [Header("Car")]
+    [SerializeField] private string carDoorTag = "CarDoorLeft";
+    [SerializeField] private float carInteractDistance = 2f;
+    [SerializeField] private float carEnterDuration = 0.4f;
+
     public float PeekAmount { get; private set; }
+    public bool IsInCar { get; private set; }
 
     public bool IsGrounded { get; private set; }
     public bool IsGroundedStable => IsGrounded || (Time.time - _lastGroundedTime) < airborneGraceTime;
     public bool IsCrouching { get; private set; }
-    public Vector3 Velocity => _rb.linearVelocity;
+    public Vector3 Velocity => _velocity;
     public Vector2 MoveInput => _moveInput;
     public float WalkSpeed => walkSpeed;
     public float SprintSpeed => sprintSpeed;
-    public bool IsSprinting => IsGrounded && !IsCrouching && _sprintAction.IsPressed() && _moveInput.sqrMagnitude > 0.01f && HasStamina;
-    public bool IsSprintingStable => IsGroundedStable && !IsCrouching && _sprintAction.IsPressed() && _moveInput.sqrMagnitude > 0.01f && HasStamina;
+    public bool IsSprinting => IsGrounded && !IsCrouching && !IsInCar && _sprintAction.IsPressed() && _moveInput.sqrMagnitude > 0.01f && HasStamina;
+    public bool IsSprintingStable => IsGroundedStable && !IsCrouching && !IsInCar && _sprintAction.IsPressed() && _moveInput.sqrMagnitude > 0.01f && HasStamina;
     public bool IsClimbingLadder { get; private set; }
+    public bool IsMovementLocked => _isEnteringLadder || _isPlayingLadderTransition || IsInCar;
 
     private bool HasStamina => stamina == null || stamina.CurrentStamina > 0f;
     private bool CanJump => stamina == null || stamina.HasEnoughForJump;
 
-    private Rigidbody _rb;
-    private CapsuleCollider _capsule;
+    private CharacterController _characterController;
+    private Vector3 _velocity;
     private InputAction _moveAction;
     private InputAction _jumpAction;
     private InputAction _sprintAction;
@@ -83,21 +86,23 @@ public class PlayerMovement : MonoBehaviour
     private bool _isPlayingLadderTransition;
     private bool _ladderTransitionReversed;
 
+    private Car _activeCar;
+    private bool _isEnteringCar;
+    private Vector3 _carEnterStart;
+    private Quaternion _carEnterStartRotation;
+    private float _carEnterT;
+    private bool _isPlayingCarTransition;
+    private bool _carTransitionReversed;
+
     private Vector2 _moveInput;
     private bool _jumpQueued;
     private float _lastGroundedTime;
     private Vector3 _groundNormal = Vector3.up;
-    private bool _isClimbingStep;
-    private Vector3 _stepClimbStart;
-    private Vector3 _stepClimbTarget;
-    private float _stepClimbT;
-    private float _stepClimbDurationActual;
 
     private void Awake()
     {
-        _rb = GetComponent<Rigidbody>();
-        _rb.freezeRotation = true;
-        _capsule = GetComponent<CapsuleCollider>();
+        _characterController = GetComponent<CharacterController>();
+        _characterController.slopeLimit = maxSlopeAngle;
 
         var playerMap = inputActions.FindActionMap("Player", throwIfNotFound: true);
         _moveAction = playerMap.FindAction("Move");
@@ -130,6 +135,9 @@ public class PlayerMovement : MonoBehaviour
 
     private void Update()
     {
+        if (Keyboard.current != null && Keyboard.current.tKey.wasPressedThisFrame)
+            Time.timeScale = Mathf.Approximately(Time.timeScale, 1f) ? slowMoTimeScale : 1f;
+
         _moveInput = _moveAction.ReadValue<Vector2>();
 
         if (_jumpAction.WasPerformedThisFrame())
@@ -138,7 +146,7 @@ public class PlayerMovement : MonoBehaviour
             {
                 LetGoOfLadder();
             }
-            else if (IsGrounded && !IsCrouching && !IsClimbingLadder && CanJump)
+            else if (IsGrounded && !IsCrouching && !IsClimbingLadder && !IsInCar && CanJump)
             {
                 _jumpQueued = true;
 
@@ -150,7 +158,15 @@ public class PlayerMovement : MonoBehaviour
         if (_interactAction.WasPerformedThisFrame())
         {
             if (IsClimbingLadder)
-                LetGoOfLadder();
+            {
+                if (!_isEnteringLadder && !_isPlayingLadderTransition)
+                    LetGoOfLadder();
+            }
+            else if (IsInCar)
+            {
+                if (!_isEnteringCar && !_isPlayingCarTransition)
+                    ExitCar();
+            }
             else if (TryFindLadder(out Ladder ladder))
             {
                 if (transform.position.y >= ladder.TipPoint.y)
@@ -162,17 +178,39 @@ public class PlayerMovement : MonoBehaviour
             {
                 door.Toggle();
             }
+            else if (TryFindCarDoor(out Car car))
+            {
+                EnterCar(car);
+            }
         }
 
         UpdateCrouch();
         UpdatePeek();
+
+        CheckGrounded();
+
+        if (IsClimbingLadder)
+        {
+            UpdateLadderClimb();
+            return;
+        }
+
+        if (IsInCar)
+        {
+            UpdateCarState();
+            return;
+        }
+
+        ApplyMovement();
+        ApplyGravity();
+        _characterController.Move(_velocity * Time.deltaTime);
     }
 
     private void UpdatePeek()
     {
         float rawPeek = _peekAction.ReadValue<float>();
 
-        if (!IsGrounded || IsSprinting || IsClimbingLadder)
+        if (!IsGrounded || IsSprinting || IsClimbingLadder || IsInCar)
         {
             PeekAmount = 0f;
             return;
@@ -184,31 +222,6 @@ public class PlayerMovement : MonoBehaviour
             PeekAmount = isMoving ? 0f : rawPeek;
         else
             PeekAmount = isMoving ? rawPeek * 0.5f : rawPeek;
-    }
-
-    private void FixedUpdate()
-    {
-        CheckGrounded();
-
-        if (IsClimbingLadder)
-        {
-            UpdateLadderClimb();
-            return;
-        }
-
-        if (_isClimbingStep)
-            UpdateStepClimb();
-        else
-            HandleStepClimb();
-
-        ApplyMovement();
-
-        if (_jumpQueued)
-        {
-            _rb.linearVelocity = new Vector3(_rb.linearVelocity.x, 0f, _rb.linearVelocity.z);
-            _rb.AddForce(Vector3.up * jumpForce, ForceMode.VelocityChange);
-            _jumpQueued = false;
-        }
     }
 
     private bool TryFindLadder(out Ladder ladder)
@@ -232,12 +245,139 @@ public class PlayerMovement : MonoBehaviour
     private bool TryFindDoor(out Door door)
     {
         door = null;
-        Vector3 origin = transform.position + Vector3.up * (_capsule.height * 0.5f);
+        Vector3 origin = transform.position + Vector3.up * (_characterController.height * 0.5f);
 
         if (Physics.Raycast(origin, transform.forward, out RaycastHit hit, doorInteractDistance) && hit.collider.CompareTag(doorTag))
             door = hit.collider.GetComponentInParent<Door>();
 
         return door != null;
+    }
+
+    private bool TryFindCarDoor(out Car car)
+    {
+        car = null;
+        Vector3 origin = transform.position + Vector3.up * (_characterController.height * 0.5f);
+
+        if (Physics.Raycast(origin, transform.forward, out RaycastHit hit, carInteractDistance) && hit.collider.CompareTag(carDoorTag))
+            car = hit.collider.GetComponentInParent<Car>();
+
+        return car != null;
+    }
+
+    private void EnterCar(Car car)
+    {
+        _activeCar = car;
+        IsInCar = true;
+        _isEnteringCar = true;
+        _isPlayingCarTransition = false;
+        _carEnterStart = transform.position;
+        _carEnterStartRotation = transform.rotation;
+        _carEnterT = 0f;
+        _velocity = Vector3.zero;
+        _characterController.enabled = false;
+    }
+
+    private void ExitCar()
+    {
+        _isPlayingCarTransition = true;
+        _carTransitionReversed = true;
+        _velocity = Vector3.zero;
+
+        if (_activeCar != null)
+            _activeCar.IsBeingDriven = false;
+
+        if (playerAnimator != null)
+            playerAnimator.PlayCarExit();
+    }
+
+    private void ExitCarComplete()
+    {
+        IsInCar = false;
+        _isEnteringCar = false;
+        _isPlayingCarTransition = false;
+        _carTransitionReversed = false;
+        _activeCar = null;
+        _characterController.enabled = true;
+    }
+
+    private void UpdateCarState()
+    {
+        if (_activeCar == null)
+        {
+            ExitCarComplete();
+            return;
+        }
+
+        if (_isEnteringCar)
+        {
+            UpdateCarEnter();
+            return;
+        }
+
+        if (_isPlayingCarTransition)
+        {
+            UpdateCarTransition();
+            return;
+        }
+
+        transform.position = _activeCar.FrontLeft;
+        transform.rotation = Quaternion.LookRotation(_activeCar.Forward, _activeCar.Up);
+    }
+
+    private void UpdateCarEnter()
+    {
+        _carEnterT += Time.deltaTime / carEnterDuration;
+
+        Vector3 targetPosition = _activeCar.DoorLeft;
+        Quaternion targetRotation = Quaternion.LookRotation(_activeCar.Forward, Vector3.up);
+
+        if (_carEnterT >= 1f)
+        {
+            transform.position = targetPosition;
+            transform.rotation = targetRotation;
+            _isEnteringCar = false;
+            StartCarEntryAnimation();
+            return;
+        }
+
+        transform.position = Vector3.Lerp(_carEnterStart, targetPosition, _carEnterT);
+        transform.rotation = Quaternion.Slerp(_carEnterStartRotation, targetRotation, _carEnterT);
+    }
+
+    private void StartCarEntryAnimation()
+    {
+        _isPlayingCarTransition = true;
+        _carTransitionReversed = false;
+        _velocity = Vector3.zero;
+
+        if (playerAnimator != null)
+            playerAnimator.PlayCarEnter();
+    }
+
+    private void UpdateCarTransition()
+    {
+        float t = playerAnimator != null ? playerAnimator.CarTransitionProgress : (_carTransitionReversed ? 0f : 1f);
+        bool complete = _carTransitionReversed ? t <= 0f : t >= 1f;
+
+        transform.position = Vector3.Lerp(_activeCar.DoorLeft, _activeCar.FrontLeft, Mathf.Clamp01(t));
+
+        if (!complete)
+            return;
+
+        if (_carTransitionReversed)
+        {
+            ExitCarComplete();
+        }
+        else
+        {
+            _isPlayingCarTransition = false;
+
+            if (_activeCar != null)
+                _activeCar.IsBeingDriven = true;
+
+            if (playerAnimator != null)
+                playerAnimator.PlayCarEnterComplete();
+        }
     }
 
     private void EnterLadder(Ladder ladder)
@@ -250,9 +390,8 @@ public class PlayerMovement : MonoBehaviour
         _ladderEnterStart = transform.position;
         _ladderEnterStartRotation = transform.rotation;
         _ladderEnterT = 0f;
-        _rb.useGravity = false;
-        _rb.linearVelocity = Vector3.zero;
-        _capsule.enabled = false;
+        _velocity = Vector3.zero;
+        _characterController.enabled = false;
 
         if (playerAnimator != null)
             playerAnimator.PlayLadderEnter();
@@ -268,9 +407,8 @@ public class PlayerMovement : MonoBehaviour
         _ladderEnterStart = transform.position;
         _ladderEnterStartRotation = transform.rotation;
         _ladderEnterT = 0f;
-        _rb.useGravity = false;
-        _rb.linearVelocity = Vector3.zero;
-        _capsule.enabled = false;
+        _velocity = Vector3.zero;
+        _characterController.enabled = false;
     }
 
     private void ExitLadder()
@@ -281,15 +419,14 @@ public class PlayerMovement : MonoBehaviour
         _isPlayingLadderTransition = false;
         _ladderTransitionReversed = false;
         _activeLadder = null;
-        _rb.useGravity = true;
-        _capsule.enabled = true;
+        _characterController.enabled = true;
     }
 
     private void LetGoOfLadder()
     {
         Vector3 jumpOffDirection = -_activeLadder.Forward;
         ExitLadder();
-        _rb.linearVelocity = jumpOffDirection * ladderJumpOffForce;
+        _velocity = jumpOffDirection * ladderJumpOffForce;
     }
 
     private void UpdateLadderClimb()
@@ -327,13 +464,13 @@ public class PlayerMovement : MonoBehaviour
         Vector3 horizontalOffset = _activeLadder.BotStart - transform.position;
         horizontalOffset.y = 0f;
 
-        Vector3 verticalVelocity = Vector3.up * (_moveInput.y * ladderClimbSpeed);
-        _rb.linearVelocity = verticalVelocity + horizontalOffset * ladderSnapSpeed;
+        Vector3 climbVelocity = Vector3.up * (_moveInput.y * ladderClimbSpeed) + horizontalOffset * ladderSnapSpeed;
+        transform.position += climbVelocity * Time.deltaTime;
     }
 
     private void UpdateLadderEnter()
     {
-        _ladderEnterT += Time.fixedDeltaTime / ladderEnterDuration;
+        _ladderEnterT += Time.deltaTime / ladderEnterDuration;
 
         Vector3 targetPosition;
         if (_isEnteringFromTop)
@@ -350,7 +487,7 @@ public class PlayerMovement : MonoBehaviour
 
         if (_ladderEnterT >= 1f)
         {
-            _rb.MovePosition(targetPosition);
+            transform.position = targetPosition;
             transform.rotation = targetRotation;
             _isEnteringLadder = false;
 
@@ -363,7 +500,7 @@ public class PlayerMovement : MonoBehaviour
             return;
         }
 
-        _rb.MovePosition(Vector3.Lerp(_ladderEnterStart, targetPosition, _ladderEnterT));
+        transform.position = Vector3.Lerp(_ladderEnterStart, targetPosition, _ladderEnterT);
         transform.rotation = Quaternion.Slerp(_ladderEnterStartRotation, targetRotation, _ladderEnterT);
     }
 
@@ -371,7 +508,7 @@ public class PlayerMovement : MonoBehaviour
     {
         _isPlayingLadderTransition = true;
         _ladderTransitionReversed = false;
-        _rb.linearVelocity = Vector3.zero;
+        _velocity = Vector3.zero;
 
         if (playerAnimator != null)
             playerAnimator.PlayLadderFinish();
@@ -381,7 +518,7 @@ public class PlayerMovement : MonoBehaviour
     {
         _isPlayingLadderTransition = true;
         _ladderTransitionReversed = true;
-        _rb.linearVelocity = Vector3.zero;
+        _velocity = Vector3.zero;
 
         if (playerAnimator != null)
             playerAnimator.PlayLadderEnterFromTop();
@@ -409,15 +546,15 @@ public class PlayerMovement : MonoBehaviour
         }
     }
 
-    public void ApplyLadderFinishMotion(Vector3 deltaPosition)
+    public void ApplyTransitionMotion(Vector3 deltaPosition)
     {
         if (_isPlayingLadderTransition)
-            _rb.MovePosition(transform.position + deltaPosition);
+            transform.position += deltaPosition;
     }
 
     private void UpdateCrouch()
     {
-        if (IsClimbingLadder)
+        if (IsClimbingLadder || IsInCar)
             return;
 
         bool wantsCrouch = _crouchAction.IsPressed();
@@ -425,13 +562,13 @@ public class PlayerMovement : MonoBehaviour
 
         IsCrouching = IsGroundedStable && (wantsCrouch || blockedFromStanding);
 
-        _capsule.height = IsCrouching ? crouchHeight : standingHeight;
-        _capsule.center = new Vector3(0f, _capsule.height * 0.5f, 0f);
+        _characterController.height = IsCrouching ? crouchHeight : standingHeight;
+        _characterController.center = new Vector3(0f, _characterController.height * 0.5f, 0f);
     }
 
     private bool HasHeadroomToStand()
     {
-        float radius = _capsule.radius * 0.95f;
+        float radius = _characterController.radius * 0.95f;
         Vector3 origin = transform.position + Vector3.up * radius;
         float castDistance = standingHeight - radius * 2f;
 
@@ -440,7 +577,7 @@ public class PlayerMovement : MonoBehaviour
 
     private void CheckGrounded()
     {
-        float radius = _capsule.radius * 0.9f;
+        float radius = _characterController.radius * 0.9f;
         Vector3 origin = transform.position + Vector3.up * (radius + 0.05f);
 
         bool hitGround = Physics.SphereCast(origin, radius, Vector3.down, out RaycastHit hit, groundCheckDistance + 0.05f);
@@ -451,99 +588,34 @@ public class PlayerMovement : MonoBehaviour
             _lastGroundedTime = Time.time;
     }
 
-    private void HandleStepClimb()
-    {
-        if (!IsGrounded)
-            return;
-
-        Vector3 moveDir = transform.right * _moveInput.x + transform.forward * _moveInput.y;
-        if (moveDir.sqrMagnitude < 0.01f)
-            return;
-        moveDir.Normalize();
-
-        float castDistance = _capsule.radius + 0.2f;
-        Vector3 lowerOrigin = transform.position + Vector3.up * 0.05f;
-        Vector3 upperOrigin = transform.position + Vector3.up * stepHeight;
-
-        bool hitLower = Physics.Raycast(lowerOrigin, moveDir, out RaycastHit lowerHit, castDistance);
-        bool hitUpper = Physics.Raycast(upperOrigin, moveDir, castDistance);
-
-        if (!hitLower || hitUpper)
-            return;
-
-        bool isWalkableSlope = Vector3.Angle(lowerHit.normal, Vector3.up) <= maxSlopeAngle;
-        if (isWalkableSlope)
-            return;
-
-        Vector3 probeOrigin = lowerHit.point + moveDir * 0.15f + Vector3.up * (stepHeight + 0.1f);
-
-        if (!Physics.Raycast(probeOrigin, Vector3.down, out RaycastHit topHit, stepHeight + 0.2f))
-            return;
-
-        if (topHit.point.y <= transform.position.y + 0.01f)
-            return;
-
-        _isClimbingStep = true;
-        _stepClimbStart = transform.position;
-        _stepClimbTarget = new Vector3(probeOrigin.x, topHit.point.y + 0.02f, probeOrigin.z);
-        _stepClimbT = 0f;
-        _stepClimbDurationActual = IsCrouching ? stepClimbDurationCrouch : (IsSprinting ? stepClimbDurationSprint : stepClimbDurationWalk);
-    }
-
-    private void UpdateStepClimb()
-    {
-        if (_moveInput.sqrMagnitude < 0.01f)
-        {
-            _isClimbingStep = false;
-            return;
-        }
-
-        _stepClimbT += Time.fixedDeltaTime / _stepClimbDurationActual;
-
-        if (_stepClimbT >= 1f)
-        {
-            _rb.MovePosition(_stepClimbTarget);
-            _rb.linearVelocity = new Vector3(_rb.linearVelocity.x, 0f, _rb.linearVelocity.z);
-            _isClimbingStep = false;
-            return;
-        }
-
-        _rb.MovePosition(Vector3.Lerp(_stepClimbStart, _stepClimbTarget, _stepClimbT));
-    }
-
     private void ApplyMovement()
     {
         Vector3 wishDir = transform.right * _moveInput.x + transform.forward * _moveInput.y;
         wishDir = Vector3.ClampMagnitude(wishDir, 1f);
 
         float currentSpeed = IsCrouching ? crouchSpeed : (IsSprinting ? sprintSpeed : walkSpeed);
+        Vector3 targetHorizontal = wishDir * currentSpeed;
 
-        float forceMultiplier = IsGrounded ? 1f : airMultiplier;
-        _rb.AddForce(wishDir * currentSpeed * 10f * forceMultiplier, ForceMode.Force);
+        float accel = acceleration * (IsGrounded ? 1f : airMultiplier);
+        Vector3 currentHorizontal = new Vector3(_velocity.x, 0f, _velocity.z);
+        currentHorizontal = Vector3.MoveTowards(currentHorizontal, targetHorizontal, accel * Time.deltaTime);
 
-        _rb.linearDamping = IsGrounded ? groundDrag : 0f;
-
-        if (IsGrounded)
-            CancelSlopeSlide();
-
-        ClampHorizontalSpeed(currentSpeed);
+        _velocity.x = currentHorizontal.x;
+        _velocity.z = currentHorizontal.z;
     }
 
-    private void CancelSlopeSlide()
+    private void ApplyGravity()
     {
-        Vector3 tangentialGravity = Physics.gravity - Vector3.Project(Physics.gravity, _groundNormal);
-        _rb.AddForce(-tangentialGravity, ForceMode.Acceleration);
-    }
-
-    private void ClampHorizontalSpeed(float maxSpeed)
-    {
-        Vector3 velocity = _rb.linearVelocity;
-        Vector3 horizontal = new Vector3(velocity.x, 0f, velocity.z);
-
-        if (horizontal.magnitude > maxSpeed)
+        if (_jumpQueued)
         {
-            Vector3 limited = horizontal.normalized * maxSpeed;
-            _rb.linearVelocity = new Vector3(limited.x, velocity.y, limited.z);
+            _velocity.y = jumpForce;
+            _jumpQueued = false;
+            return;
         }
+
+        if (IsGrounded && _velocity.y < 0f)
+            _velocity.y = -2f;
+        else
+            _velocity.y += Physics.gravity.y * Time.deltaTime;
     }
 }

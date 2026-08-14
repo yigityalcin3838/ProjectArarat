@@ -1,3 +1,4 @@
+using Unity.Cinemachine;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -17,7 +18,7 @@ public class PlayerLook : MonoBehaviour
     [SerializeField] private float tiltSpeed = 8f;
 
     [Header("Sprint FOV")]
-    [SerializeField] private Camera playerCamera;
+    [SerializeField] private CinemachineCamera cinemachineCamera;
     [SerializeField] private float sprintFovBoost = 10f;
     [SerializeField] private float fovSpeed = 8f;
 
@@ -43,11 +44,8 @@ public class PlayerLook : MonoBehaviour
         var playerMap = inputActions.FindActionMap("Player", throwIfNotFound: true);
         _lookAction = playerMap.FindAction("Look");
 
-        if (playerCamera == null && cameraTransform != null)
-            playerCamera = cameraTransform.GetComponent<Camera>();
-
-        if (playerCamera != null)
-            _baseFov = playerCamera.fieldOfView;
+        if (cinemachineCamera != null)
+            _baseFov = cinemachineCamera.Lens.FieldOfView;
     }
 
     private void OnEnable()
@@ -70,19 +68,19 @@ public class PlayerLook : MonoBehaviour
 
     private void ApplyLook()
     {
-        bool isClimbing = movement != null && movement.IsClimbingLadder;
+        bool lockBodyYaw = movement != null && (movement.IsClimbingLadder || movement.IsInCar);
 
-        if (_wasClimbing && !isClimbing)
+        if (_wasClimbing && !lockBodyYaw)
         {
             transform.Rotate(Vector3.up * _climbCameraYaw);
             _climbCameraYaw = 0f;
         }
-        _wasClimbing = isClimbing;
+        _wasClimbing = lockBodyYaw;
 
         float yaw = _lookInput.x * mouseSensitivity;
         Pitch = Mathf.Clamp(Pitch - _lookInput.y * mouseSensitivity, -maxLookAngle, maxLookAngle);
 
-        if (isClimbing)
+        if (lockBodyYaw)
         {
             _climbCameraYaw = Mathf.Clamp(_climbCameraYaw + yaw, -climbLookYawLimit, climbLookYawLimit);
             YawDelta = 0f;
@@ -93,16 +91,20 @@ public class PlayerLook : MonoBehaviour
             YawDelta = yaw;
         }
 
-        float targetTilt = movement != null ? (-movement.MoveInput.x * tiltAmount) + (-movement.PeekAmount * peekTiltAmount) : 0f;
+        float targetTilt = movement != null && !movement.IsMovementLocked
+            ? (-movement.MoveInput.x * tiltAmount) + (-movement.PeekAmount * peekTiltAmount)
+            : 0f;
         _currentTilt = Mathf.Lerp(_currentTilt, targetTilt, tiltSpeed * Time.deltaTime);
 
         if (cameraTransform != null)
             cameraTransform.localRotation = Quaternion.Euler(Pitch, _climbCameraYaw, _currentTilt);
 
-        if (playerCamera != null)
+        if (cinemachineCamera != null)
         {
+            LensSettings lens = cinemachineCamera.Lens;
             float targetFov = _baseFov + (movement != null && movement.IsSprintingStable ? sprintFovBoost : 0f);
-            playerCamera.fieldOfView = Mathf.Lerp(playerCamera.fieldOfView, targetFov, fovSpeed * Time.deltaTime);
+            lens.FieldOfView = Mathf.Lerp(lens.FieldOfView, targetFov, fovSpeed * Time.deltaTime);
+            cinemachineCamera.Lens = lens;
         }
     }
 }

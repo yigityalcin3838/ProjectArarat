@@ -39,6 +39,11 @@ public class PlayerAnimator : MonoBehaviour
     private static readonly int LadderTransitionSpeedHash = Animator.StringToHash("LadderTransitionSpeed");
     private static readonly int LadderEnterFromTopHash = Animator.StringToHash("LadderEnterFromTop");
     private static readonly int LadderEnterFromTopCompleteHash = Animator.StringToHash("LadderEnterFromTopComplete");
+    private static readonly int IsInCarHash = Animator.StringToHash("IsInCar");
+    private static readonly int CarTransitionSpeedHash = Animator.StringToHash("CarTransitionSpeed");
+    private static readonly int CarEnterHash = Animator.StringToHash("CarEnter");
+    private static readonly int CarExitHash = Animator.StringToHash("CarExit");
+    private static readonly int CarEnterCompleteHash = Animator.StringToHash("CarEnterComplete");
 
     private Animator _animator;
     private float _facingOffset;
@@ -67,10 +72,11 @@ public class PlayerAnimator : MonoBehaviour
     {
         _animator.SetBool(IsClimbingLadderHash, movement.IsClimbingLadder);
         _animator.SetFloat(ClimbSpeedHash, movement.IsClimbingLadder ? movement.MoveInput.y : 0f);
+        _animator.SetBool(IsInCarHash, movement.IsInCar);
 
         UpdateLadderAimLock();
 
-        if (movement.IsClimbingLadder)
+        if (movement.IsClimbingLadder || movement.IsInCar)
         {
             _facingOffset = Mathf.MoveTowardsAngle(_facingOffset, 0f, turnAnimResetSpeed * Time.deltaTime);
             transform.localRotation = Quaternion.Euler(0f, _facingOffset, 0f);
@@ -152,36 +158,59 @@ public class PlayerAnimator : MonoBehaviour
     {
         get
         {
-            AnimatorStateInfo info = GetLadderFinishStateInfo(out bool isInLadderFinish);
-            return isInLadderFinish ? Mathf.Clamp01(info.normalizedTime) : 0f;
+            AnimatorStateInfo info = GetStateInfo("LadderClimbFinish", out bool isInState);
+            return isInState ? Mathf.Clamp01(info.normalizedTime) : 0f;
+        }
+    }
+
+    public void PlayCarEnter()
+    {
+        _animator.SetFloat(CarTransitionSpeedHash, 1f);
+        _animator.SetTrigger(CarEnterHash);
+    }
+
+    public void PlayCarExit()
+    {
+        _animator.SetFloat(CarTransitionSpeedHash, -1f);
+        _animator.SetTrigger(CarExitHash);
+    }
+
+    public void PlayCarEnterComplete() => _animator.SetTrigger(CarEnterCompleteHash);
+
+    public float CarTransitionProgress
+    {
+        get
+        {
+            AnimatorStateInfo info = GetStateInfo("CarEntry", out bool isInState);
+            return isInState ? Mathf.Clamp01(info.normalizedTime) : 0f;
         }
     }
 
     private void OnAnimatorMove()
     {
-        GetLadderFinishStateInfo(out bool isInLadderFinish);
+        GetStateInfo("LadderClimbFinish", out bool isInLadderFinish);
 
         if (isInLadderFinish && movement != null)
-            movement.ApplyLadderFinishMotion(_animator.deltaPosition);
+            movement.ApplyTransitionMotion(_animator.deltaPosition);
     }
 
-    private AnimatorStateInfo GetLadderFinishStateInfo(out bool isInLadderFinish)
+    private AnimatorStateInfo GetStateInfo(string stateName, out bool isInState)
     {
         if (_animator.IsInTransition(0))
         {
             AnimatorStateInfo nextInfo = _animator.GetNextAnimatorStateInfo(0);
-            isInLadderFinish = nextInfo.IsName("LadderClimbFinish");
+            isInState = nextInfo.IsName(stateName);
             return nextInfo;
         }
 
         AnimatorStateInfo currentInfo = _animator.GetCurrentAnimatorStateInfo(0);
-        isInLadderFinish = currentInfo.IsName("LadderClimbFinish");
+        isInState = currentInfo.IsName(stateName);
         return currentInfo;
     }
 
     private void UpdateLadderAimLock()
     {
-        float multiplier = movement.IsClimbingLadder ? 0f : 1f;
+        float multiplier = movement.IsClimbingLadder || movement.IsInCar ? 0f : 1f;
 
         if (spineAim != null) spineAim.weight = _spineAimBaseWeight * multiplier;
         if (chestAim != null) chestAim.weight = _chestAimBaseWeight * multiplier;
@@ -193,7 +222,7 @@ public class PlayerAnimator : MonoBehaviour
         if (layerIndex != 0)
             return;
 
-        if (movement.IsClimbingLadder)
+        if (movement.IsClimbingLadder || movement.IsInCar)
         {
             _animator.SetIKPositionWeight(AvatarIKGoal.LeftFoot, 0f);
             _animator.SetIKRotationWeight(AvatarIKGoal.LeftFoot, 0f);
