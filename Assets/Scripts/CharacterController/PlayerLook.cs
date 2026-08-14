@@ -24,6 +24,9 @@ public class PlayerLook : MonoBehaviour
     [Header("Ladder Look")]
     [SerializeField] private float climbLookYawLimit = 100f;
 
+    [Header("Peek Tilt")]
+    [SerializeField] private float peekTiltAmount = 10f;
+
     public Transform CameraTransform => cameraTransform;
     public float Pitch { get; private set; }
     public float YawDelta { get; private set; }
@@ -90,7 +93,7 @@ public class PlayerLook : MonoBehaviour
             YawDelta = yaw;
         }
 
-        float targetTilt = movement != null ? -movement.MoveInput.x * tiltAmount : 0f;
+        float targetTilt = movement != null ? (-movement.MoveInput.x * tiltAmount) + (-movement.PeekAmount * peekTiltAmount) : 0f;
         _currentTilt = Mathf.Lerp(_currentTilt, targetTilt, tiltSpeed * Time.deltaTime);
 
         if (cameraTransform != null)

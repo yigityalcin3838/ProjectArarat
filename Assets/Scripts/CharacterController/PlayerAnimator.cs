@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.Animations.Rigging;
 
 [RequireComponent(typeof(Animator))]
+[DefaultExecutionOrder(50)]
 public class PlayerAnimator : MonoBehaviour
 {
     [SerializeField] private PlayerMovement movement;
@@ -21,6 +22,10 @@ public class PlayerAnimator : MonoBehaviour
     [SerializeField] private MultiAimConstraint spineAim;
     [SerializeField] private MultiAimConstraint chestAim;
     [SerializeField] private MultiAimConstraint upperChestAim;
+
+    [Header("Peek")]
+    [SerializeField] private float peekMaxAngle = 20f;
+    [SerializeField] private float peekBendSpeed = 8f;
 
     private static readonly int ForwardAmountHash = Animator.StringToHash("ForwardAmount");
     private static readonly int IsCrouchingHash = Animator.StringToHash("IsCrouching");
@@ -44,6 +49,7 @@ public class PlayerAnimator : MonoBehaviour
     private float _spineAimBaseWeight;
     private float _chestAimBaseWeight;
     private float _upperChestAimBaseWeight;
+    private float _currentPeekAngle;
 
     private void Awake()
     {
@@ -119,6 +125,11 @@ public class PlayerAnimator : MonoBehaviour
         _animator.SetFloat(ForwardAmountHash, forwardAmount, forwardAmountDampTime, Time.deltaTime);
         _animator.SetBool(IsCrouchingHash, movement.IsCrouching);
         _animator.SetBool(IsMovingHash, speed > 0.05f);
+    }
+
+    private void LateUpdate()
+    {
+        ApplyPeek();
     }
 
     public void PlayLadderEnter() => _animator.SetTrigger(LadderEnterHash);
@@ -214,6 +225,18 @@ public class PlayerAnimator : MonoBehaviour
 
         ApplyFootIK(AvatarIKGoal.LeftFoot, leftHitInfo, leftWeight, ref _leftFootHeight);
         ApplyFootIK(AvatarIKGoal.RightFoot, rightHitInfo, rightWeight, ref _rightFootHeight);
+    }
+
+    private void ApplyPeek()
+    {
+        Transform spineBone = _animator.GetBoneTransform(HumanBodyBones.Spine);
+        if (spineBone == null)
+            return;
+
+        float targetPeekAngle = -movement.PeekAmount * peekMaxAngle;
+        _currentPeekAngle = Mathf.Lerp(_currentPeekAngle, targetPeekAngle, peekBendSpeed * Time.deltaTime);
+
+        spineBone.localRotation *= Quaternion.Euler(0f, 0f, _currentPeekAngle);
     }
 
     private void ApplyFootIK(AvatarIKGoal goal, RaycastHit hitInfo, float weight, ref float smoothedHeight)

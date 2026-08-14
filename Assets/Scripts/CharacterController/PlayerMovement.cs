@@ -35,6 +35,7 @@ public class PlayerMovement : MonoBehaviour
 
     [Header("Animator Link")]
     [SerializeField] private PlayerAnimator playerAnimator;
+    [SerializeField] private PlayerStamina stamina;
 
     [Header("Ladder")]
     [SerializeField] private string ladderTag = "Ladder";
@@ -44,6 +45,12 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] private float ladderEnterDuration = 0.4f;
     [SerializeField] private float ladderJumpOffForce = 4f;
 
+    [Header("Door")]
+    [SerializeField] private string doorTag = "Door";
+    [SerializeField] private float doorInteractDistance = 2f;
+
+    public float PeekAmount { get; private set; }
+
     public bool IsGrounded { get; private set; }
     public bool IsGroundedStable => IsGrounded || (Time.time - _lastGroundedTime) < airborneGraceTime;
     public bool IsCrouching { get; private set; }
@@ -51,9 +58,12 @@ public class PlayerMovement : MonoBehaviour
     public Vector2 MoveInput => _moveInput;
     public float WalkSpeed => walkSpeed;
     public float SprintSpeed => sprintSpeed;
-    public bool IsSprinting => IsGrounded && !IsCrouching && _sprintAction.IsPressed() && _moveInput.sqrMagnitude > 0.01f;
-    public bool IsSprintingStable => IsGroundedStable && !IsCrouching && _sprintAction.IsPressed() && _moveInput.sqrMagnitude > 0.01f;
+    public bool IsSprinting => IsGrounded && !IsCrouching && _sprintAction.IsPressed() && _moveInput.sqrMagnitude > 0.01f && HasStamina;
+    public bool IsSprintingStable => IsGroundedStable && !IsCrouching && _sprintAction.IsPressed() && _moveInput.sqrMagnitude > 0.01f && HasStamina;
     public bool IsClimbingLadder { get; private set; }
+
+    private bool HasStamina => stamina == null || stamina.CurrentStamina > 0f;
+    private bool CanJump => stamina == null || stamina.HasEnoughForJump;
 
     private Rigidbody _rb;
     private CapsuleCollider _capsule;
@@ -62,6 +72,7 @@ public class PlayerMovement : MonoBehaviour
     private InputAction _sprintAction;
     private InputAction _crouchAction;
     private InputAction _interactAction;
+    private InputAction _peekAction;
 
     private Ladder _activeLadder;
     private bool _isEnteringLadder;
@@ -94,6 +105,7 @@ public class PlayerMovement : MonoBehaviour
         _sprintAction = playerMap.FindAction("Sprint");
         _crouchAction = playerMap.FindAction("Crouch");
         _interactAction = playerMap.FindAction("Interact");
+        _peekAction = playerMap.FindAction("Peek");
     }
 
     private void OnEnable()
@@ -103,6 +115,7 @@ public class PlayerMovement : MonoBehaviour
         _sprintAction.Enable();
         _crouchAction.Enable();
         _interactAction.Enable();
+        _peekAction.Enable();
     }
 
     private void OnDisable()
@@ -112,6 +125,7 @@ public class PlayerMovement : MonoBehaviour
         _sprintAction.Disable();
         _crouchAction.Disable();
         _interactAction.Disable();
+        _peekAction.Disable();
     }
 
     private void Update()
@@ -121,9 +135,16 @@ public class PlayerMovement : MonoBehaviour
         if (_jumpAction.WasPerformedThisFrame())
         {
             if (IsClimbingLadder && !_isEnteringLadder && !_isPlayingLadderTransition)
+            {
                 LetGoOfLadder();
-            else if (IsGrounded && !IsCrouching && !IsClimbingLadder)
+            }
+            else if (IsGrounded && !IsCrouching && !IsClimbingLadder && CanJump)
+            {
                 _jumpQueued = true;
+
+                if (stamina != null)
+                    stamina.ConsumeJumpStamina();
+            }
         }
 
         if (_interactAction.WasPerformedThisFrame())
@@ -137,9 +158,32 @@ public class PlayerMovement : MonoBehaviour
                 else
                     EnterLadder(ladder);
             }
+            else if (TryFindDoor(out Door door))
+            {
+                door.Toggle();
+            }
         }
 
         UpdateCrouch();
+        UpdatePeek();
+    }
+
+    private void UpdatePeek()
+    {
+        float rawPeek = _peekAction.ReadValue<float>();
+
+        if (!IsGrounded || IsSprinting || IsClimbingLadder)
+        {
+            PeekAmount = 0f;
+            return;
+        }
+
+        bool isMoving = _moveInput.sqrMagnitude > 0.01f;
+
+        if (IsCrouching)
+            PeekAmount = isMoving ? 0f : rawPeek;
+        else
+            PeekAmount = isMoving ? rawPeek * 0.5f : rawPeek;
     }
 
     private void FixedUpdate()
@@ -183,6 +227,17 @@ public class PlayerMovement : MonoBehaviour
         }
 
         return false;
+    }
+
+    private bool TryFindDoor(out Door door)
+    {
+        door = null;
+        Vector3 origin = transform.position + Vector3.up * (_capsule.height * 0.5f);
+
+        if (Physics.Raycast(origin, transform.forward, out RaycastHit hit, doorInteractDistance) && hit.collider.CompareTag(doorTag))
+            door = hit.collider.GetComponentInParent<Door>();
+
+        return door != null;
     }
 
     private void EnterLadder(Ladder ladder)
@@ -377,10 +432,10 @@ public class PlayerMovement : MonoBehaviour
     private bool HasHeadroomToStand()
     {
         float radius = _capsule.radius * 0.95f;
-        float clearanceNeeded = standingHeight - crouchHeight;
-        Vector3 origin = transform.position + Vector3.up * (crouchHeight - radius);
+        Vector3 origin = transform.position + Vector3.up * radius;
+        float castDistance = standingHeight - radius * 2f;
 
-        return !Physics.SphereCast(origin, radius, Vector3.up, out _, clearanceNeeded + radius);
+        return !Physics.SphereCast(origin, radius, Vector3.up, out _, castDistance);
     }
 
     private void CheckGrounded()
