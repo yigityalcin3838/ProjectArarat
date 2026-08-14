@@ -358,8 +358,13 @@ public class PlayerMovement : MonoBehaviour
     {
         float t = playerAnimator != null ? playerAnimator.CarTransitionProgress : (_carTransitionReversed ? 0f : 1f);
         bool complete = _carTransitionReversed ? t <= 0f : t >= 1f;
+        float clampedT = Mathf.Clamp01(t);
 
-        transform.position = Vector3.Lerp(_activeCar.DoorLeft, _activeCar.FrontLeft, Mathf.Clamp01(t));
+        transform.position = Vector3.Lerp(_activeCar.DoorLeft, _activeCar.FrontLeft, clampedT);
+
+        Quaternion levelRotation = Quaternion.LookRotation(_activeCar.Forward, Vector3.up);
+        Quaternion tiltedRotation = Quaternion.LookRotation(_activeCar.Forward, _activeCar.Up);
+        transform.rotation = Quaternion.Slerp(levelRotation, tiltedRotation, clampedT);
 
         if (!complete)
             return;

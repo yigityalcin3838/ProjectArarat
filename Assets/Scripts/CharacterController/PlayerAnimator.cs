@@ -182,7 +182,10 @@ public class PlayerAnimator : MonoBehaviour
         get
         {
             AnimatorStateInfo info = GetStateInfo("CarEntry", out bool isInState);
-            return isInState ? Mathf.Clamp01(info.normalizedTime) : 0f;
+            if (isInState)
+                return Mathf.Clamp01(info.normalizedTime);
+
+            return _animator.GetFloat(CarTransitionSpeedHash) < 0f ? 1f : 0f;
         }
     }
 
