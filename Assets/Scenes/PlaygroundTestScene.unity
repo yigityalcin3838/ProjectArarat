@@ -8126,6 +8126,7 @@ GameObject:
   - component: {fileID: 1141664081}
   - component: {fileID: 1141664084}
   - component: {fileID: 1141664085}
+  - component: {fileID: 1141664086}
   m_Layer: 6
   m_Name: Main Camera
   m_TagString: MainCamera
@@ -8283,6 +8284,20 @@ MonoBehaviour:
       m_PostInfinity: 2
       m_RotationOrder: 4
   CustomBlends: {fileID: 0}
+--- !u!114 &1141664086
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1141664080}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 86c6556701af9e04380698b89f691b6e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: FMODUnity::FMODUnity.StudioListener
+  nonRigidbodyVelocity: 0
+  attenuationObject: {fileID: 0}
 --- !u!1 &1145575915
 GameObject:
   m_ObjectHideFlags: 0
@@ -12373,6 +12388,15 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: d6b26b5e5282bbb4b86eae3edc8d19e7, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1941994670}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: d6b26b5e5282bbb4b86eae3edc8d19e7, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1941994673}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: d6b26b5e5282bbb4b86eae3edc8d19e7, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1941994672}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: d6b26b5e5282bbb4b86eae3edc8d19e7, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1941994671}
   m_SourcePrefab: {fileID: 100100000, guid: d6b26b5e5282bbb4b86eae3edc8d19e7, type: 3}
 --- !u!1 &1627623351
 GameObject:
@@ -14929,6 +14953,9 @@ MonoBehaviour:
   antiRollStiffness: 5000
   driftSidewaysStiffness: 0.5
   speedText: {fileID: 1486308363}
+  engineStartEmitter: {fileID: 1941994673}
+  engineIdleEmitter: {fileID: 1941994672}
+  engineStopEmitter: {fileID: 1941994671}
 --- !u!65 &1941994668
 BoxCollider:
   m_ObjectHideFlags: 0
@@ -14998,6 +15025,99 @@ Rigidbody:
   m_Interpolate: 0
   m_Constraints: 0
   m_CollisionDetection: 0
+--- !u!114 &1941994671
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1941994665}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9a6610d2e704f1648819acc8d7460285, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: FMODUnity::FMODUnity.StudioEventEmitter
+  CollisionTag: 
+  EventReference:
+    Guid:
+      Data1: 1541225563
+      Data2: 1267685510
+      Data3: 1568907394
+      Data4: -1471876338
+    Path: event:/Vehicle/EngineStop
+  Event: 
+  EventPlayTrigger: 0
+  EventStopTrigger: 0
+  AllowFadeout: 1
+  TriggerOnce: 0
+  Preload: 0
+  NonRigidbodyVelocity: 0
+  Params: []
+  OverrideAttenuation: 0
+  OverrideMinDistance: 1
+  OverrideMaxDistance: 20
+--- !u!114 &1941994672
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1941994665}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9a6610d2e704f1648819acc8d7460285, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: FMODUnity::FMODUnity.StudioEventEmitter
+  CollisionTag: 
+  EventReference:
+    Guid:
+      Data1: -872316415
+      Data2: 1302555397
+      Data3: 1033407897
+      Data4: 620436827
+    Path: event:/Vehicle/EngineIdle
+  Event: 
+  EventPlayTrigger: 0
+  EventStopTrigger: 0
+  AllowFadeout: 1
+  TriggerOnce: 0
+  Preload: 0
+  NonRigidbodyVelocity: 0
+  Params: []
+  OverrideAttenuation: 0
+  OverrideMinDistance: 1
+  OverrideMaxDistance: 20
+--- !u!114 &1941994673
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1941994665}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9a6610d2e704f1648819acc8d7460285, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: FMODUnity::FMODUnity.StudioEventEmitter
+  CollisionTag: 
+  EventReference:
+    Guid:
+      Data1: 1087059433
+      Data2: 1128530162
+      Data3: -268670826
+      Data4: 1490582198
+    Path: event:/Vehicle/EngineStart
+  Event: 
+  EventPlayTrigger: 0
+  EventStopTrigger: 0
+  AllowFadeout: 1
+  TriggerOnce: 0
+  Preload: 0
+  NonRigidbodyVelocity: 0
+  Params: []
+  OverrideAttenuation: 0
+  OverrideMinDistance: 1
+  OverrideMaxDistance: 20
 --- !u!1 &1942189868
 GameObject:
   m_ObjectHideFlags: 0

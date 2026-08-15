@@ -1,3 +1,5 @@
+using FMOD.Studio;
+using FMODUnity;
 using TMPro;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -59,6 +61,11 @@ public class Car : MonoBehaviour
     [Header("UI")]
     [SerializeField] private TMP_Text speedText;
 
+    [Header("Audio")]
+    [SerializeField] private StudioEventEmitter engineStartEmitter;
+    [SerializeField] private StudioEventEmitter engineIdleEmitter;
+    [SerializeField] private StudioEventEmitter engineStopEmitter;
+
     public Vector3 DoorLeft => doorLeft.position;
     public Vector3 FrontLeft => frontLeft.position;
     public Vector3 Forward => doorLeft.forward;
@@ -67,9 +74,25 @@ public class Car : MonoBehaviour
     public Transform RightHandGrip => rightHandGrip;
     public Transform HandBrakeGrip => handBrakeGrip;
 
-    public bool IsBeingDriven { get; set; }
     public bool IsHandbrakeHeld { get; private set; }
     public float SpeedRatio => Mathf.Clamp01(_rb.linearVelocity.magnitude / (maxSpeedKmh / 3.6f));
+
+    public bool IsBeingDriven
+    {
+        get => _isBeingDriven;
+        set
+        {
+            if (_isBeingDriven == value)
+                return;
+
+            _isBeingDriven = value;
+
+            if (_isBeingDriven)
+                StartEngineAudio();
+            else
+                StopEngineAudio();
+        }
+    }
 
     private Rigidbody _rb;
     private InputAction _moveAction;
@@ -79,6 +102,8 @@ public class Car : MonoBehaviour
     private float _rearLeftNormalSidewaysStiffness;
     private float _rearRightNormalSidewaysStiffness;
     private Quaternion _steeringWheelBaseRotation;
+    private bool _isBeingDriven;
+    private bool _waitingForEngineStart;
 
     private void Awake()
     {
@@ -122,6 +147,52 @@ public class Car : MonoBehaviour
     private void Update()
     {
         UpdateSpeedText();
+        UpdateEngineAudio();
+    }
+
+    private void StartEngineAudio()
+    {
+        if (engineStartEmitter == null)
+        {
+            PlayEngineIdle();
+            return;
+        }
+
+        engineStartEmitter.Play();
+        _waitingForEngineStart = true;
+    }
+
+    private void UpdateEngineAudio()
+    {
+        if (!_waitingForEngineStart)
+            return;
+
+        engineStartEmitter.EventInstance.getPlaybackState(out PLAYBACK_STATE state);
+        if (state != PLAYBACK_STATE.STOPPED)
+            return;
+
+        _waitingForEngineStart = false;
+        PlayEngineIdle();
+    }
+
+    private void PlayEngineIdle()
+    {
+        if (engineIdleEmitter != null)
+            engineIdleEmitter.Play();
+    }
+
+    private void StopEngineAudio()
+    {
+        _waitingForEngineStart = false;
+
+        if (engineStartEmitter != null)
+            engineStartEmitter.Stop();
+
+        if (engineIdleEmitter != null)
+            engineIdleEmitter.Stop();
+
+        if (engineStopEmitter != null)
+            engineStopEmitter.Play();
     }
 
     private void FixedUpdate()
