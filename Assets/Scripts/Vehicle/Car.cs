@@ -8,6 +8,9 @@ public class Car : MonoBehaviour
     [Header("Anchor Points")]
     [SerializeField] private Transform doorLeft;
     [SerializeField] private Transform frontLeft;
+    [SerializeField] private Transform leftHandGrip;
+    [SerializeField] private Transform rightHandGrip;
+    [SerializeField] private Transform handBrakeGrip;
 
     [Header("Body")]
     [SerializeField] private Collider[] bodyColliders;
@@ -31,18 +34,27 @@ public class Car : MonoBehaviour
     [SerializeField] private float motorTorque = 1500f;
     [SerializeField] private float reverseTorqueMultiplier = 0.5f;
     [SerializeField] private float throttleSmoothSpeed = 2f;
-    [SerializeField] private float parkBrakeTorque = 3000f;
     [SerializeField] private float maxSpeedKmh = 120f;
+
+    [Header("Braking")]
+    [SerializeField] private float brakeTorque = 3000f;
+    [SerializeField] private float parkBrakeTorque = 3000f;
 
     [Header("Steering")]
     [SerializeField] private float maxSteerAngle = 30f;
     [SerializeField] private float steerSpeed = 120f;
+    [SerializeField] private Transform steeringWheel;
+    [SerializeField] private float steeringWheelRotationMultiplier = 3f;
+    [SerializeField] private Vector3 steeringWheelRotationAxis = Vector3.forward;
 
     [Header("Handbrake")]
     [SerializeField] private float handbrakeTorque = 8000f;
 
     [Header("Anti-Roll")]
     [SerializeField] private float antiRollStiffness = 5000f;
+
+    [Header("Drift")]
+    [SerializeField] private float driftSidewaysStiffness = 0.5f;
 
     [Header("UI")]
     [SerializeField] private TMP_Text speedText;
@@ -51,18 +63,33 @@ public class Car : MonoBehaviour
     public Vector3 FrontLeft => frontLeft.position;
     public Vector3 Forward => doorLeft.forward;
     public Vector3 Up => doorLeft.up;
+    public Transform LeftHandGrip => leftHandGrip;
+    public Transform RightHandGrip => rightHandGrip;
+    public Transform HandBrakeGrip => handBrakeGrip;
 
     public bool IsBeingDriven { get; set; }
+    public bool IsHandbrakeHeld { get; private set; }
+    public float SpeedRatio => Mathf.Clamp01(_rb.linearVelocity.magnitude / (maxSpeedKmh / 3.6f));
 
     private Rigidbody _rb;
     private InputAction _moveAction;
     private InputAction _handbrakeAction;
     private float _currentThrottle;
     private float _currentSteerAngle;
+    private float _rearLeftNormalSidewaysStiffness;
+    private float _rearRightNormalSidewaysStiffness;
+    private Quaternion _steeringWheelBaseRotation;
 
     private void Awake()
     {
         _rb = GetComponent<Rigidbody>();
+        _rb.interpolation = RigidbodyInterpolation.Interpolate;
+
+        _rearLeftNormalSidewaysStiffness = rearLeftWheelCollider.sidewaysFriction.stiffness;
+        _rearRightNormalSidewaysStiffness = rearRightWheelCollider.sidewaysFriction.stiffness;
+
+        if (steeringWheel != null)
+            _steeringWheelBaseRotation = steeringWheel.localRotation;
 
         var playerMap = inputActions.FindActionMap("Player", throwIfNotFound: true);
         _moveAction = playerMap.FindAction("Move");
@@ -101,9 +128,11 @@ public class Car : MonoBehaviour
     {
         Vector2 input = IsBeingDriven ? _moveAction.ReadValue<Vector2>() : Vector2.zero;
         bool handbrake = IsBeingDriven && _handbrakeAction.IsPressed();
+        IsHandbrakeHeld = handbrake;
 
         ApplySteering(input.x);
         ApplyDrive(input.y, handbrake);
+        ApplyDriftGrip(handbrake);
         ClampSpeed();
         ApplyAntiRoll(frontLeftWheelCollider, frontRightWheelCollider);
         ApplyAntiRoll(rearLeftWheelCollider, rearRightWheelCollider);
@@ -116,24 +145,47 @@ public class Car : MonoBehaviour
         _currentSteerAngle = Mathf.MoveTowards(_currentSteerAngle, targetSteerAngle, steerSpeed * Time.fixedDeltaTime);
         frontLeftWheelCollider.steerAngle = _currentSteerAngle;
         frontRightWheelCollider.steerAngle = _currentSteerAngle;
+
+        if (steeringWheel != null)
+            steeringWheel.localRotation = _steeringWheelBaseRotation * Quaternion.AngleAxis(-_currentSteerAngle * steeringWheelRotationMultiplier, steeringWheelRotationAxis);
     }
 
     private void ApplyDrive(float throttleInput, bool handbrake)
     {
+        float forwardSpeed = Vector3.Dot(_rb.linearVelocity, transform.forward);
+        bool isBraking = IsBeingDriven && ((throttleInput > 0.01f && forwardSpeed < -0.5f) || (throttleInput < -0.01f && forwardSpeed > 0.5f));
+
         _currentThrottle = Mathf.MoveTowards(_currentThrottle, throttleInput, throttleSmoothSpeed * Time.fixedDeltaTime);
 
-        float torque = _currentThrottle * motorTorque;
-        if (_currentThrottle < 0f)
-            torque *= reverseTorqueMultiplier;
+        float torque = 0f;
+        if (!isBraking)
+        {
+            torque = _currentThrottle * motorTorque;
+            if (_currentThrottle < 0f)
+                torque *= reverseTorqueMultiplier;
+        }
 
         rearLeftWheelCollider.motorTorque = torque;
         rearRightWheelCollider.motorTorque = torque;
 
-        float brake = IsBeingDriven ? 0f : parkBrakeTorque;
-        frontLeftWheelCollider.brakeTorque = brake;
-        frontRightWheelCollider.brakeTorque = brake;
-        rearLeftWheelCollider.brakeTorque = handbrake ? handbrakeTorque : brake;
-        rearRightWheelCollider.brakeTorque = handbrake ? handbrakeTorque : brake;
+        float baseBrake = !IsBeingDriven ? parkBrakeTorque : (isBraking ? brakeTorque : 0f);
+        frontLeftWheelCollider.brakeTorque = baseBrake;
+        frontRightWheelCollider.brakeTorque = baseBrake;
+        rearLeftWheelCollider.brakeTorque = handbrake ? handbrakeTorque : baseBrake;
+        rearRightWheelCollider.brakeTorque = handbrake ? handbrakeTorque : baseBrake;
+    }
+
+    private void ApplyDriftGrip(bool handbrake)
+    {
+        SetSidewaysStiffness(rearLeftWheelCollider, handbrake ? driftSidewaysStiffness : _rearLeftNormalSidewaysStiffness);
+        SetSidewaysStiffness(rearRightWheelCollider, handbrake ? driftSidewaysStiffness : _rearRightNormalSidewaysStiffness);
+    }
+
+    private static void SetSidewaysStiffness(WheelCollider wheelCollider, float stiffness)
+    {
+        WheelFrictionCurve friction = wheelCollider.sidewaysFriction;
+        friction.stiffness = stiffness;
+        wheelCollider.sidewaysFriction = friction;
     }
 
     private void ClampSpeed()

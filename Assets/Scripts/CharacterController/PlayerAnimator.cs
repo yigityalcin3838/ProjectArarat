@@ -27,6 +27,12 @@ public class PlayerAnimator : MonoBehaviour
     [SerializeField] private float peekMaxAngle = 20f;
     [SerializeField] private float peekBendSpeed = 8f;
 
+    [Header("Car Turn Lag")]
+    [SerializeField] private float carTurnLagSpeed = 6f;
+
+    [Header("Hand IK")]
+    [SerializeField] private float handIKTransitionDuration = 0.08f;
+
     private static readonly int ForwardAmountHash = Animator.StringToHash("ForwardAmount");
     private static readonly int IsCrouchingHash = Animator.StringToHash("IsCrouching");
     private static readonly int TurnLeftHash = Animator.StringToHash("TurnLeft");
@@ -55,6 +61,22 @@ public class PlayerAnimator : MonoBehaviour
     private float _chestAimBaseWeight;
     private float _upperChestAimBaseWeight;
     private float _currentPeekAngle;
+    private Quaternion _smoothedCarRotation;
+    private Transform _leftHandIKTarget;
+    private Transform _rightHandIKTarget;
+    private readonly HandIKState _leftHandIKState = new HandIKState();
+    private readonly HandIKState _rightHandIKState = new HandIKState();
+
+    private class HandIKState
+    {
+        public Transform PreviousTarget;
+        public Vector3 CurrentPosition;
+        public Quaternion CurrentRotation;
+        public Transform BlendReference;
+        public Vector3 BlendStartLocalPosition;
+        public Quaternion BlendStartLocalRotation;
+        public float BlendT = 1f;
+    }
 
     private void Awake()
     {
@@ -66,6 +88,8 @@ public class PlayerAnimator : MonoBehaviour
         if (spineAim != null) _spineAimBaseWeight = spineAim.weight;
         if (chestAim != null) _chestAimBaseWeight = chestAim.weight;
         if (upperChestAim != null) _upperChestAimBaseWeight = upperChestAim.weight;
+
+        _smoothedCarRotation = movement.transform.rotation;
     }
 
     private void Update()
@@ -136,6 +160,24 @@ public class PlayerAnimator : MonoBehaviour
     private void LateUpdate()
     {
         ApplyPeek();
+        ApplyCarTurnLag();
+    }
+
+    private void ApplyCarTurnLag()
+    {
+        if (!movement.IsInCar)
+        {
+            _smoothedCarRotation = movement.transform.rotation;
+            return;
+        }
+
+        _smoothedCarRotation = Quaternion.Slerp(_smoothedCarRotation, movement.transform.rotation, carTurnLagSpeed * Time.deltaTime);
+
+        Quaternion twistDelta = Quaternion.Inverse(movement.transform.rotation) * _smoothedCarRotation;
+
+        Transform neckBone = _animator.GetBoneTransform(HumanBodyBones.Neck);
+        if (neckBone != null)
+            neckBone.localRotation *= twistDelta;
     }
 
     public void PlayLadderEnter() => _animator.SetTrigger(LadderEnterHash);
@@ -176,6 +218,16 @@ public class PlayerAnimator : MonoBehaviour
     }
 
     public void PlayCarEnterComplete() => _animator.SetTrigger(CarEnterCompleteHash);
+
+    public void SetLeftHandIKTarget(Transform target) => _leftHandIKTarget = target;
+
+    public void SetRightHandIKTarget(Transform target) => _rightHandIKTarget = target;
+
+    public void ClearHandIKTargets()
+    {
+        _leftHandIKTarget = null;
+        _rightHandIKTarget = null;
+    }
 
     public float CarTransitionProgress
     {
@@ -225,6 +277,9 @@ public class PlayerAnimator : MonoBehaviour
         if (layerIndex != 0)
             return;
 
+        ApplyHandIK(AvatarIKGoal.LeftHand, HumanBodyBones.LeftHand, _leftHandIKTarget, _leftHandIKState);
+        ApplyHandIK(AvatarIKGoal.RightHand, HumanBodyBones.RightHand, _rightHandIKTarget, _rightHandIKState);
+
         if (movement.IsClimbingLadder || movement.IsInCar)
         {
             _animator.SetIKPositionWeight(AvatarIKGoal.LeftFoot, 0f);
@@ -269,6 +324,69 @@ public class PlayerAnimator : MonoBehaviour
         _currentPeekAngle = Mathf.Lerp(_currentPeekAngle, targetPeekAngle, peekBendSpeed * Time.deltaTime);
 
         spineBone.localRotation *= Quaternion.Euler(0f, 0f, _currentPeekAngle);
+    }
+
+    private void ApplyHandIK(AvatarIKGoal goal, HumanBodyBones handBone, Transform target, HandIKState state)
+    {
+        float weight = target != null ? 1f : 0f;
+        _animator.SetIKPositionWeight(goal, weight);
+        _animator.SetIKRotationWeight(goal, weight);
+
+        if (target == null)
+        {
+            state.PreviousTarget = null;
+            return;
+        }
+
+        if (target != state.PreviousTarget)
+        {
+            if (state.PreviousTarget == null)
+            {
+                Transform bone = _animator.GetBoneTransform(handBone);
+                state.CurrentPosition = bone.position;
+                state.CurrentRotation = bone.rotation;
+            }
+
+            state.BlendReference = target.parent;
+            if (state.BlendReference != null)
+            {
+                state.BlendStartLocalPosition = state.BlendReference.InverseTransformPoint(state.CurrentPosition);
+                state.BlendStartLocalRotation = Quaternion.Inverse(state.BlendReference.rotation) * state.CurrentRotation;
+            }
+            else
+            {
+                state.BlendStartLocalPosition = state.CurrentPosition;
+                state.BlendStartLocalRotation = state.CurrentRotation;
+            }
+
+            state.BlendT = 0f;
+            state.PreviousTarget = target;
+        }
+        else if (state.BlendT < 1f)
+        {
+            state.BlendT = Mathf.Min(1f, state.BlendT + Time.unscaledDeltaTime / handIKTransitionDuration);
+        }
+
+        if (state.BlendT >= 1f)
+        {
+            state.CurrentPosition = target.position;
+            state.CurrentRotation = target.rotation;
+        }
+        else
+        {
+            Vector3 blendStartPosition = state.BlendReference != null
+                ? state.BlendReference.TransformPoint(state.BlendStartLocalPosition)
+                : state.BlendStartLocalPosition;
+            Quaternion blendStartRotation = state.BlendReference != null
+                ? state.BlendReference.rotation * state.BlendStartLocalRotation
+                : state.BlendStartLocalRotation;
+
+            state.CurrentPosition = Vector3.Lerp(blendStartPosition, target.position, state.BlendT);
+            state.CurrentRotation = Quaternion.Slerp(blendStartRotation, target.rotation, state.BlendT);
+        }
+
+        _animator.SetIKPosition(goal, state.CurrentPosition);
+        _animator.SetIKRotation(goal, state.CurrentRotation);
     }
 
     private void ApplyFootIK(AvatarIKGoal goal, RaycastHit hitInfo, float weight, ref float smoothedHeight)

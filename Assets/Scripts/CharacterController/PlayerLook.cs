@@ -17,13 +17,20 @@ public class PlayerLook : MonoBehaviour
     [SerializeField] private float tiltAmount = 3f;
     [SerializeField] private float tiltSpeed = 8f;
 
-    [Header("Sprint FOV")]
+    [Header("Speed FOV")]
     [SerializeField] private CinemachineCamera cinemachineCamera;
-    [SerializeField] private float sprintFovBoost = 10f;
+    [SerializeField] private float maxFovBoost = 10f;
     [SerializeField] private float fovSpeed = 8f;
 
     [Header("Ladder Look")]
     [SerializeField] private float climbLookYawLimit = 100f;
+    [SerializeField] private float climbLookPitchUpLimit = 60f;
+    [SerializeField] private float climbLookPitchDownLimit = 60f;
+
+    [Header("Car Look")]
+    [SerializeField] private float carLookYawLimit = 60f;
+    [SerializeField] private float carLookPitchUpLimit = 30f;
+    [SerializeField] private float carLookPitchDownLimit = 30f;
 
     [Header("Peek Tilt")]
     [SerializeField] private float peekTiltAmount = 10f;
@@ -68,7 +75,9 @@ public class PlayerLook : MonoBehaviour
 
     private void ApplyLook()
     {
-        bool lockBodyYaw = movement != null && (movement.IsClimbingLadder || movement.IsInCar);
+        bool isClimbing = movement != null && movement.IsClimbingLadder;
+        bool isInCar = movement != null && movement.IsInCar;
+        bool lockBodyYaw = isClimbing || isInCar;
 
         if (_wasClimbing && !lockBodyYaw)
         {
@@ -78,11 +87,15 @@ public class PlayerLook : MonoBehaviour
         _wasClimbing = lockBodyYaw;
 
         float yaw = _lookInput.x * mouseSensitivity;
-        Pitch = Mathf.Clamp(Pitch - _lookInput.y * mouseSensitivity, -maxLookAngle, maxLookAngle);
+
+        float pitchUpLimit = isInCar ? carLookPitchUpLimit : (isClimbing ? climbLookPitchUpLimit : maxLookAngle);
+        float pitchDownLimit = isInCar ? carLookPitchDownLimit : (isClimbing ? climbLookPitchDownLimit : maxLookAngle);
+        Pitch = Mathf.Clamp(Pitch - _lookInput.y * mouseSensitivity, -pitchUpLimit, pitchDownLimit);
 
         if (lockBodyYaw)
         {
-            _climbCameraYaw = Mathf.Clamp(_climbCameraYaw + yaw, -climbLookYawLimit, climbLookYawLimit);
+            float yawLimit = isInCar ? carLookYawLimit : climbLookYawLimit;
+            _climbCameraYaw = Mathf.Clamp(_climbCameraYaw + yaw, -yawLimit, yawLimit);
             YawDelta = 0f;
         }
         else
@@ -101,8 +114,17 @@ public class PlayerLook : MonoBehaviour
 
         if (cinemachineCamera != null)
         {
+            float fovBoostRatio = 0f;
+            if (movement != null)
+            {
+                if (movement.IsSprintingStable)
+                    fovBoostRatio = 1f;
+                else if (isInCar)
+                    fovBoostRatio = movement.CarSpeedRatio;
+            }
+
             LensSettings lens = cinemachineCamera.Lens;
-            float targetFov = _baseFov + (movement != null && movement.IsSprintingStable ? sprintFovBoost : 0f);
+            float targetFov = _baseFov + maxFovBoost * fovBoostRatio;
             lens.FieldOfView = Mathf.Lerp(lens.FieldOfView, targetFov, fovSpeed * Time.deltaTime);
             cinemachineCamera.Lens = lens;
         }

@@ -52,6 +52,7 @@ public class PlayerMovement : MonoBehaviour
 
     public float PeekAmount { get; private set; }
     public bool IsInCar { get; private set; }
+    public float CarSpeedRatio => _activeCar != null ? _activeCar.SpeedRatio : 0f;
 
     public bool IsGrounded { get; private set; }
     public bool IsGroundedStable => IsGrounded || (Time.time - _lastGroundedTime) < airborneGraceTime;
@@ -287,7 +288,10 @@ public class PlayerMovement : MonoBehaviour
             _activeCar.IsBeingDriven = false;
 
         if (playerAnimator != null)
+        {
             playerAnimator.PlayCarExit();
+            playerAnimator.ClearHandIKTargets();
+        }
     }
 
     private void ExitCarComplete()
@@ -322,6 +326,12 @@ public class PlayerMovement : MonoBehaviour
 
         transform.position = _activeCar.FrontLeft;
         transform.rotation = Quaternion.LookRotation(_activeCar.Forward, _activeCar.Up);
+
+        if (playerAnimator != null)
+        {
+            Transform rightHandTarget = _activeCar.IsHandbrakeHeld ? _activeCar.HandBrakeGrip : _activeCar.RightHandGrip;
+            playerAnimator.SetRightHandIKTarget(rightHandTarget);
+        }
     }
 
     private void UpdateCarEnter()
@@ -381,7 +391,15 @@ public class PlayerMovement : MonoBehaviour
                 _activeCar.IsBeingDriven = true;
 
             if (playerAnimator != null)
+            {
                 playerAnimator.PlayCarEnterComplete();
+
+                if (_activeCar != null)
+                {
+                    playerAnimator.SetLeftHandIKTarget(_activeCar.LeftHandGrip);
+                    playerAnimator.SetRightHandIKTarget(_activeCar.RightHandGrip);
+                }
+            }
         }
     }
 
