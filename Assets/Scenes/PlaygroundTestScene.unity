@@ -12334,6 +12334,22 @@ PrefabInstance:
       propertyPath: m_Name
       value: Pickup Afghanistan
       objectReference: {fileID: 0}
+    - target: {fileID: 1542610147573464548, guid: d6b26b5e5282bbb4b86eae3edc8d19e7, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 0.9986541
+      objectReference: {fileID: 0}
+    - target: {fileID: 1542610147573464548, guid: d6b26b5e5282bbb4b86eae3edc8d19e7, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: -0.051865414
+      objectReference: {fileID: 0}
+    - target: {fileID: 1542610147573464548, guid: d6b26b5e5282bbb4b86eae3edc8d19e7, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1542610147573464548, guid: d6b26b5e5282bbb4b86eae3edc8d19e7, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects:
@@ -14996,6 +15012,7 @@ MonoBehaviour:
   steeringWheelRotationAxis: {x: 0, y: 0, z: -1}
   handbrakeTorque: 12000
   carAnimator: {fileID: 1941994677}
+  handArrivalDelay: 0.15
   antiRollStiffness: 5000
   driftSidewaysStiffness: 0.5
   speedText: {fileID: 1486308363}

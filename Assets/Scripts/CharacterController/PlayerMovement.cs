@@ -94,6 +94,7 @@ public class PlayerMovement : MonoBehaviour
     private float _carEnterT;
     private bool _isPlayingCarTransition;
     private bool _carTransitionReversed;
+    private bool _isWaitingForCarShutdown;
 
     private Vector2 _moveInput;
     private bool _jumpQueued;
@@ -166,7 +167,7 @@ public class PlayerMovement : MonoBehaviour
             else if (IsInCar)
             {
                 if (!_isEnteringCar && !_isPlayingCarTransition)
-                    ExitCar();
+                    RequestExitCar();
             }
             else if (TryFindLadder(out Ladder ladder))
             {
@@ -278,6 +279,17 @@ public class PlayerMovement : MonoBehaviour
         _characterController.enabled = false;
     }
 
+    private void RequestExitCar()
+    {
+        if (_isWaitingForCarShutdown)
+            return;
+
+        _isWaitingForCarShutdown = true;
+
+        if (_activeCar != null)
+            _activeCar.RequestShutdown();
+    }
+
     private void ExitCar()
     {
         _isPlayingCarTransition = true;
@@ -300,6 +312,7 @@ public class PlayerMovement : MonoBehaviour
         _isEnteringCar = false;
         _isPlayingCarTransition = false;
         _carTransitionReversed = false;
+        _isWaitingForCarShutdown = false;
         _activeCar = null;
         _characterController.enabled = true;
     }
@@ -321,6 +334,13 @@ public class PlayerMovement : MonoBehaviour
         if (_isPlayingCarTransition)
         {
             UpdateCarTransition();
+            return;
+        }
+
+        if (_isWaitingForCarShutdown && _activeCar.IsReadyToExit)
+        {
+            _isWaitingForCarShutdown = false;
+            ExitCar();
             return;
         }
 

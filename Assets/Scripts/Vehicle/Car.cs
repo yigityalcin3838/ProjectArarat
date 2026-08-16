@@ -56,6 +56,9 @@ public class Car : MonoBehaviour
     [Header("Animation")]
     [SerializeField] private Animator carAnimator;
 
+    [Header("Vehicle State")]
+    [SerializeField] private float handArrivalDelay = 0.15f;
+
     [Header("Anti-Roll")]
     [SerializeField] private float antiRollStiffness = 5000f;
 
@@ -77,7 +80,14 @@ public class Car : MonoBehaviour
     private static readonly int HandbrakeReleaseHash = Animator.StringToHash("HandbrakeRelease");
     private static readonly int GearShiftFrontHash = Animator.StringToHash("GearShiftFront");
     private static readonly int GearShiftBackHash = Animator.StringToHash("GearShiftBack");
-    private const float GearDirectionThreshold = 0.5f;
+    private static readonly int VehicleResetHash = Animator.StringToHash("VehicleReset");
+    private static readonly int GearReturnToIdleHash = Animator.StringToHash("GearReturnToIdle");
+    private const float GearInputThreshold = 0.1f;
+    private const float GearShiftStopThreshold = 0.5f;
+
+    private enum GearPosition { Idle, Front, Back }
+    private enum HandbrakePosition { Idle, Up, Down }
+    private enum ShutdownPhase { None, Handbrake, Gear, Engine, Complete }
 
     public Vector3 DoorLeft => doorLeft.position;
     public Vector3 FrontLeft => frontLeft.position;
@@ -97,6 +107,9 @@ public class Car : MonoBehaviour
     {
         get
         {
+            if (_handbrakeAnimatedState != _handbrakeTarget && _handbrakeTarget != HandbrakePosition.Idle)
+                return true;
+
             if (carAnimator == null)
                 return false;
 
@@ -117,6 +130,12 @@ public class Car : MonoBehaviour
     {
         get
         {
+            if (_shutdownPhase == ShutdownPhase.Gear)
+                return true;
+
+            if (_gearAnimatedState != _gearTarget && _gearTarget != GearPosition.Idle)
+                return true;
+
             if (carAnimator == null)
                 return false;
 
@@ -135,6 +154,34 @@ public class Car : MonoBehaviour
         }
     }
 
+    private bool IsGearReturnAnimating
+    {
+        get
+        {
+            if (carAnimator == null)
+                return false;
+
+            const int gearLayer = 1;
+
+            if (carAnimator.IsInTransition(gearLayer))
+            {
+                AnimatorStateInfo nextInfo = carAnimator.GetNextAnimatorStateInfo(gearLayer);
+                if (nextInfo.IsName("GearFrontReverse") || nextInfo.IsName("GearBackReverse"))
+                    return true;
+            }
+
+            AnimatorStateInfo currentInfo = carAnimator.GetCurrentAnimatorStateInfo(gearLayer);
+            return currentInfo.IsName("GearFrontReverse") || currentInfo.IsName("GearBackReverse");
+        }
+    }
+
+    public bool IsReadyToExit => _shutdownPhase == ShutdownPhase.Complete;
+
+    public void RequestShutdown()
+    {
+        _shutdownRequested = true;
+    }
+
     public bool IsBeingDriven
     {
         get => _isBeingDriven;
@@ -146,9 +193,14 @@ public class Car : MonoBehaviour
             _isBeingDriven = value;
 
             if (_isBeingDriven)
+            {
                 StartEngineAudio();
+                ResetVehicleState();
+            }
             else
-                StopEngineAudio();
+            {
+                SettleToIdleDisplay();
+            }
         }
     }
 
@@ -162,8 +214,22 @@ public class Car : MonoBehaviour
     private Quaternion _steeringWheelBaseRotation;
     private bool _isBeingDriven;
     private bool _waitingForEngineStart;
-    private int _gearDirection;
-    private bool _lastAnimatedHandbrakeState;
+    private bool _waitingForEngineStop;
+    private bool _pendingAutoRelease;
+
+    private GearPosition _gearTarget;
+    private GearPosition _gearAnimatedState;
+    private float _gearAnimationDelayTimer;
+
+    private HandbrakePosition _handbrakeTarget;
+    private bool _lastHandbrakeHeld;
+    private HandbrakePosition _handbrakeAnimatedState;
+    private float _handbrakeAnimationDelayTimer;
+
+    private bool _shutdownRequested;
+    private ShutdownPhase _shutdownPhase;
+    private bool _gearReturnTriggered;
+    private float _gearReturnDelayTimer;
 
     private void Awake()
     {
@@ -250,15 +316,22 @@ public class Car : MonoBehaviour
 
     private void UpdateEngineAudio()
     {
-        if (!_waitingForEngineStart)
-            return;
+        if (_waitingForEngineStart)
+        {
+            engineStartEmitter.EventInstance.getPlaybackState(out PLAYBACK_STATE startState);
+            if (startState == PLAYBACK_STATE.STOPPED)
+            {
+                _waitingForEngineStart = false;
+                PlayEngineIdle();
+            }
+        }
 
-        engineStartEmitter.EventInstance.getPlaybackState(out PLAYBACK_STATE state);
-        if (state != PLAYBACK_STATE.STOPPED)
-            return;
-
-        _waitingForEngineStart = false;
-        PlayEngineIdle();
+        if (_waitingForEngineStop)
+        {
+            engineStopEmitter.EventInstance.getPlaybackState(out PLAYBACK_STATE stopState);
+            if (stopState == PLAYBACK_STATE.STOPPED)
+                _waitingForEngineStop = false;
+        }
     }
 
     private void PlayEngineIdle()
@@ -278,7 +351,10 @@ public class Car : MonoBehaviour
             engineIdleEmitter.Stop();
 
         if (engineStopEmitter != null)
+        {
             engineStopEmitter.Play();
+            _waitingForEngineStop = true;
+        }
 
         if (hornEmitter != null)
             hornEmitter.Stop();
@@ -296,18 +372,66 @@ public class Car : MonoBehaviour
             carAnimator.SetTrigger(engaged ? HandbrakePullHash : HandbrakeReleaseHash);
     }
 
+    private void SettleToIdleDisplay()
+    {
+        _handbrakeTarget = HandbrakePosition.Idle;
+        _handbrakeAnimatedState = HandbrakePosition.Idle;
+        _gearTarget = GearPosition.Idle;
+        _gearAnimatedState = GearPosition.Idle;
+
+        if (carAnimator != null)
+            carAnimator.SetTrigger(VehicleResetHash);
+    }
+
+    private void ResetVehicleState()
+    {
+        _gearTarget = GearPosition.Idle;
+        _gearAnimatedState = GearPosition.Idle;
+        _gearAnimationDelayTimer = 0f;
+
+        _handbrakeTarget = HandbrakePosition.Idle;
+        _lastHandbrakeHeld = _handbrakeAction != null && _handbrakeAction.IsPressed();
+        _handbrakeAnimatedState = HandbrakePosition.Idle;
+        _handbrakeAnimationDelayTimer = 0f;
+
+        _shutdownRequested = false;
+        _shutdownPhase = ShutdownPhase.None;
+        _gearReturnTriggered = false;
+        _gearReturnDelayTimer = 0f;
+        _pendingAutoRelease = true;
+
+        if (carAnimator != null)
+            carAnimator.SetTrigger(VehicleResetHash);
+    }
+
     private void FixedUpdate()
     {
         Vector2 input = IsBeingDriven ? _moveAction.ReadValue<Vector2>() : Vector2.zero;
-        bool handbrake = IsBeingDriven && _handbrakeAction.IsPressed();
-
-        if (handbrake != _lastAnimatedHandbrakeState && !IsGearAnimating)
-        {
-            PlayHandbrakeFeedback(handbrake);
-            _lastAnimatedHandbrakeState = handbrake;
-        }
-
+        bool handbrake = IsBeingDriven && (_handbrakeAction.IsPressed() || _shutdownPhase != ShutdownPhase.None);
         IsHandbrakeHeld = handbrake;
+
+        if (IsBeingDriven)
+        {
+            if (_pendingAutoRelease && !_waitingForEngineStart)
+            {
+                _pendingAutoRelease = false;
+                _handbrakeTarget = HandbrakePosition.Down;
+            }
+
+            if (_shutdownRequested && _shutdownPhase == ShutdownPhase.None && !IsGearAnimating && !IsHandbrakeAnimating)
+            {
+                _shutdownRequested = false;
+                _shutdownPhase = ShutdownPhase.Handbrake;
+                _handbrakeTarget = HandbrakePosition.Up;
+            }
+
+            UpdateHandbrakeState(handbrake);
+
+            if (_shutdownPhase == ShutdownPhase.None)
+                UpdateGearState(input.y);
+            else
+                UpdateShutdown();
+        }
 
         ApplySteering(input.x);
         ApplyDrive(input.y, handbrake);
@@ -316,21 +440,114 @@ public class Car : MonoBehaviour
         ApplyAntiRoll(frontLeftWheelCollider, frontRightWheelCollider);
         ApplyAntiRoll(rearLeftWheelCollider, rearRightWheelCollider);
         SyncWheelMeshes();
-        UpdateGearShift();
     }
 
-    private void UpdateGearShift()
+    private void UpdateShutdown()
     {
-        float forwardSpeed = Vector3.Dot(_rb.linearVelocity, transform.forward);
-        int direction = forwardSpeed > GearDirectionThreshold ? 1 : (forwardSpeed < -GearDirectionThreshold ? -1 : 0);
+        switch (_shutdownPhase)
+        {
+            case ShutdownPhase.Handbrake:
+                if (!IsHandbrakeAnimating)
+                {
+                    _shutdownPhase = ShutdownPhase.Gear;
+                    _gearReturnTriggered = false;
+                    _gearReturnDelayTimer = 0f;
+                }
+                break;
 
-        if (direction == 0 || direction == _gearDirection || IsHandbrakeAnimating)
+            case ShutdownPhase.Gear:
+                UpdateGearReturnToIdle();
+                break;
+
+            case ShutdownPhase.Engine:
+                if (!_waitingForEngineStop)
+                    _shutdownPhase = ShutdownPhase.Complete;
+                break;
+        }
+    }
+
+    private void UpdateGearReturnToIdle()
+    {
+        if (_gearTarget == GearPosition.Idle)
+        {
+            _shutdownPhase = ShutdownPhase.Engine;
+            StopEngineAudio();
+            return;
+        }
+
+        if (!_gearReturnTriggered)
+        {
+            _gearReturnDelayTimer += Time.fixedDeltaTime;
+            if (_gearReturnDelayTimer < handArrivalDelay)
+                return;
+
+            _gearReturnTriggered = true;
+            if (carAnimator != null)
+                carAnimator.SetTrigger(GearReturnToIdleHash);
+            return;
+        }
+
+        if (IsGearReturnAnimating)
             return;
 
-        if (carAnimator != null)
-            carAnimator.SetTrigger(direction > 0 ? GearShiftFrontHash : GearShiftBackHash);
+        _gearTarget = GearPosition.Idle;
+        _gearAnimatedState = GearPosition.Idle;
+        _shutdownPhase = ShutdownPhase.Engine;
+        StopEngineAudio();
+    }
 
-        _gearDirection = direction;
+    private void UpdateHandbrakeState(bool held)
+    {
+        if (held != _lastHandbrakeHeld && !IsGearAnimating)
+        {
+            _lastHandbrakeHeld = held;
+            HandbrakePosition target = held ? HandbrakePosition.Up : HandbrakePosition.Down;
+
+            if (target != _handbrakeTarget)
+            {
+                _handbrakeTarget = target;
+                _handbrakeAnimationDelayTimer = 0f;
+            }
+        }
+
+        if (_handbrakeAnimatedState != _handbrakeTarget && _handbrakeTarget != HandbrakePosition.Idle)
+        {
+            _handbrakeAnimationDelayTimer += Time.fixedDeltaTime;
+            if (_handbrakeAnimationDelayTimer >= handArrivalDelay)
+            {
+                _handbrakeAnimatedState = _handbrakeTarget;
+                PlayHandbrakeFeedback(_handbrakeTarget == HandbrakePosition.Up);
+            }
+        }
+    }
+
+    private void UpdateGearState(float throttleInput)
+    {
+        GearPosition desired = _gearTarget;
+        if (throttleInput > GearInputThreshold)
+            desired = GearPosition.Front;
+        else if (throttleInput < -GearInputThreshold)
+            desired = GearPosition.Back;
+
+        bool canShift = _gearTarget == GearPosition.Idle ||
+            Mathf.Abs(Vector3.Dot(_rb.linearVelocity, transform.forward)) <= GearShiftStopThreshold;
+
+        if (desired != _gearTarget && canShift && !IsHandbrakeAnimating)
+        {
+            _gearTarget = desired;
+            _gearAnimationDelayTimer = 0f;
+        }
+
+        if (_gearAnimatedState != _gearTarget && _gearTarget != GearPosition.Idle)
+        {
+            _gearAnimationDelayTimer += Time.fixedDeltaTime;
+            if (_gearAnimationDelayTimer >= handArrivalDelay)
+            {
+                _gearAnimatedState = _gearTarget;
+                if (carAnimator != null)
+                    carAnimator.SetTrigger(_gearTarget == GearPosition.Front ? GearShiftFrontHash : GearShiftBackHash);
+            }
+        }
     }
 
     private void ApplySteering(float steerInput)
@@ -349,8 +566,12 @@ public class Car : MonoBehaviour
         float forwardSpeed = Vector3.Dot(_rb.linearVelocity, transform.forward);
         bool isBraking = IsBeingDriven && ((throttleInput > 0.01f && forwardSpeed < -0.5f) || (throttleInput < -0.01f && forwardSpeed > 0.5f));
 
+        bool canDrive = IsBeingDriven && _handbrakeTarget == HandbrakePosition.Down && !IsHandbrakeAnimating &&
+            ((throttleInput > 0f && _gearTarget == GearPosition.Front && !IsGearAnimating) ||
+             (throttleInput < 0f && _gearTarget == GearPosition.Back && !IsGearAnimating));
+
         float torque = 0f;
-        if (!isBraking)
+        if (!isBraking && canDrive)
         {
             torque = throttleInput * motorTorque;
             if (throttleInput < 0f)
