@@ -329,8 +329,18 @@ public class PlayerMovement : MonoBehaviour
 
         if (playerAnimator != null)
         {
-            Transform rightHandTarget = _activeCar.IsHandbrakeHeld ? _activeCar.HandBrakeGrip : _activeCar.RightHandGrip;
+            bool keepAtHandbrake = _activeCar.IsHandbrakeHeld || _activeCar.IsHandbrakeAnimating;
+            Transform rightHandTarget;
+            if (keepAtHandbrake)
+                rightHandTarget = _activeCar.HandBrakeGrip;
+            else if (_activeCar.IsGearAnimating)
+                rightHandTarget = _activeCar.GearGrip;
+            else
+                rightHandTarget = _activeCar.RightHandGrip;
             playerAnimator.SetRightHandIKTarget(rightHandTarget);
+
+            Transform leftHandTarget = _activeCar.IsHornPressed ? _activeCar.HornGrip : _activeCar.LeftHandGrip;
+            playerAnimator.SetLeftHandIKTarget(leftHandTarget);
         }
     }
 

@@ -13,6 +13,8 @@ public class Car : MonoBehaviour
     [SerializeField] private Transform leftHandGrip;
     [SerializeField] private Transform rightHandGrip;
     [SerializeField] private Transform handBrakeGrip;
+    [SerializeField] private Transform hornGrip;
+    [SerializeField] private Transform gearGrip;
 
     [Header("Body")]
     [SerializeField] private Collider[] bodyColliders;
@@ -35,7 +37,6 @@ public class Car : MonoBehaviour
     [Header("Driving")]
     [SerializeField] private float motorTorque = 1500f;
     [SerializeField] private float reverseTorqueMultiplier = 0.5f;
-    [SerializeField] private float throttleSmoothSpeed = 2f;
     [SerializeField] private float maxSpeedKmh = 120f;
 
     [Header("Braking")]
@@ -52,6 +53,9 @@ public class Car : MonoBehaviour
     [Header("Handbrake")]
     [SerializeField] private float handbrakeTorque = 8000f;
 
+    [Header("Animation")]
+    [SerializeField] private Animator carAnimator;
+
     [Header("Anti-Roll")]
     [SerializeField] private float antiRollStiffness = 5000f;
 
@@ -65,6 +69,15 @@ public class Car : MonoBehaviour
     [SerializeField] private StudioEventEmitter engineStartEmitter;
     [SerializeField] private StudioEventEmitter engineIdleEmitter;
     [SerializeField] private StudioEventEmitter engineStopEmitter;
+    [SerializeField] private StudioEventEmitter handbrakeOnEmitter;
+    [SerializeField] private StudioEventEmitter handbrakeOffEmitter;
+    [SerializeField] private StudioEventEmitter hornEmitter;
+
+    private static readonly int HandbrakePullHash = Animator.StringToHash("HandbrakePull");
+    private static readonly int HandbrakeReleaseHash = Animator.StringToHash("HandbrakeRelease");
+    private static readonly int GearShiftFrontHash = Animator.StringToHash("GearShiftFront");
+    private static readonly int GearShiftBackHash = Animator.StringToHash("GearShiftBack");
+    private const float GearDirectionThreshold = 0.5f;
 
     public Vector3 DoorLeft => doorLeft.position;
     public Vector3 FrontLeft => frontLeft.position;
@@ -73,9 +86,54 @@ public class Car : MonoBehaviour
     public Transform LeftHandGrip => leftHandGrip;
     public Transform RightHandGrip => rightHandGrip;
     public Transform HandBrakeGrip => handBrakeGrip;
+    public Transform HornGrip => hornGrip;
+    public Transform GearGrip => gearGrip;
 
     public bool IsHandbrakeHeld { get; private set; }
+    public bool IsHornPressed { get; private set; }
     public float SpeedRatio => Mathf.Clamp01(_rb.linearVelocity.magnitude / (maxSpeedKmh / 3.6f));
+
+    public bool IsHandbrakeAnimating
+    {
+        get
+        {
+            if (carAnimator == null)
+                return false;
+
+            if (carAnimator.IsInTransition(0))
+            {
+                AnimatorStateInfo nextInfo = carAnimator.GetNextAnimatorStateInfo(0);
+                if (nextInfo.IsName("HandbrakeUp") || nextInfo.IsName("HandbrakeDown"))
+                    return true;
+            }
+
+            AnimatorStateInfo currentInfo = carAnimator.GetCurrentAnimatorStateInfo(0);
+            bool isHandbrakeState = currentInfo.IsName("HandbrakeUp") || currentInfo.IsName("HandbrakeDown");
+            return isHandbrakeState && currentInfo.normalizedTime < 1f;
+        }
+    }
+
+    public bool IsGearAnimating
+    {
+        get
+        {
+            if (carAnimator == null)
+                return false;
+
+            const int gearLayer = 1;
+
+            if (carAnimator.IsInTransition(gearLayer))
+            {
+                AnimatorStateInfo nextInfo = carAnimator.GetNextAnimatorStateInfo(gearLayer);
+                if (nextInfo.IsName("GearFront") || nextInfo.IsName("GearBack"))
+                    return true;
+            }
+
+            AnimatorStateInfo currentInfo = carAnimator.GetCurrentAnimatorStateInfo(gearLayer);
+            bool isGearState = currentInfo.IsName("GearFront") || currentInfo.IsName("GearBack");
+            return isGearState && currentInfo.normalizedTime < 1f;
+        }
+    }
 
     public bool IsBeingDriven
     {
@@ -97,13 +155,15 @@ public class Car : MonoBehaviour
     private Rigidbody _rb;
     private InputAction _moveAction;
     private InputAction _handbrakeAction;
-    private float _currentThrottle;
+    private InputAction _hornAction;
     private float _currentSteerAngle;
     private float _rearLeftNormalSidewaysStiffness;
     private float _rearRightNormalSidewaysStiffness;
     private Quaternion _steeringWheelBaseRotation;
     private bool _isBeingDriven;
     private bool _waitingForEngineStart;
+    private int _gearDirection;
+    private bool _lastAnimatedHandbrakeState;
 
     private void Awake()
     {
@@ -119,6 +179,7 @@ public class Car : MonoBehaviour
         var playerMap = inputActions.FindActionMap("Player", throwIfNotFound: true);
         _moveAction = playerMap.FindAction("Move");
         _handbrakeAction = playerMap.FindAction("Jump");
+        _hornAction = playerMap.FindAction("Attack");
 
         foreach (Collider bodyCollider in bodyColliders)
         {
@@ -136,18 +197,43 @@ public class Car : MonoBehaviour
     {
         _moveAction.Enable();
         _handbrakeAction.Enable();
+        _hornAction.Enable();
     }
 
     private void OnDisable()
     {
         _moveAction.Disable();
         _handbrakeAction.Disable();
+        _hornAction.Disable();
     }
 
     private void Update()
     {
         UpdateSpeedText();
         UpdateEngineAudio();
+        UpdateHorn();
+    }
+
+    private void UpdateHorn()
+    {
+        if (!IsBeingDriven)
+        {
+            IsHornPressed = false;
+            return;
+        }
+
+        if (_hornAction.WasPressedThisFrame())
+        {
+            IsHornPressed = true;
+            if (hornEmitter != null)
+                hornEmitter.Play();
+        }
+        else if (_hornAction.WasReleasedThisFrame())
+        {
+            IsHornPressed = false;
+            if (hornEmitter != null)
+                hornEmitter.Stop();
+        }
     }
 
     private void StartEngineAudio()
@@ -193,12 +279,34 @@ public class Car : MonoBehaviour
 
         if (engineStopEmitter != null)
             engineStopEmitter.Play();
+
+        if (hornEmitter != null)
+            hornEmitter.Stop();
+
+        IsHornPressed = false;
+    }
+
+    private void PlayHandbrakeFeedback(bool engaged)
+    {
+        StudioEventEmitter emitter = engaged ? handbrakeOnEmitter : handbrakeOffEmitter;
+        if (emitter != null)
+            emitter.Play();
+
+        if (carAnimator != null)
+            carAnimator.SetTrigger(engaged ? HandbrakePullHash : HandbrakeReleaseHash);
     }
 
     private void FixedUpdate()
     {
         Vector2 input = IsBeingDriven ? _moveAction.ReadValue<Vector2>() : Vector2.zero;
         bool handbrake = IsBeingDriven && _handbrakeAction.IsPressed();
+
+        if (handbrake != _lastAnimatedHandbrakeState && !IsGearAnimating)
+        {
+            PlayHandbrakeFeedback(handbrake);
+            _lastAnimatedHandbrakeState = handbrake;
+        }
+
         IsHandbrakeHeld = handbrake;
 
         ApplySteering(input.x);
@@ -208,6 +316,21 @@ public class Car : MonoBehaviour
         ApplyAntiRoll(frontLeftWheelCollider, frontRightWheelCollider);
         ApplyAntiRoll(rearLeftWheelCollider, rearRightWheelCollider);
         SyncWheelMeshes();
+        UpdateGearShift();
+    }
+
+    private void UpdateGearShift()
+    {
+        float forwardSpeed = Vector3.Dot(_rb.linearVelocity, transform.forward);
+        int direction = forwardSpeed > GearDirectionThreshold ? 1 : (forwardSpeed < -GearDirectionThreshold ? -1 : 0);
+
+        if (direction == 0 || direction == _gearDirection || IsHandbrakeAnimating)
+            return;
+
+        if (carAnimator != null)
+            carAnimator.SetTrigger(direction > 0 ? GearShiftFrontHash : GearShiftBackHash);
+
+        _gearDirection = direction;
     }
 
     private void ApplySteering(float steerInput)
@@ -226,13 +349,11 @@ public class Car : MonoBehaviour
         float forwardSpeed = Vector3.Dot(_rb.linearVelocity, transform.forward);
         bool isBraking = IsBeingDriven && ((throttleInput > 0.01f && forwardSpeed < -0.5f) || (throttleInput < -0.01f && forwardSpeed > 0.5f));
 
-        _currentThrottle = Mathf.MoveTowards(_currentThrottle, throttleInput, throttleSmoothSpeed * Time.fixedDeltaTime);
-
         float torque = 0f;
         if (!isBraking)
         {
-            torque = _currentThrottle * motorTorque;
-            if (_currentThrottle < 0f)
+            torque = throttleInput * motorTorque;
+            if (throttleInput < 0f)
                 torque *= reverseTorqueMultiplier;
         }
 
