@@ -29,6 +29,7 @@ public class PlayerAnimator : MonoBehaviour
 
     [Header("Car Turn Lag")]
     [SerializeField] private float carTurnLagSpeed = 6f;
+    [SerializeField] private float carTurnLagMaxAngle = 30f;
 
     [Header("Hand IK")]
     [SerializeField] private float handIKTransitionDuration = 0.08f;
@@ -64,6 +65,8 @@ public class PlayerAnimator : MonoBehaviour
     private Quaternion _smoothedCarRotation;
     private Transform _leftHandIKTarget;
     private Transform _rightHandIKTarget;
+    private float? _leftHandIKTransitionDurationOverride;
+    private float? _rightHandIKTransitionDurationOverride;
     private readonly HandIKState _leftHandIKState = new HandIKState();
     private readonly HandIKState _rightHandIKState = new HandIKState();
 
@@ -76,6 +79,7 @@ public class PlayerAnimator : MonoBehaviour
         public Vector3 BlendStartLocalPosition;
         public Quaternion BlendStartLocalRotation;
         public float BlendT = 1f;
+        public float TransitionDuration;
     }
 
     private void Awake()
@@ -175,6 +179,12 @@ public class PlayerAnimator : MonoBehaviour
 
         Quaternion twistDelta = Quaternion.Inverse(movement.transform.rotation) * _smoothedCarRotation;
 
+        twistDelta.ToAngleAxis(out float twistAngle, out Vector3 twistAxis);
+        if (twistAngle > 180f)
+            twistAngle -= 360f;
+        twistAngle = Mathf.Clamp(twistAngle, -carTurnLagMaxAngle, carTurnLagMaxAngle);
+        twistDelta = Quaternion.AngleAxis(twistAngle, twistAxis);
+
         Transform neckBone = _animator.GetBoneTransform(HumanBodyBones.Neck);
         if (neckBone != null)
             neckBone.localRotation *= twistDelta;
@@ -219,9 +229,17 @@ public class PlayerAnimator : MonoBehaviour
 
     public void PlayCarEnterComplete() => _animator.SetTrigger(CarEnterCompleteHash);
 
-    public void SetLeftHandIKTarget(Transform target) => _leftHandIKTarget = target;
+    public void SetLeftHandIKTarget(Transform target, float? transitionDuration = null)
+    {
+        _leftHandIKTarget = target;
+        _leftHandIKTransitionDurationOverride = transitionDuration;
+    }
 
-    public void SetRightHandIKTarget(Transform target) => _rightHandIKTarget = target;
+    public void SetRightHandIKTarget(Transform target, float? transitionDuration = null)
+    {
+        _rightHandIKTarget = target;
+        _rightHandIKTransitionDurationOverride = transitionDuration;
+    }
 
     public void ClearHandIKTargets()
     {
@@ -233,9 +251,16 @@ public class PlayerAnimator : MonoBehaviour
     {
         get
         {
-            AnimatorStateInfo info = GetStateInfo("CarEntry", out bool isInState);
-            if (isInState)
-                return Mathf.Clamp01(info.normalizedTime);
+            AnimatorStateInfo entryInfo = GetStateInfo("CarEntry", out bool isInEntry);
+            if (isInEntry)
+                return Mathf.Clamp01(entryInfo.normalizedTime);
+
+            // CarExit plays its own dedicated clip forward, but the caller (UpdateCarTransition)
+            // interpolates DoorLeft->FrontLeft the same way for both directions, so exit progress
+            // is reported as the complement -- 1 (still at FrontLeft) down to 0 (back at DoorLeft).
+            AnimatorStateInfo exitInfo = GetStateInfo("CarExit", out bool isInExit);
+            if (isInExit)
+                return 1f - Mathf.Clamp01(exitInfo.normalizedTime);
 
             return _animator.GetFloat(CarTransitionSpeedHash) < 0f ? 1f : 0f;
         }
@@ -277,8 +302,8 @@ public class PlayerAnimator : MonoBehaviour
         if (layerIndex != 0)
             return;
 
-        ApplyHandIK(AvatarIKGoal.LeftHand, HumanBodyBones.LeftHand, _leftHandIKTarget, _leftHandIKState);
-        ApplyHandIK(AvatarIKGoal.RightHand, HumanBodyBones.RightHand, _rightHandIKTarget, _rightHandIKState);
+        ApplyHandIK(AvatarIKGoal.LeftHand, HumanBodyBones.LeftHand, _leftHandIKTarget, _leftHandIKState, _leftHandIKTransitionDurationOverride);
+        ApplyHandIK(AvatarIKGoal.RightHand, HumanBodyBones.RightHand, _rightHandIKTarget, _rightHandIKState, _rightHandIKTransitionDurationOverride);
 
         if (movement.IsClimbingLadder || movement.IsInCar)
         {
@@ -326,7 +351,7 @@ public class PlayerAnimator : MonoBehaviour
         spineBone.localRotation *= Quaternion.Euler(0f, 0f, _currentPeekAngle);
     }
 
-    private void ApplyHandIK(AvatarIKGoal goal, HumanBodyBones handBone, Transform target, HandIKState state)
+    private void ApplyHandIK(AvatarIKGoal goal, HumanBodyBones handBone, Transform target, HandIKState state, float? transitionDurationOverride)
     {
         float weight = target != null ? 1f : 0f;
         _animator.SetIKPositionWeight(goal, weight);
@@ -347,7 +372,12 @@ public class PlayerAnimator : MonoBehaviour
                 state.CurrentRotation = bone.rotation;
             }
 
-            state.BlendReference = target.parent;
+            // The car's actual rigidbody-driven root, not just target's immediate parent -- grips
+            // can sit a level or two under intermediate (sometimes separately-animated, e.g.
+            // KeyIK) objects, and re-projecting the blend start against one of those instead of
+            // the car's real moving frame is exactly what would make the start point lag behind
+            // at speed and the hand look like it beelines somewhere wrong before correcting.
+            state.BlendReference = target.root;
             if (state.BlendReference != null)
             {
                 state.BlendStartLocalPosition = state.BlendReference.InverseTransformPoint(state.CurrentPosition);
@@ -359,12 +389,13 @@ public class PlayerAnimator : MonoBehaviour
                 state.BlendStartLocalRotation = state.CurrentRotation;
             }
 
+            state.TransitionDuration = transitionDurationOverride ?? handIKTransitionDuration;
             state.BlendT = 0f;
             state.PreviousTarget = target;
         }
         else if (state.BlendT < 1f)
         {
-            state.BlendT = Mathf.Min(1f, state.BlendT + Time.unscaledDeltaTime / handIKTransitionDuration);
+            state.BlendT = Mathf.Min(1f, state.BlendT + Time.unscaledDeltaTime / state.TransitionDuration);
         }
 
         if (state.BlendT >= 1f)

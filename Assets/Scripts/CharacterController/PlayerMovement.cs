@@ -33,12 +33,13 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] private PlayerAnimator playerAnimator;
     [SerializeField] private PlayerStamina stamina;
 
+    [Header("Interaction")]
+    [SerializeField] private float enterTransitionDuration = 0.4f;
+
     [Header("Ladder")]
     [SerializeField] private string ladderTag = "Ladder";
     [SerializeField] private float ladderInteractDistance = 1.5f;
     [SerializeField] private float ladderClimbSpeed = 3f;
-    [SerializeField] private float ladderSnapSpeed = 10f;
-    [SerializeField] private float ladderEnterDuration = 0.4f;
     [SerializeField] private float ladderJumpOffForce = 4f;
 
     [Header("Door")]
@@ -48,7 +49,6 @@ public class PlayerMovement : MonoBehaviour
     [Header("Car")]
     [SerializeField] private string carDoorTag = "CarDoorLeft";
     [SerializeField] private float carInteractDistance = 2f;
-    [SerializeField] private float carEnterDuration = 0.4f;
 
     public float PeekAmount { get; private set; }
     public bool IsInCar { get; private set; }
@@ -166,7 +166,7 @@ public class PlayerMovement : MonoBehaviour
             }
             else if (IsInCar)
             {
-                if (!_isEnteringCar && !_isPlayingCarTransition)
+                if (!_isEnteringCar && !_isPlayingCarTransition && _activeCar != null && _activeCar.IsReadyToDrive)
                     RequestExitCar();
             }
             else if (TryFindLadder(out Ladder ladder))
@@ -297,7 +297,10 @@ public class PlayerMovement : MonoBehaviour
         _velocity = Vector3.zero;
 
         if (_activeCar != null)
+        {
             _activeCar.IsBeingDriven = false;
+            _activeCar.PlayDoor(false);
+        }
 
         if (playerAnimator != null)
         {
@@ -308,6 +311,9 @@ public class PlayerMovement : MonoBehaviour
 
     private void ExitCarComplete()
     {
+        if (playerAnimator != null)
+            playerAnimator.ClearHandIKTargets();
+
         IsInCar = false;
         _isEnteringCar = false;
         _isPlayingCarTransition = false;
@@ -349,24 +355,34 @@ public class PlayerMovement : MonoBehaviour
 
         if (playerAnimator != null)
         {
-            bool keepAtHandbrake = _activeCar.IsHandbrakeHeld || _activeCar.IsHandbrakeAnimating;
+            bool keepAtHandbrake = (_activeCar.IsHandbrakeHeld && !_activeCar.IsGearAnimating && !_activeCar.IsGearBlipping) || _activeCar.IsHandbrakeAnimating;
             Transform rightHandTarget;
-            if (keepAtHandbrake)
+            if (_activeCar.IsDoorAnimating)
+                rightHandTarget = _activeCar.RightHandGrip;
+            else if (_activeCar.IsEngineAnimating)
+                rightHandTarget = _activeCar.KeyGrip;
+            else if (keepAtHandbrake)
                 rightHandTarget = _activeCar.HandBrakeGrip;
-            else if (_activeCar.IsGearAnimating)
+            else if (_activeCar.IsGearAnimating || _activeCar.IsGearBlipping)
                 rightHandTarget = _activeCar.GearGrip;
             else
                 rightHandTarget = _activeCar.RightHandGrip;
-            playerAnimator.SetRightHandIKTarget(rightHandTarget);
+            playerAnimator.SetRightHandIKTarget(rightHandTarget, _activeCar.HandIKTransitionDuration);
 
-            Transform leftHandTarget = _activeCar.IsHornPressed ? _activeCar.HornGrip : _activeCar.LeftHandGrip;
-            playerAnimator.SetLeftHandIKTarget(leftHandTarget);
+            Transform leftHandTarget;
+            if (_activeCar.IsDoorAnimating)
+                leftHandTarget = _activeCar.DoorGrip;
+            else if (_activeCar.IsHornPressed)
+                leftHandTarget = _activeCar.HornGrip;
+            else
+                leftHandTarget = _activeCar.LeftHandGrip;
+            playerAnimator.SetLeftHandIKTarget(leftHandTarget, _activeCar.HandIKTransitionDuration);
         }
     }
 
     private void UpdateCarEnter()
     {
-        _carEnterT += Time.deltaTime / carEnterDuration;
+        _carEnterT += Time.deltaTime / enterTransitionDuration;
 
         Vector3 targetPosition = _activeCar.DoorLeft;
         Quaternion targetRotation = Quaternion.LookRotation(_activeCar.Forward, Vector3.up);
@@ -392,6 +408,9 @@ public class PlayerMovement : MonoBehaviour
 
         if (playerAnimator != null)
             playerAnimator.PlayCarEnter();
+
+        if (_activeCar != null)
+            _activeCar.PlayDoor(true);
     }
 
     private void UpdateCarTransition()
@@ -405,6 +424,12 @@ public class PlayerMovement : MonoBehaviour
         Quaternion levelRotation = Quaternion.LookRotation(_activeCar.Forward, Vector3.up);
         Quaternion tiltedRotation = Quaternion.LookRotation(_activeCar.Forward, _activeCar.Up);
         transform.rotation = Quaternion.Slerp(levelRotation, tiltedRotation, clampedT);
+
+        if (playerAnimator != null)
+        {
+            Transform leftHandTarget = _activeCar.IsDoorAnimating ? _activeCar.DoorGrip : _activeCar.LeftHandGrip;
+            playerAnimator.SetLeftHandIKTarget(leftHandTarget, _activeCar.HandIKTransitionDuration);
+        }
 
         if (!complete)
             return;
@@ -426,8 +451,9 @@ public class PlayerMovement : MonoBehaviour
 
                 if (_activeCar != null)
                 {
-                    playerAnimator.SetLeftHandIKTarget(_activeCar.LeftHandGrip);
-                    playerAnimator.SetRightHandIKTarget(_activeCar.RightHandGrip);
+                    Transform leftHandTarget = _activeCar.IsDoorAnimating ? _activeCar.DoorGrip : _activeCar.LeftHandGrip;
+                    playerAnimator.SetLeftHandIKTarget(leftHandTarget, _activeCar.HandIKTransitionDuration);
+                    playerAnimator.SetRightHandIKTarget(_activeCar.RightHandGrip, _activeCar.HandIKTransitionDuration);
                 }
             }
         }
@@ -514,16 +540,13 @@ public class PlayerMovement : MonoBehaviour
             return;
         }
 
-        Vector3 horizontalOffset = _activeLadder.BotStart - transform.position;
-        horizontalOffset.y = 0f;
-
-        Vector3 climbVelocity = Vector3.up * (_moveInput.y * ladderClimbSpeed) + horizontalOffset * ladderSnapSpeed;
+        Vector3 climbVelocity = Vector3.up * (_moveInput.y * ladderClimbSpeed);
         transform.position += climbVelocity * Time.deltaTime;
     }
 
     private void UpdateLadderEnter()
     {
-        _ladderEnterT += Time.deltaTime / ladderEnterDuration;
+        _ladderEnterT += Time.deltaTime / enterTransitionDuration;
 
         Vector3 targetPosition;
         if (_isEnteringFromTop)
