@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: 759d0d5cc89a2774e947b357bf8147b4
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 0
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 169018
+  packageName: 'PRO Effects: FPS Muzzle flashes & Impacts'
+  packageVersion: 1.2
+  assetPath: Assets/Knife/PRO Effects FPS Muzzle flashes & Impacts/Particles/Materials/water
+    particle.mat
+  uploadId: 718241

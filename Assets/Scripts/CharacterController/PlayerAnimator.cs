@@ -59,9 +59,8 @@ public class PlayerAnimator : MonoBehaviour
     private static readonly int IsAimingHash = Animator.StringToHash("IsAiming");
 
     private Animator _animator;
-    private int _pistolAimLayerIndex;
+    private int _itemLayerIndex;
     private int _ladderCarLayerIndex;
-    private float _pistolAimLayerWeight;
     private float _ladderCarLayerWeight;
     private float _facingOffset;
     private bool _isRecoveringFromTurn;
@@ -104,7 +103,7 @@ public class PlayerAnimator : MonoBehaviour
     private void Awake()
     {
         _animator = GetComponent<Animator>();
-        _pistolAimLayerIndex = _animator.GetLayerIndex("PistolAim");
+        _itemLayerIndex = _animator.GetLayerIndex("Item Layer");
         _ladderCarLayerIndex = _animator.GetLayerIndex("LadderCar");
 
         _leftFootHeight = _animator.GetBoneTransform(HumanBodyBones.LeftFoot).position.y;
@@ -122,15 +121,12 @@ public class PlayerAnimator : MonoBehaviour
         bool isAiming = items != null && items.HasEquippedItem;
         _animator.SetBool(IsAimingHash, isAiming);
 
-        // Lerped instead of snapped straight to 0/1 -- an instant layer weight
-        // jump pops the masked bones (arms/whole body) directly to the other
-        // layer's pose in a single frame, which reads as a hard, sudden jerk in
-        // the first-person view (most visibly the weapon/arms, right in frame).
-        if (_pistolAimLayerIndex >= 0)
-        {
-            _pistolAimLayerWeight = Mathf.Lerp(_pistolAimLayerWeight, isAiming ? 1f : 0f, layerWeightTransitionSpeed * Time.deltaTime);
-            _animator.SetLayerWeight(_pistolAimLayerIndex, _pistolAimLayerWeight);
-        }
+        // Snapped instantly (not lerped) on the take/holster command -- the
+        // character's own pose switches right away; only hand IK (driven
+        // separately by the item) stays live past that point, tracking the
+        // grip points for as long as the holster clip is actually playing.
+        if (_itemLayerIndex >= 0)
+            _animator.SetLayerWeight(_itemLayerIndex, isAiming ? 1f : 0f);
 
         if (_ladderCarLayerIndex >= 0)
         {
@@ -357,13 +353,22 @@ public class PlayerAnimator : MonoBehaviour
         return currentInfo;
     }
 
-    // Only touches the constraints while an item is pushing an override, and restores
-    // whatever they were set to right before that override started (not a value
-    // cached once at Awake) the instant it ends -- otherwise leaves their weight
-    // alone entirely, so it stays freely tweakable on the constraint's own Inspector
-    // slider (including live in Play Mode) whenever no item is overriding it.
+    // Only touches the constraints while an item is pushing an override (or while
+    // still lerping back from one that just ended), and restores whatever they
+    // were set to right before that override started (not a value cached once at
+    // Awake) -- otherwise leaves their weight alone entirely once settled, so it
+    // stays freely tweakable on the constraint's own Inspector slider (including
+    // live in Play Mode) whenever no item is overriding it. Both the apply and
+    // restore are lerped (not snapped) so entering/leaving an override -- e.g. a
+    // take/holster animation finishing -- doesn't pop the pose in a single frame.
+    private const float AimRigWeightSettleThreshold = 0.001f;
+
+    private bool _isRestoringAimRigWeight;
+
     private void UpdateAimRigWeightOverride()
     {
+        float t = layerWeightTransitionSpeed * Time.deltaTime;
+
         if (_hasAimRigWeightOverride)
         {
             if (!_wasAimRigWeightOverrideActive)
@@ -374,17 +379,39 @@ public class PlayerAnimator : MonoBehaviour
                 if (neckAim != null) _neckAimPreOverrideWeight = neckAim.weight;
             }
 
-            if (spineAim != null) spineAim.weight = _spineAimWeightOverride;
-            if (chestAim != null) chestAim.weight = _chestAimWeightOverride;
-            if (upperChestAim != null) upperChestAim.weight = _upperChestAimWeightOverride;
-            if (neckAim != null) neckAim.weight = _neckAimWeightOverride;
+            if (spineAim != null) spineAim.weight = Mathf.Lerp(spineAim.weight, _spineAimWeightOverride, t);
+            if (chestAim != null) chestAim.weight = Mathf.Lerp(chestAim.weight, _chestAimWeightOverride, t);
+            if (upperChestAim != null) upperChestAim.weight = Mathf.Lerp(upperChestAim.weight, _upperChestAimWeightOverride, t);
+            if (neckAim != null) neckAim.weight = Mathf.Lerp(neckAim.weight, _neckAimWeightOverride, t);
+
+            _isRestoringAimRigWeight = false;
         }
-        else if (_wasAimRigWeightOverrideActive)
+        else if (_wasAimRigWeightOverrideActive || _isRestoringAimRigWeight)
         {
-            if (spineAim != null) spineAim.weight = _spineAimPreOverrideWeight;
-            if (chestAim != null) chestAim.weight = _chestAimPreOverrideWeight;
-            if (upperChestAim != null) upperChestAim.weight = _upperChestAimPreOverrideWeight;
-            if (neckAim != null) neckAim.weight = _neckAimPreOverrideWeight;
+            bool stillRestoring = false;
+
+            if (spineAim != null)
+            {
+                spineAim.weight = Mathf.Lerp(spineAim.weight, _spineAimPreOverrideWeight, t);
+                stillRestoring |= Mathf.Abs(spineAim.weight - _spineAimPreOverrideWeight) > AimRigWeightSettleThreshold;
+            }
+            if (chestAim != null)
+            {
+                chestAim.weight = Mathf.Lerp(chestAim.weight, _chestAimPreOverrideWeight, t);
+                stillRestoring |= Mathf.Abs(chestAim.weight - _chestAimPreOverrideWeight) > AimRigWeightSettleThreshold;
+            }
+            if (upperChestAim != null)
+            {
+                upperChestAim.weight = Mathf.Lerp(upperChestAim.weight, _upperChestAimPreOverrideWeight, t);
+                stillRestoring |= Mathf.Abs(upperChestAim.weight - _upperChestAimPreOverrideWeight) > AimRigWeightSettleThreshold;
+            }
+            if (neckAim != null)
+            {
+                neckAim.weight = Mathf.Lerp(neckAim.weight, _neckAimPreOverrideWeight, t);
+                stillRestoring |= Mathf.Abs(neckAim.weight - _neckAimPreOverrideWeight) > AimRigWeightSettleThreshold;
+            }
+
+            _isRestoringAimRigWeight = stillRestoring;
         }
 
         _wasAimRigWeightOverrideActive = _hasAimRigWeightOverride;

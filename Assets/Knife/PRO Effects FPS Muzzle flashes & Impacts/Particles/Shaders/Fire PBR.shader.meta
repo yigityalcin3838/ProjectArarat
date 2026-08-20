@@ -1,0 +1,17 @@
+fileFormatVersion: 2
+guid: cc3efff3808665041b91eab40b636f19
+ShaderImporter:
+  externalObjects: {}
+  defaultTextures: []
+  nonModifiableTextures: []
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 169018
+  packageName: 'PRO Effects: FPS Muzzle flashes & Impacts'
+  packageVersion: 1.2
+  assetPath: Assets/Knife/PRO Effects FPS Muzzle flashes & Impacts/Particles/Shaders/Fire
+    PBR.shader
+  uploadId: 718241

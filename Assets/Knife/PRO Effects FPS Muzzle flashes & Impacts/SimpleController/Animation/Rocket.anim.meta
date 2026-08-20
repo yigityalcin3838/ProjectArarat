@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 68f8eba5dcfefc74cb50833cc50543ec
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 7400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 169018
+  packageName: 'PRO Effects: FPS Muzzle flashes & Impacts'
+  packageVersion: 1.2
+  assetPath: Assets/Knife/PRO Effects FPS Muzzle flashes & Impacts/SimpleController/Animation/Rocket.anim
+  uploadId: 718241

@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 622519baf5b9d5c4789577726a42d8df
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 169018
+  packageName: 'PRO Effects: FPS Muzzle flashes & Impacts'
+  packageVersion: 1.2
+  assetPath: Assets/Knife/PRO Effects FPS Muzzle flashes & Impacts/SimpleController/Prefabs/SmokeGrenade.prefab
+  uploadId: 718241

@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: b320d114a6ff77f4587e28b8d7e9f6bc
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 169018
+  packageName: 'PRO Effects: FPS Muzzle flashes & Impacts'
+  packageVersion: 1.2
+  assetPath: Assets/Knife/PRO Effects FPS Muzzle flashes & Impacts/Particles/Materials/Knife_Flashbang
+    Postprocess.mat
+  uploadId: 718241

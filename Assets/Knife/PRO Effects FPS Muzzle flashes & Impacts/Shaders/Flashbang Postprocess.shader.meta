@@ -1,0 +1,17 @@
+fileFormatVersion: 2
+guid: 3a181541b18e89a4d99d5b7a82ac4950
+ShaderImporter:
+  externalObjects: {}
+  defaultTextures: []
+  nonModifiableTextures: []
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 169018
+  packageName: 'PRO Effects: FPS Muzzle flashes & Impacts'
+  packageVersion: 1.2
+  assetPath: Assets/Knife/PRO Effects FPS Muzzle flashes & Impacts/Shaders/Flashbang
+    Postprocess.shader
+  uploadId: 718241

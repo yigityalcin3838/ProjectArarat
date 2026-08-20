@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 4116cec408736b8408c7cea75253bb9b
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 169018
+  packageName: 'PRO Effects: FPS Muzzle flashes & Impacts'
+  packageVersion: 1.2
+  assetPath: Assets/Knife/PRO Effects FPS Muzzle flashes & Impacts/Particles/Prefabs/Impacts/Concrete
+    Impact.prefab
+  uploadId: 718241

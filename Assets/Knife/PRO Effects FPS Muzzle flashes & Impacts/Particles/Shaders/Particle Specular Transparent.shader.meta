@@ -1,0 +1,17 @@
+fileFormatVersion: 2
+guid: 4bd325c40b4972047b71c9ce027c3234
+ShaderImporter:
+  externalObjects: {}
+  defaultTextures: []
+  nonModifiableTextures: []
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 169018
+  packageName: 'PRO Effects: FPS Muzzle flashes & Impacts'
+  packageVersion: 1.2
+  assetPath: Assets/Knife/PRO Effects FPS Muzzle flashes & Impacts/Particles/Shaders/Particle
+    Specular Transparent.shader
+  uploadId: 718241

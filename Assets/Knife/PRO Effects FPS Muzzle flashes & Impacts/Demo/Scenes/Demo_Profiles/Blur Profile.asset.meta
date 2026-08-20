@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: cd7b746a308f3694aa8b5b82ad68b260
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 11400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 169018
+  packageName: 'PRO Effects: FPS Muzzle flashes & Impacts'
+  packageVersion: 1.2
+  assetPath: Assets/Knife/PRO Effects FPS Muzzle flashes & Impacts/Demo/Scenes/Demo_Profiles/Blur
+    Profile.asset
+  uploadId: 718241

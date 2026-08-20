@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: a082bc92011a84a43801e11d8edfde30
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 169018
+  packageName: 'PRO Effects: FPS Muzzle flashes & Impacts'
+  packageVersion: 1.2
+  assetPath: Assets/Knife/PRO Effects FPS Muzzle flashes & Impacts/Shoot FX/Prefabs/Pistol/Pistol
+    MuzzleflashEmitter.prefab
+  uploadId: 718241

@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: a41c5726643f59b429d99194730fdd18
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 169018
+  packageName: 'PRO Effects: FPS Muzzle flashes & Impacts'
+  packageVersion: 1.2
+  assetPath: Assets/Knife/PRO Effects FPS Muzzle flashes & Impacts/Particles/Prefabs/Explosions/Explosion
+    Grenade.prefab
+  uploadId: 718241

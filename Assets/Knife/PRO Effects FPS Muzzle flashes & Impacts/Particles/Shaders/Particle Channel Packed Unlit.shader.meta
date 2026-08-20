@@ -1,0 +1,17 @@
+fileFormatVersion: 2
+guid: 895b2f1ffab5108428b6e73de20b5448
+ShaderImporter:
+  externalObjects: {}
+  defaultTextures: []
+  nonModifiableTextures: []
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 169018
+  packageName: 'PRO Effects: FPS Muzzle flashes & Impacts'
+  packageVersion: 1.2
+  assetPath: Assets/Knife/PRO Effects FPS Muzzle flashes & Impacts/Particles/Shaders/Particle
+    Channel Packed Unlit.shader
+  uploadId: 718241

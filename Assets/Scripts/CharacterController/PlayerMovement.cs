@@ -76,11 +76,16 @@ public class PlayerMovement : MonoBehaviour
     // items -- same push-values-in pattern as PlayerLook's FOV override.
     public void SetSprintBlocked(bool blocked) => _sprintBlocked = blocked;
 
+    // Same pattern -- caps ground speed to crouchSpeed while aiming, without this
+    // script needing to know anything about items.
+    public void SetAimSpeedOverride(bool isAiming) => _aimSpeedOverride = isAiming;
+
     private bool HasStamina => stamina == null || stamina.CurrentStamina > 0f;
     private bool CanJump => stamina == null || stamina.HasEnoughForJump;
 
     private CharacterController _characterController;
     private Vector3 _velocity;
+    private bool _aimSpeedOverride;
     private InputAction _moveAction;
     private InputAction _jumpAction;
     private InputAction _sprintAction;
@@ -691,7 +696,7 @@ public class PlayerMovement : MonoBehaviour
         Vector3 wishDir = transform.right * _moveInput.x + transform.forward * _moveInput.y;
         wishDir = Vector3.ClampMagnitude(wishDir, 1f);
 
-        float currentSpeed = IsCrouching ? crouchSpeed : (IsSprinting ? sprintSpeed : walkSpeed);
+        float currentSpeed = (IsCrouching || _aimSpeedOverride) ? crouchSpeed : (IsSprinting ? sprintSpeed : walkSpeed);
         Vector3 targetHorizontal = wishDir * currentSpeed;
 
         float accel = acceleration * (IsGrounded ? 1f : airMultiplier);

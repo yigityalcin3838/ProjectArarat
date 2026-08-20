@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: e6583a95ba7d5f04b967816f6cad6b94
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 169018
+  packageName: 'PRO Effects: FPS Muzzle flashes & Impacts'
+  packageVersion: 1.2
+  assetPath: Assets/Knife/PRO Effects FPS Muzzle flashes & Impacts/Particles/Prefabs/Explosions/Explosion
+    Molotov.prefab
+  uploadId: 718241

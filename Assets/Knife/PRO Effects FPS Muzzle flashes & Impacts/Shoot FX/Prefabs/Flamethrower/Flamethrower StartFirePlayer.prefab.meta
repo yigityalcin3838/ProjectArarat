@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 21f8bf6225932654fbf0812cde4ed4b9
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 169018
+  packageName: 'PRO Effects: FPS Muzzle flashes & Impacts'
+  packageVersion: 1.2
+  assetPath: Assets/Knife/PRO Effects FPS Muzzle flashes & Impacts/Shoot FX/Prefabs/Flamethrower/Flamethrower
+    StartFirePlayer.prefab
+  uploadId: 718241

@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: c7b0ffe8fe565bc49bec453bf0813522
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 169018
+  packageName: 'PRO Effects: FPS Muzzle flashes & Impacts'
+  packageVersion: 1.2
+  assetPath: Assets/Knife/PRO Effects FPS Muzzle flashes & Impacts/Particles/Prefabs/Explosions/Explosion
+    Rocket.prefab
+  uploadId: 718241

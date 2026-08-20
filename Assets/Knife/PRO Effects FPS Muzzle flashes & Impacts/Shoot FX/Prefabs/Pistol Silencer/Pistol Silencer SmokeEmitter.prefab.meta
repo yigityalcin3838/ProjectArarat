@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 450c45a3a6df0dd4588e00392426c70f
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 169018
+  packageName: 'PRO Effects: FPS Muzzle flashes & Impacts'
+  packageVersion: 1.2
+  assetPath: Assets/Knife/PRO Effects FPS Muzzle flashes & Impacts/Shoot FX/Prefabs/Pistol
+    Silencer/Pistol Silencer SmokeEmitter.prefab
+  uploadId: 718241

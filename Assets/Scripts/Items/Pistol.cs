@@ -1,3 +1,4 @@
+using Knife.Effects;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -15,14 +16,26 @@ public class Pistol : Item
     [Header("Fire")]
     [SerializeField] private Animator weaponAnimator;
     [SerializeField] private string fireTrigger = "Fire";
-    [SerializeField] private float fireHipHoldDuration = 0.2f;
+    [SerializeField] private string reloadTrigger = "Reload";
+    [SerializeField] private string takeTrigger = "Take";
+    [SerializeField] private string holsterTrigger = "Holster";
+    [SerializeField] private ParticleGroupEmitter muzzleFlashEmitter;
+    [SerializeField] private ParticleGroupEmitter shellEjectEmitter;
 
-    [Header("Fire Camera Kick")]
-    [SerializeField] private float fireRollKickAmount = 4f;
-    [SerializeField] private float minFirePitchKickAmount = 2f;
-    [SerializeField] private float maxFirePitchKickAmount = 5f;
-    [SerializeField] private float cameraKickSpring = 200f;
-    [SerializeField] private float cameraKickDamping = 20f;
+    [Header("Ammo")]
+    [SerializeField] private int magazineCapacity = 12;
+
+    [Header("Hit Detection")]
+    [SerializeField] private float maxRange = 100f;
+
+    [Header("Bloom")]
+    [SerializeField] private float maxBloomAngle = 5f;
+    [SerializeField] private float bloomPerShot = 1f;
+    [SerializeField] private float bloomRecoverySpeed = 5f;
+
+    [Header("Hit Marker (Placeholder)")]
+    [SerializeField] private float hitMarkerSize = 0.1f;
+    [SerializeField] private float hitMarkerLifetime = 2f;
 
     [Header("Movement Effects")]
     [SerializeField] private PlayerMovement movement;
@@ -42,6 +55,7 @@ public class Pistol : Item
     [SerializeField] private float bobRollAmount = 2f;
     [SerializeField] private float bobSprintSpeedMultiplier = 1.5f;
     [SerializeField] private float bobSprintIntensityMultiplier = 1.5f;
+    [SerializeField] private float aimBobMultiplier = 0.3f;
     [SerializeField] private float bobSmoothing = 8f;
 
     [Header("Rotational Sway")]
@@ -63,6 +77,7 @@ public class Pistol : Item
     [SerializeField] private float breathVerticalAmount = 0.01f;
     [SerializeField] private float breathPitchAmount = 1f;
     [SerializeField] private float breathRollAmount = 1f;
+    [SerializeField] private float aimBreathMultiplier = 0.3f;
     [SerializeField] private float breathSmoothing = 4f;
 
     [Header("Jump / Land Kick")]
@@ -74,7 +89,17 @@ public class Pistol : Item
     [SerializeField] private float kickSpring = 200f;
     [SerializeField] private float kickDamping = 20f;
 
+    [Header("Fire Camera Kick")]
+    [SerializeField] private float cameraKickAmount = 1.5f;
+    [SerializeField] private float cameraKickHorizontalAmount = 1f;
+    [SerializeField] private float cameraKickSpring = 200f;
+    [SerializeField] private float cameraKickDamping = 20f;
+    [SerializeField] private float cameraRollShakeAmount = 1f;
+    [SerializeField] private float cameraRollShakeSpring = 200f;
+    [SerializeField] private float cameraRollShakeDamping = 20f;
+
     [Header("Weapon Pose")]
+    [SerializeField] private float fireHipHoldDuration = 0.2f;
     [SerializeField] private Transform posDeltaPivot;
     [SerializeField] private Vector3 hipPosition;
     [SerializeField] private Vector3 hipRotation;
@@ -105,6 +130,10 @@ public class Pistol : Item
     private InputAction _aimAction;
     private InputAction _attackAction;
     private InputAction _lookAction;
+    private InputAction _reloadAction;
+    private int[] _magazineAmmo = new int[2];
+    private int _activeMagazineIndex;
+    private float _currentBloom;
     private float _currentTilt;
     private Vector3 _bobBaseLocalPosition;
     private Quaternion _bobBaseLocalRotation;
@@ -129,6 +158,8 @@ public class Pistol : Item
     private float _kickRotationOffset;
     private float _kickRotationVelocity;
     private float _fireHipTimer;
+    private float _fireCooldownTimer;
+    private float _reloadTimer;
     private float _moveTimer;
 
     private void Awake()
@@ -166,17 +197,33 @@ public class Pistol : Item
             _aimAction = playerMap.FindAction("Aim", throwIfNotFound: true);
             _attackAction = playerMap.FindAction("Attack", throwIfNotFound: true);
             _lookAction = playerMap.FindAction("Look", throwIfNotFound: true);
+            _reloadAction = playerMap.FindAction("Reload", throwIfNotFound: true);
         }
+
+        // Two magazines, swapped (not refilled) on reload -- picking up ammo/mags
+        // from the ground later is what actually replenishes them.
+        _magazineAmmo[0] = magazineCapacity;
+        _magazineAmmo[1] = magazineCapacity;
     }
 
     private void OnApplicationQuit() => _isQuitting = true;
 
     private void OnEnable()
     {
+        // A quick re-equip during a still-running holster's IK-release wait
+        // must not let that stale coroutine later snap this freshly-drawn
+        // weapon back to the holster and clear the hand IK we're about to set.
+        if (_holsterIKReleaseCoroutine != null)
+        {
+            StopCoroutine(_holsterIKReleaseCoroutine);
+            _holsterIKReleaseCoroutine = null;
+        }
+
         SnapTo(handGrip);
+        weaponAnimator?.SetTrigger(takeTrigger);
         _aimAction?.Enable();
         _attackAction?.Enable();
-        playerLook?.SetCameraKickProfile(cameraKickSpring, cameraKickDamping);
+        _reloadAction?.Enable();
 
         if (posDeltaPivot != null)
         {
@@ -185,32 +232,48 @@ public class Pistol : Item
             posDeltaPivot.localPosition = hipPosition;
             posDeltaPivot.localRotation = _currentAdsRotation;
         }
-
-        if (playerAnimator == null)
-            return;
-
-        playerAnimator.SetRightHandIKTarget(rightGripPoint, rightElbowHint);
-        playerAnimator.SetLeftHandIKTarget(leftGripPoint, leftElbowHint);
-        playerAnimator.SetAimRigWeightOverride(spineAimWeight, chestAimWeight, upperChestAimWeight, neckAimWeight);
     }
 
     private void OnDisable()
     {
-        SnapTo(holster);
+        weaponAnimator?.SetTrigger(holsterTrigger);
         _aimAction?.Disable();
         _attackAction?.Disable();
+        _reloadAction?.Disable();
         playerLook?.ClearFovOverride();
-        playerLook?.ClearCameraKickProfile();
         postProcessEffects?.SetAiming(false);
         movement?.SetSprintBlocked(false);
-        playerAnimator?.ClearHandIKTargets();
+        movement?.SetAimSpeedOverride(false);
+
+        // Cleared immediately (now lerped, so this fades smoothly) rather than
+        // delayed to the end of the holster clip like hand IK below -- the aim
+        // rig otherwise keeps twisting the spine/chest/neck to track the gun's
+        // own barrel direction for the whole clip, and a holster clip swings
+        // that barrel down/away, which reads as the torso briefly contorting.
         playerAnimator?.ClearAimRigWeightOverride();
+
+        // Hand IK keeps tracking the grip points (pistol stays parented under
+        // handGrip) for the whole holster clip instead of letting go the
+        // instant OnDisable fires -- only once the clip has actually finished
+        // does it snap to the real holster socket and let go of IK.
+        StartHolsterIKRelease(GetClipLength(holsterTrigger));
     }
 
     private void Update()
     {
         bool isAiming = _aimAction != null && _aimAction.IsPressed();
         postProcessEffects?.SetAiming(isAiming);
+
+        // Pushed every frame (not just once at equip) so grip point/hint
+        // reassignments and the aim weight sliders below stay live-tweakable
+        // in the Inspector while playing, instead of only taking effect on
+        // the next re-equip.
+        playerAnimator?.SetRightHandIKTarget(rightGripPoint, rightElbowHint);
+        playerAnimator?.SetLeftHandIKTarget(leftGripPoint, leftElbowHint);
+        playerAnimator?.SetAimRigWeightOverride(spineAimWeight, chestAimWeight, upperChestAimWeight, neckAimWeight);
+
+        playerLook?.SetFireKickProfile(cameraKickSpring, cameraKickDamping);
+        playerLook?.SetRollShakeProfile(cameraRollShakeSpring, cameraRollShakeDamping);
 
         if (_aimAction != null && playerLook != null)
         {
@@ -227,13 +290,45 @@ public class Pistol : Item
 
         // Can't sprint while aiming down sights or right after firing.
         movement?.SetSprintBlocked(isAiming || isFiring);
+        movement?.SetAimSpeedOverride(isAiming);
 
-        if (_attackAction != null && _attackAction.WasPerformedThisFrame())
+        if (_fireCooldownTimer > 0f)
+            _fireCooldownTimer -= Time.deltaTime;
+
+        if (_reloadTimer > 0f)
+            _reloadTimer -= Time.deltaTime;
+
+        bool isReloading = _reloadTimer > 0f;
+
+        bool isSprintingForReload = movement != null && movement.IsSprintingStable;
+
+        if (_reloadAction != null && _reloadAction.WasPerformedThisFrame() && !isReloading && !isSprintingForReload)
         {
+            _activeMagazineIndex = 1 - _activeMagazineIndex;
+            weaponAnimator?.SetTrigger(reloadTrigger);
+            _reloadTimer = GetClipLength(reloadTrigger);
+        }
+
+        _currentBloom = Mathf.Max(0f, _currentBloom - bloomRecoverySpeed * Time.deltaTime);
+
+        // Fire rate is capped to the fire clip's own length -- can't fire again
+        // until it's finished playing, and can't fire at all while reloading.
+        if (_attackAction != null && _attackAction.WasPerformedThisFrame() && _fireCooldownTimer <= 0f && !isReloading && _magazineAmmo[_activeMagazineIndex] > 0)
+        {
+            _magazineAmmo[_activeMagazineIndex]--;
+            _fireCooldownTimer = GetClipLength(fireTrigger);
+
             weaponAnimator?.SetTrigger(fireTrigger);
             _fireHipTimer = fireHipHoldDuration;
-            playerLook?.AddRollKickImpulse(Random.value < 0.5f ? fireRollKickAmount : -fireRollKickAmount);
-            playerLook?.AddPitchKickImpulse(Random.Range(minFirePitchKickAmount, maxFirePitchKickAmount));
+
+            muzzleFlashEmitter?.Emit(1);
+            shellEjectEmitter?.Emit(1);
+
+            FireHitscan();
+
+            _currentBloom = Mathf.Min(maxBloomAngle, _currentBloom + bloomPerShot);
+
+            playerLook?.AddFireKick(cameraKickAmount, cameraKickHorizontalAmount, cameraRollShakeAmount);
         }
 
         // If tiltTarget sits under something with its own MatchCameraRotation
@@ -254,7 +349,7 @@ public class Pistol : Item
             bool isMoving = movement.IsGrounded && !movement.IsMovementLocked && movement.MoveInput.sqrMagnitude > 0.01f;
             bool isSprintingBob = movement.IsSprintingStable;
             float speedRatio = isSprintingBob ? bobSprintSpeedMultiplier : 1f;
-            float intensityRatio = isSprintingBob ? bobSprintIntensityMultiplier : 1f;
+            float intensityRatio = (isSprintingBob ? bobSprintIntensityMultiplier : 1f) * (isAiming ? aimBobMultiplier : 1f);
 
             if (isMoving)
                 _bobTimer += Time.deltaTime * bobFrequency * speedRatio;
@@ -312,11 +407,11 @@ public class Pistol : Item
             bool isRunning = movement != null && movement.IsSprintingStable;
 
             // Only counts up while walk is actually the pose that would apply --
-            // aiming, firing or breaking into a run all take priority over walk,
-            // so any of those resets the timer too, not just stopping. That way
-            // walk pose always has to wait out the delay again after being
-            // interrupted by anything, not just resume instantly once it's clear.
-            bool wantsWalkPose = isMoving && !isAiming && !isFiring && !isRunning;
+            // aiming, firing, reloading or breaking into a run all take priority
+            // over walk, so any of those resets the timer too, not just stopping.
+            // That way walk pose always has to wait out the delay again after
+            // being interrupted by anything, not just resume instantly once clear.
+            bool wantsWalkPose = isMoving && !isAiming && !isFiring && !isRunning && !isReloading;
             if (wantsWalkPose)
                 _moveTimer += Time.deltaTime;
             else
@@ -324,7 +419,13 @@ public class Pistol : Item
 
             bool isMovingPastDelay = wantsWalkPose && _moveTimer >= walkPoseDelay;
 
-            if (isAiming)
+            if (isReloading)
+            {
+                targetPosition = hipPosition;
+                targetRotationEuler = hipRotation;
+                transitionSpeed = aimTransitionSpeed;
+            }
+            else if (isAiming)
             {
                 targetPosition = aimPosition;
                 targetRotationEuler = aimRotation;
@@ -364,14 +465,16 @@ public class Pistol : Item
 
         if (breathTarget != null)
         {
+            float breathIntensity = isAiming ? aimBreathMultiplier : 1f;
+
             _breathTimer += Time.deltaTime * breathFrequency;
             Vector3 targetBreathOffset = new Vector3(
-                Mathf.Sin(_breathTimer) * breathHorizontalAmount,
-                Mathf.Sin(_breathTimer * 0.5f) * breathVerticalAmount,
+                Mathf.Sin(_breathTimer) * breathHorizontalAmount * breathIntensity,
+                Mathf.Sin(_breathTimer * 0.5f) * breathVerticalAmount * breathIntensity,
                 0f);
             Vector2 targetBreathRotation = new Vector2(
-                Mathf.Sin(_breathTimer * 0.5f) * breathPitchAmount,
-                Mathf.Sin(_breathTimer) * breathRollAmount);
+                Mathf.Sin(_breathTimer * 0.5f) * breathPitchAmount * breathIntensity,
+                Mathf.Sin(_breathTimer) * breathRollAmount * breathIntensity);
 
             _currentBreathOffset = Vector3.Lerp(_currentBreathOffset, targetBreathOffset, breathSmoothing * Time.deltaTime);
             _currentBreathRotation = Vector2.Lerp(_currentBreathRotation, targetBreathRotation, breathSmoothing * Time.deltaTime);
@@ -407,6 +510,109 @@ public class Pistol : Item
             kickTarget.localPosition = pos;
             kickTarget.localRotation = _kickBaseLocalRotation * Quaternion.Euler(_kickRotationOffset, 0f, 0f);
         }
+    }
+
+    // The character's own pose (PistolAim layer weight, aim rig) switches
+    // instantly on the take/holster command -- only hand IK stays live past
+    // that, tracking the grip points for the holster clip's actual duration,
+    // so the hands don't let go of the gun before it's visually put away.
+    // Stops any still-running release first so a quick re-equip during a
+    // holster's tail doesn't have that older coroutine steal IK back off it.
+    private Coroutine _holsterIKReleaseCoroutine;
+
+    private void StartHolsterIKRelease(float duration)
+    {
+        if (_holsterIKReleaseCoroutine != null)
+            StopCoroutine(_holsterIKReleaseCoroutine);
+
+        // A GameObject torn down as part of hierarchy teardown (stopping Play
+        // Mode, quitting, a parent getting deactivated) can't host a new
+        // coroutine -- and there's nothing left to visually finish for in
+        // that case anyway, so just jump straight to the end state instead.
+        if (!gameObject.activeInHierarchy)
+        {
+            SnapTo(holster);
+            playerAnimator?.ClearHandIKTargets();
+            return;
+        }
+
+        _holsterIKReleaseCoroutine = StartCoroutine(HolsterIKReleaseRoutine(duration));
+    }
+
+    private System.Collections.IEnumerator HolsterIKReleaseRoutine(float duration)
+    {
+        yield return new WaitForSeconds(duration);
+        SnapTo(holster);
+        playerAnimator?.ClearHandIKTargets();
+        _holsterIKReleaseCoroutine = null;
+    }
+
+    // Reads the clip length straight from the Animator Controller already
+    // assigned to weaponAnimator, matched by state/clip name -- no separate
+    // AnimationClip fields to keep in sync by hand.
+    private float GetClipLength(string clipName)
+    {
+        if (weaponAnimator == null || weaponAnimator.runtimeAnimatorController == null)
+            return 0f;
+
+        foreach (AnimationClip clip in weaponAnimator.runtimeAnimatorController.animationClips)
+        {
+            if (clip.name == clipName)
+                return clip.length;
+        }
+
+        return 0f;
+    }
+
+    private void FireHitscan()
+    {
+        if (playerLook == null || playerLook.CameraTransform == null)
+            return;
+
+        Transform cam = playerLook.CameraTransform;
+
+        // Spread within a cone around the camera's forward direction, widening
+        // with bloom -- this is what the shot actually travels along, not just a
+        // visual effect, so bloom genuinely affects where hits land.
+        Vector3 spreadDirection = Quaternion.Euler(Random.Range(-_currentBloom, _currentBloom), Random.Range(-_currentBloom, _currentBloom), 0f) * cam.forward;
+
+        // No layer mask -- hits anything with a collider.
+        if (Physics.Raycast(cam.position, spreadDirection, out RaycastHit hit, maxRange))
+            SpawnHitMarker(hit.point, hit.normal);
+    }
+
+    // Placeholder impact marker -- a plain red cube dropped at the hit point for
+    // now. Later this should pick a different prefab/decal per surface material
+    // instead of always the same one. Built with an explicit URP shader (not
+    // CreatePrimitive's default material) since the Built-in Standard shader
+    // renders pink under URP.
+    private static Material _hitMarkerMaterial;
+
+    private void SpawnHitMarker(Vector3 point, Vector3 normal)
+    {
+        if (_hitMarkerMaterial == null)
+        {
+            _hitMarkerMaterial = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
+            _hitMarkerMaterial.SetColor("_BaseColor", Color.red);
+        }
+
+        GameObject marker = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        marker.transform.SetPositionAndRotation(point, Quaternion.LookRotation(normal));
+        marker.transform.localScale = Vector3.one * hitMarkerSize;
+        Destroy(marker.GetComponent<Collider>());
+        marker.GetComponent<Renderer>().sharedMaterial = _hitMarkerMaterial;
+        Destroy(marker, hitMarkerLifetime);
+    }
+
+    private void OnGUI()
+    {
+        const float width = 240f;
+        const float height = 24f;
+        const float margin = 20f;
+        float x = Screen.width - width - margin;
+
+        GUI.Label(new Rect(x, Screen.height - height * 2f - margin, width, height), $"Magazine 1{(_activeMagazineIndex == 0 ? " (active)" : "")}: {_magazineAmmo[0]} / {magazineCapacity}");
+        GUI.Label(new Rect(x, Screen.height - height - margin, width, height), $"Magazine 2{(_activeMagazineIndex == 1 ? " (active)" : "")}: {_magazineAmmo[1]} / {magazineCapacity}");
     }
 
     private void SnapTo(Transform anchor)

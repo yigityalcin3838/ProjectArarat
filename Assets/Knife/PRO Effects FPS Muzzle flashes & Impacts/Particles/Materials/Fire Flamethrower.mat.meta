@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: e8ea6250a738dde43bb5b2c0edd03b34
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 169018
+  packageName: 'PRO Effects: FPS Muzzle flashes & Impacts'
+  packageVersion: 1.2
+  assetPath: Assets/Knife/PRO Effects FPS Muzzle flashes & Impacts/Particles/Materials/Fire
+    Flamethrower.mat
+  uploadId: 718241
