@@ -18,6 +18,10 @@ public class PlayerPostProcessEffects : MonoBehaviour
     [SerializeField] private float crouchVignetteIntensity = 0.15f;
     [SerializeField] private float crouchVignetteSmoothness = 0.3f;
 
+    [Header("Aim Effect")]
+    [SerializeField] private float aimVignetteIntensity = 0.15f;
+    [SerializeField] private float aimVignetteSmoothness = 0.3f;
+
     [Header("Smoothing")]
     [SerializeField] private float effectSmoothSpeed = 4f;
 
@@ -25,6 +29,12 @@ public class PlayerPostProcessEffects : MonoBehaviour
     private ChromaticAberration _chromaticAberration;
     private float _baseVignetteIntensity;
     private float _baseVignetteSmoothness;
+    private bool _isAiming;
+
+    // Lets an equipped item (e.g. Pistol) drive the aim vignette while it's
+    // active, without this script needing to know anything about items -- same
+    // push-values-in pattern as PlayerLook's FOV override.
+    public void SetAiming(bool isAiming) => _isAiming = isAiming;
 
     private void Awake()
     {
@@ -54,11 +64,12 @@ public class PlayerPostProcessEffects : MonoBehaviour
         }
 
         float crouchAmount = movement != null && movement.IsCrouching ? 1f : 0f;
+        float aimAmount = _isAiming ? 1f : 0f;
 
         if (_vignette != null)
         {
-            float targetIntensity = _baseVignetteIntensity + Mathf.Max(staminaAmount * lowStaminaVignetteIntensity, crouchAmount * crouchVignetteIntensity);
-            float targetSmoothness = _baseVignetteSmoothness + Mathf.Max(staminaAmount * lowStaminaVignetteSmoothness, crouchAmount * crouchVignetteSmoothness);
+            float targetIntensity = _baseVignetteIntensity + Mathf.Max(staminaAmount * lowStaminaVignetteIntensity, Mathf.Max(crouchAmount * crouchVignetteIntensity, aimAmount * aimVignetteIntensity));
+            float targetSmoothness = _baseVignetteSmoothness + Mathf.Max(staminaAmount * lowStaminaVignetteSmoothness, Mathf.Max(crouchAmount * crouchVignetteSmoothness, aimAmount * aimVignetteSmoothness));
 
             _vignette.intensity.value = Mathf.Lerp(_vignette.intensity.value, targetIntensity, effectSmoothSpeed * Time.deltaTime);
             _vignette.smoothness.value = Mathf.Lerp(_vignette.smoothness.value, targetSmoothness, effectSmoothSpeed * Time.deltaTime);

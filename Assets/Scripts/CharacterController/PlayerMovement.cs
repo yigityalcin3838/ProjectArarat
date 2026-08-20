@@ -61,10 +61,20 @@ public class PlayerMovement : MonoBehaviour
     public Vector2 MoveInput => _moveInput;
     public float WalkSpeed => walkSpeed;
     public float SprintSpeed => sprintSpeed;
-    public bool IsSprinting => IsGrounded && !IsCrouching && !IsInCar && _sprintAction.IsPressed() && _moveInput.sqrMagnitude > 0.01f && HasStamina;
-    public bool IsSprintingStable => IsGroundedStable && !IsCrouching && !IsInCar && _sprintAction.IsPressed() && _moveInput.sqrMagnitude > 0.01f && HasStamina;
+    public bool IsSprinting => IsGrounded && !IsCrouching && !IsInCar && !_sprintBlocked && _sprintAction.IsPressed() && _moveInput.sqrMagnitude > 0.01f && HasStamina;
+    public bool IsSprintingStable => IsGroundedStable && !IsCrouching && !IsInCar && !_sprintBlocked && _sprintAction.IsPressed() && _moveInput.sqrMagnitude > 0.01f && HasStamina;
     public bool IsClimbingLadder { get; private set; }
     public bool IsMovementLocked => _isEnteringLadder || _isPlayingLadderTransition || IsInCar;
+
+    // One-frame pulses for equipped items (e.g. Pistol) to react to with a
+    // one-shot effect (a jump/land kick) -- read-only, mirrors IsGrounded etc.
+    public bool JumpedThisFrame { get; private set; }
+    public bool LandedThisFrame { get; private set; }
+
+    // Lets an equipped item (e.g. Pistol) block sprinting while active (e.g. while
+    // aiming down sights), without PlayerMovement needing to know anything about
+    // items -- same push-values-in pattern as PlayerLook's FOV override.
+    public void SetSprintBlocked(bool blocked) => _sprintBlocked = blocked;
 
     private bool HasStamina => stamina == null || stamina.CurrentStamina > 0f;
     private bool CanJump => stamina == null || stamina.HasEnoughForJump;
@@ -97,7 +107,9 @@ public class PlayerMovement : MonoBehaviour
     private bool _isWaitingForCarShutdown;
 
     private Vector2 _moveInput;
+    private bool _sprintBlocked;
     private bool _jumpQueued;
+    private bool _wasGrounded;
     private float _lastGroundedTime;
     private Vector3 _groundNormal = Vector3.up;
 
@@ -140,6 +152,9 @@ public class PlayerMovement : MonoBehaviour
         if (Keyboard.current != null && Keyboard.current.tKey.wasPressedThisFrame)
             Time.timeScale = Mathf.Approximately(Time.timeScale, 1f) ? slowMoTimeScale : 1f;
 
+        JumpedThisFrame = false;
+        LandedThisFrame = false;
+
         _moveInput = _moveAction.ReadValue<Vector2>();
 
         if (_jumpAction.WasPerformedThisFrame())
@@ -151,6 +166,7 @@ public class PlayerMovement : MonoBehaviour
             else if (IsGrounded && !IsCrouching && !IsClimbingLadder && !IsInCar && CanJump)
             {
                 _jumpQueued = true;
+                JumpedThisFrame = true;
 
                 if (stamina != null)
                     stamina.ConsumeJumpStamina();
@@ -367,7 +383,7 @@ public class PlayerMovement : MonoBehaviour
                 rightHandTarget = _activeCar.GearGrip;
             else
                 rightHandTarget = _activeCar.RightHandGrip;
-            playerAnimator.SetRightHandIKTarget(rightHandTarget, _activeCar.HandIKTransitionDuration);
+            playerAnimator.SetRightHandIKTarget(rightHandTarget, transitionDuration: _activeCar.HandIKTransitionDuration);
 
             Transform leftHandTarget;
             if (_activeCar.IsDoorAnimating)
@@ -376,7 +392,7 @@ public class PlayerMovement : MonoBehaviour
                 leftHandTarget = _activeCar.HornGrip;
             else
                 leftHandTarget = _activeCar.LeftHandGrip;
-            playerAnimator.SetLeftHandIKTarget(leftHandTarget, _activeCar.HandIKTransitionDuration);
+            playerAnimator.SetLeftHandIKTarget(leftHandTarget, transitionDuration: _activeCar.HandIKTransitionDuration);
         }
     }
 
@@ -428,7 +444,7 @@ public class PlayerMovement : MonoBehaviour
         if (playerAnimator != null)
         {
             Transform leftHandTarget = _activeCar.IsDoorAnimating ? _activeCar.DoorGrip : _activeCar.LeftHandGrip;
-            playerAnimator.SetLeftHandIKTarget(leftHandTarget, _activeCar.HandIKTransitionDuration);
+            playerAnimator.SetLeftHandIKTarget(leftHandTarget, transitionDuration: _activeCar.HandIKTransitionDuration);
         }
 
         if (!complete)
@@ -452,8 +468,8 @@ public class PlayerMovement : MonoBehaviour
                 if (_activeCar != null)
                 {
                     Transform leftHandTarget = _activeCar.IsDoorAnimating ? _activeCar.DoorGrip : _activeCar.LeftHandGrip;
-                    playerAnimator.SetLeftHandIKTarget(leftHandTarget, _activeCar.HandIKTransitionDuration);
-                    playerAnimator.SetRightHandIKTarget(_activeCar.RightHandGrip, _activeCar.HandIKTransitionDuration);
+                    playerAnimator.SetLeftHandIKTarget(leftHandTarget, transitionDuration: _activeCar.HandIKTransitionDuration);
+                    playerAnimator.SetRightHandIKTarget(_activeCar.RightHandGrip, transitionDuration: _activeCar.HandIKTransitionDuration);
                 }
             }
         }
@@ -659,6 +675,12 @@ public class PlayerMovement : MonoBehaviour
         bool hitGround = Physics.SphereCast(origin, radius, Vector3.down, out RaycastHit hit, groundCheckDistance + 0.05f);
         IsGrounded = hitGround && Vector3.Angle(hit.normal, Vector3.up) <= maxSlopeAngle;
         _groundNormal = hitGround ? hit.normal : Vector3.up;
+
+        // _velocity.y still holds the pre-impact falling speed here -- ApplyGravity
+        // (which resets it once grounded) hasn't run yet this frame.
+        if (IsGrounded && !_wasGrounded && _velocity.y < 0f)
+            LandedThisFrame = true;
+        _wasGrounded = IsGrounded;
 
         if (IsGrounded)
             _lastGroundedTime = Time.time;

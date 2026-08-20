@@ -38,22 +38,6 @@ MonoBehaviour:
   intensity:
     m_OverrideState: 1
     m_Value: 3.5
---- !u!114 &-7750755424749557576
-MonoBehaviour:
-  m_ObjectHideFlags: 3
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 0}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 60f3b30c03e6ba64d9a27dc9dba8f28d, type: 3}
-  m_Name: OutlineVolumeComponent
-  m_EditorClassIdentifier: 
-  active: 1
-  Enabled:
-    m_OverrideState: 1
-    m_Value: 0
 --- !u!114 &-7743500325797982168
 MonoBehaviour:
   m_ObjectHideFlags: 3
@@ -125,7 +109,7 @@ MonoBehaviour:
     m_Value: 0
   intensity:
     m_OverrideState: 1
-    m_Value: 0.5
+    m_Value: 1
   response:
     m_OverrideState: 1
     m_Value: 0.8
@@ -172,34 +156,6 @@ MonoBehaviour:
   maxNits:
     m_OverrideState: 1
     m_Value: 1000
---- !u!114 &-5139089513906902183
-MonoBehaviour:
-  m_ObjectHideFlags: 3
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 0}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 5a00a63fdd6bd2a45ab1f2d869305ffd, type: 3}
-  m_Name: OasisFogVolumeComponent
-  m_EditorClassIdentifier: 
-  active: 1
-  Density:
-    m_OverrideState: 1
-    m_Value: 0
-  StartDistance:
-    m_OverrideState: 1
-    m_Value: 0
-  HeightRange:
-    m_OverrideState: 1
-    m_Value: {x: 0, y: 50}
-  Tint:
-    m_OverrideState: 1
-    m_Value: {r: 1, g: 1, b: 1, a: 1}
-  SunScatteringIntensity:
-    m_OverrideState: 1
-    m_Value: 2
 --- !u!114 &-4463884970436517307
 MonoBehaviour:
   m_ObjectHideFlags: 3
@@ -366,7 +322,7 @@ MonoBehaviour:
   - {fileID: 7518938298396184218}
   - {fileID: -1410297666881709256}
   - {fileID: 7721575116644871432}
-  - {fileID: -8027545618644589647}
+  - {fileID: 3378505394163896217}
 --- !u!114 &853819529557874667
 MonoBehaviour:
   m_ObjectHideFlags: 3
@@ -452,7 +408,7 @@ MonoBehaviour:
     m_Value: {x: 1, y: 1, z: 1, w: 0}
   midtones:
     m_OverrideState: 1
-    m_Value: {x: 1, y: 1, z: 1, w: 0}
+    m_Value: {x: 1, y: 1, z: 1, w: 0.053583395}
   highlights:
     m_OverrideState: 1
     m_Value: {x: 1, y: 1, z: 1, w: 0}
@@ -677,6 +633,22 @@ MonoBehaviour:
   contribution:
     m_OverrideState: 1
     m_Value: 0
+--- !u!114 &3378505394163896217
+MonoBehaviour:
+  m_ObjectHideFlags: 3
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6cb1b24c1a93e3f498b0f07fb57e736b, type: 3}
+  m_Name: ScreenSharpeningVolume
+  m_EditorClassIdentifier: Assembly-CSharp::ScreenSharpeningVolume
+  active: 1
+  intensity:
+    m_OverrideState: 1
+    m_Value: 3
 --- !u!114 &3959858460715838825
 MonoBehaviour:
   m_ObjectHideFlags: 3
@@ -713,7 +685,7 @@ MonoBehaviour:
     m_Value: 5.6
   focalLength:
     m_OverrideState: 1
-    m_Value: 25
+    m_Value: 17
   bladeCount:
     m_OverrideState: 1
     m_Value: 5

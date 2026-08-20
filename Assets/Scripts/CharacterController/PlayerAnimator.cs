@@ -7,6 +7,7 @@ public class PlayerAnimator : MonoBehaviour
 {
     [SerializeField] private PlayerMovement movement;
     [SerializeField] private PlayerLook look;
+    [SerializeField] private PlayerItems items;
     [SerializeField] private float turnSpeed = 720f;
     [SerializeField] private float forwardAmountDampTime = 0.15f;
     [SerializeField] private float turnInPlaceToleranceAngle = 90f;
@@ -18,13 +19,14 @@ public class PlayerAnimator : MonoBehaviour
     [SerializeField] private float footIKHeightSmoothSpeed = 10f;
     [SerializeField] private float pelvisAdjustSpeed = 8f;
 
-    [Header("Ladder Aim Lock")]
+    [Header("Aim Rig")]
     [SerializeField] private MultiAimConstraint spineAim;
     [SerializeField] private MultiAimConstraint chestAim;
     [SerializeField] private MultiAimConstraint upperChestAim;
+    [SerializeField] private MultiAimConstraint neckAim;
 
     [Header("Peek")]
-    [SerializeField] private float peekMaxAngle = 20f;
+    [SerializeField] private float peekMaxOffset = 0.2f;
     [SerializeField] private float peekBendSpeed = 8f;
 
     [Header("Car Turn Lag")]
@@ -33,6 +35,9 @@ public class PlayerAnimator : MonoBehaviour
 
     [Header("Hand IK")]
     [SerializeField] private float handIKTransitionDuration = 0.08f;
+
+    [Header("Layer Weights")]
+    [SerializeField] private float layerWeightTransitionSpeed = 8f;
 
     private static readonly int ForwardAmountHash = Animator.StringToHash("ForwardAmount");
     private static readonly int IsCrouchingHash = Animator.StringToHash("IsCrouching");
@@ -51,20 +56,34 @@ public class PlayerAnimator : MonoBehaviour
     private static readonly int CarEnterHash = Animator.StringToHash("CarEnter");
     private static readonly int CarExitHash = Animator.StringToHash("CarExit");
     private static readonly int CarEnterCompleteHash = Animator.StringToHash("CarEnterComplete");
+    private static readonly int IsAimingHash = Animator.StringToHash("IsAiming");
 
     private Animator _animator;
+    private int _pistolAimLayerIndex;
+    private int _ladderCarLayerIndex;
+    private float _pistolAimLayerWeight;
+    private float _ladderCarLayerWeight;
     private float _facingOffset;
     private bool _isRecoveringFromTurn;
-    private float _currentPelvisOffset;
     private float _leftFootHeight;
     private float _rightFootHeight;
-    private float _spineAimBaseWeight;
-    private float _chestAimBaseWeight;
-    private float _upperChestAimBaseWeight;
-    private float _currentPeekAngle;
+    private float _currentPelvisOffset;
+    private bool _hasAimRigWeightOverride;
+    private bool _wasAimRigWeightOverrideActive;
+    private float _spineAimWeightOverride;
+    private float _chestAimWeightOverride;
+    private float _upperChestAimWeightOverride;
+    private float _neckAimWeightOverride;
+    private float _spineAimPreOverrideWeight;
+    private float _chestAimPreOverrideWeight;
+    private float _upperChestAimPreOverrideWeight;
+    private float _neckAimPreOverrideWeight;
+    private float _currentPeekOffset;
     private Quaternion _smoothedCarRotation;
     private Transform _leftHandIKTarget;
     private Transform _rightHandIKTarget;
+    private Transform _leftHandIKHint;
+    private Transform _rightHandIKHint;
     private float? _leftHandIKTransitionDurationOverride;
     private float? _rightHandIKTransitionDurationOverride;
     private readonly HandIKState _leftHandIKState = new HandIKState();
@@ -85,13 +104,11 @@ public class PlayerAnimator : MonoBehaviour
     private void Awake()
     {
         _animator = GetComponent<Animator>();
+        _pistolAimLayerIndex = _animator.GetLayerIndex("PistolAim");
+        _ladderCarLayerIndex = _animator.GetLayerIndex("LadderCar");
 
         _leftFootHeight = _animator.GetBoneTransform(HumanBodyBones.LeftFoot).position.y;
         _rightFootHeight = _animator.GetBoneTransform(HumanBodyBones.RightFoot).position.y;
-
-        if (spineAim != null) _spineAimBaseWeight = spineAim.weight;
-        if (chestAim != null) _chestAimBaseWeight = chestAim.weight;
-        if (upperChestAim != null) _upperChestAimBaseWeight = upperChestAim.weight;
 
         _smoothedCarRotation = movement.transform.rotation;
     }
@@ -102,7 +119,27 @@ public class PlayerAnimator : MonoBehaviour
         _animator.SetFloat(ClimbSpeedHash, movement.IsClimbingLadder ? movement.MoveInput.y : 0f);
         _animator.SetBool(IsInCarHash, movement.IsInCar);
 
-        UpdateLadderAimLock();
+        bool isAiming = items != null && items.HasEquippedItem;
+        _animator.SetBool(IsAimingHash, isAiming);
+
+        // Lerped instead of snapped straight to 0/1 -- an instant layer weight
+        // jump pops the masked bones (arms/whole body) directly to the other
+        // layer's pose in a single frame, which reads as a hard, sudden jerk in
+        // the first-person view (most visibly the weapon/arms, right in frame).
+        if (_pistolAimLayerIndex >= 0)
+        {
+            _pistolAimLayerWeight = Mathf.Lerp(_pistolAimLayerWeight, isAiming ? 1f : 0f, layerWeightTransitionSpeed * Time.deltaTime);
+            _animator.SetLayerWeight(_pistolAimLayerIndex, _pistolAimLayerWeight);
+        }
+
+        if (_ladderCarLayerIndex >= 0)
+        {
+            float targetLadderCarWeight = (movement.IsClimbingLadder || movement.IsInCar) ? 1f : 0f;
+            _ladderCarLayerWeight = Mathf.Lerp(_ladderCarLayerWeight, targetLadderCarWeight, layerWeightTransitionSpeed * Time.deltaTime);
+            _animator.SetLayerWeight(_ladderCarLayerIndex, _ladderCarLayerWeight);
+        }
+
+        UpdateAimRigWeightOverride();
 
         if (movement.IsClimbingLadder || movement.IsInCar)
         {
@@ -125,6 +162,15 @@ public class PlayerAnimator : MonoBehaviour
             float rawAngle = Mathf.Atan2(moveDir.x, moveDir.y) * Mathf.Rad2Deg;
             float referenceAngle = isBackward ? (rawAngle >= 0f ? 180f : -180f) : 0f;
             float targetFacingOffset = rawAngle - referenceAngle;
+
+            // A sudden strafe reversal (D -> A or vice versa) can land the target
+            // almost exactly 180 degrees from the current facing -- a near-tie for
+            // "shortest path" that MoveTowardsAngle can resolve either direction
+            // depending on tiny per-frame timing differences, occasionally spinning
+            // the character through its back instead of the front. Bias near-ties
+            // toward the front so it always resolves the same way.
+            if (Mathf.Abs(Mathf.DeltaAngle(_facingOffset, targetFacingOffset)) > 175f)
+                targetFacingOffset = Mathf.MoveTowardsAngle(targetFacingOffset, 0f, 5f);
 
             _facingOffset = Mathf.MoveTowardsAngle(_facingOffset, targetFacingOffset, turnSpeed * Time.deltaTime);
             _isRecoveringFromTurn = false;
@@ -229,15 +275,32 @@ public class PlayerAnimator : MonoBehaviour
 
     public void PlayCarEnterComplete() => _animator.SetTrigger(CarEnterCompleteHash);
 
-    public void SetLeftHandIKTarget(Transform target, float? transitionDuration = null)
+    // Lets an equipped item (e.g. Pistol) override the spine/chest/upperChest/neck
+    // aim rig weights (independently per bone) while it's active, without
+    // PlayerAnimator needing to know anything about items -- same push-values-in
+    // pattern as hand IK targets.
+    public void SetAimRigWeightOverride(float spineWeight, float chestWeight, float upperChestWeight, float neckWeight)
+    {
+        _hasAimRigWeightOverride = true;
+        _spineAimWeightOverride = spineWeight;
+        _chestAimWeightOverride = chestWeight;
+        _upperChestAimWeightOverride = upperChestWeight;
+        _neckAimWeightOverride = neckWeight;
+    }
+
+    public void ClearAimRigWeightOverride() => _hasAimRigWeightOverride = false;
+
+    public void SetLeftHandIKTarget(Transform target, Transform hint = null, float? transitionDuration = null)
     {
         _leftHandIKTarget = target;
+        _leftHandIKHint = hint;
         _leftHandIKTransitionDurationOverride = transitionDuration;
     }
 
-    public void SetRightHandIKTarget(Transform target, float? transitionDuration = null)
+    public void SetRightHandIKTarget(Transform target, Transform hint = null, float? transitionDuration = null)
     {
         _rightHandIKTarget = target;
+        _rightHandIKHint = hint;
         _rightHandIKTransitionDurationOverride = transitionDuration;
     }
 
@@ -245,6 +308,8 @@ public class PlayerAnimator : MonoBehaviour
     {
         _leftHandIKTarget = null;
         _rightHandIKTarget = null;
+        _leftHandIKHint = null;
+        _rightHandIKHint = null;
     }
 
     public float CarTransitionProgress
@@ -276,41 +341,80 @@ public class PlayerAnimator : MonoBehaviour
 
     private AnimatorStateInfo GetStateInfo(string stateName, out bool isInState)
     {
-        if (_animator.IsInTransition(0))
+        // LadderClimbFinish/CarEntry/CarExit all live on the LadderCar layer, not
+        // Base Layer (index 0) -- querying layer 0 here would never find them.
+        int layer = _ladderCarLayerIndex >= 0 ? _ladderCarLayerIndex : 0;
+
+        if (_animator.IsInTransition(layer))
         {
-            AnimatorStateInfo nextInfo = _animator.GetNextAnimatorStateInfo(0);
+            AnimatorStateInfo nextInfo = _animator.GetNextAnimatorStateInfo(layer);
             isInState = nextInfo.IsName(stateName);
             return nextInfo;
         }
 
-        AnimatorStateInfo currentInfo = _animator.GetCurrentAnimatorStateInfo(0);
+        AnimatorStateInfo currentInfo = _animator.GetCurrentAnimatorStateInfo(layer);
         isInState = currentInfo.IsName(stateName);
         return currentInfo;
     }
 
-    private void UpdateLadderAimLock()
+    // Only touches the constraints while an item is pushing an override, and restores
+    // whatever they were set to right before that override started (not a value
+    // cached once at Awake) the instant it ends -- otherwise leaves their weight
+    // alone entirely, so it stays freely tweakable on the constraint's own Inspector
+    // slider (including live in Play Mode) whenever no item is overriding it.
+    private void UpdateAimRigWeightOverride()
     {
-        float multiplier = movement.IsClimbingLadder || movement.IsInCar ? 0f : 1f;
+        if (_hasAimRigWeightOverride)
+        {
+            if (!_wasAimRigWeightOverrideActive)
+            {
+                if (spineAim != null) _spineAimPreOverrideWeight = spineAim.weight;
+                if (chestAim != null) _chestAimPreOverrideWeight = chestAim.weight;
+                if (upperChestAim != null) _upperChestAimPreOverrideWeight = upperChestAim.weight;
+                if (neckAim != null) _neckAimPreOverrideWeight = neckAim.weight;
+            }
 
-        if (spineAim != null) spineAim.weight = _spineAimBaseWeight * multiplier;
-        if (chestAim != null) chestAim.weight = _chestAimBaseWeight * multiplier;
-        if (upperChestAim != null) upperChestAim.weight = _upperChestAimBaseWeight * multiplier;
+            if (spineAim != null) spineAim.weight = _spineAimWeightOverride;
+            if (chestAim != null) chestAim.weight = _chestAimWeightOverride;
+            if (upperChestAim != null) upperChestAim.weight = _upperChestAimWeightOverride;
+            if (neckAim != null) neckAim.weight = _neckAimWeightOverride;
+        }
+        else if (_wasAimRigWeightOverrideActive)
+        {
+            if (spineAim != null) spineAim.weight = _spineAimPreOverrideWeight;
+            if (chestAim != null) chestAim.weight = _chestAimPreOverrideWeight;
+            if (upperChestAim != null) upperChestAim.weight = _upperChestAimPreOverrideWeight;
+            if (neckAim != null) neckAim.weight = _neckAimPreOverrideWeight;
+        }
+
+        _wasAimRigWeightOverrideActive = _hasAimRigWeightOverride;
     }
 
     private void OnAnimatorIK(int layerIndex)
     {
-        if (layerIndex != 0)
+        // Car/ladder grip IK (steering wheel, gear, handbrake, door) now needs to
+        // apply on the LadderCar layer too -- IK is set per-layer, so a layer
+        // that never calls the Set* methods during its own OnAnimatorIK gets no
+        // IK influence even if another layer already set the same goal this frame.
+        if (layerIndex != 0 && layerIndex != _ladderCarLayerIndex)
             return;
 
-        ApplyHandIK(AvatarIKGoal.LeftHand, HumanBodyBones.LeftHand, _leftHandIKTarget, _leftHandIKState, _leftHandIKTransitionDurationOverride);
-        ApplyHandIK(AvatarIKGoal.RightHand, HumanBodyBones.RightHand, _rightHandIKTarget, _rightHandIKState, _rightHandIKTransitionDurationOverride);
+        // Foot/pelvis IK only makes sense while planted -- mid-stride the swing
+        // foot is naturally lifted well off the ground as part of ordinary
+        // walking/running, and a raycast from it can still reach the real floor
+        // below, which this system would otherwise mistake for uneven ground and
+        // pull the pelvis down on every step.
+        bool isStationary = movement.MoveInput.sqrMagnitude < 0.01f;
 
-        if (movement.IsClimbingLadder || movement.IsInCar)
+        if (movement.IsClimbingLadder || movement.IsInCar || !isStationary)
         {
             _animator.SetIKPositionWeight(AvatarIKGoal.LeftFoot, 0f);
             _animator.SetIKRotationWeight(AvatarIKGoal.LeftFoot, 0f);
             _animator.SetIKPositionWeight(AvatarIKGoal.RightFoot, 0f);
             _animator.SetIKRotationWeight(AvatarIKGoal.RightFoot, 0f);
+            _currentPelvisOffset = Mathf.Lerp(_currentPelvisOffset, 0f, pelvisAdjustSpeed * Time.deltaTime);
+            _animator.bodyPosition += Vector3.up * _currentPelvisOffset;
+            ApplyBothHandIK();
             return;
         }
 
@@ -337,6 +441,20 @@ public class PlayerAnimator : MonoBehaviour
 
         ApplyFootIK(AvatarIKGoal.LeftFoot, leftHitInfo, leftWeight, ref _leftFootHeight);
         ApplyFootIK(AvatarIKGoal.RightFoot, rightHitInfo, rightWeight, ref _rightFootHeight);
+
+        // Hand IK reads its target transforms' CURRENT positions -- calling this
+        // after the pelvis shift above (rather than before, like it used to) means
+        // a grip point that's a descendant of the skeleton (moves with bodyPosition)
+        // reports its already-shifted position, not a stale pre-shift one. That
+        // staleness was the actual cause of hands visibly detaching from the
+        // weapon when the pelvis dropped -- not the pelvis shift itself.
+        ApplyBothHandIK();
+    }
+
+    private void ApplyBothHandIK()
+    {
+        ApplyHandIK(AvatarIKGoal.LeftHand, AvatarIKHint.LeftElbow, HumanBodyBones.LeftHand, _leftHandIKTarget, _leftHandIKHint, _leftHandIKState, _leftHandIKTransitionDurationOverride);
+        ApplyHandIK(AvatarIKGoal.RightHand, AvatarIKHint.RightElbow, HumanBodyBones.RightHand, _rightHandIKTarget, _rightHandIKHint, _rightHandIKState, _rightHandIKTransitionDurationOverride);
     }
 
     private void ApplyPeek()
@@ -345,17 +463,35 @@ public class PlayerAnimator : MonoBehaviour
         if (spineBone == null)
             return;
 
-        float targetPeekAngle = -movement.PeekAmount * peekMaxAngle;
-        _currentPeekAngle = Mathf.Lerp(_currentPeekAngle, targetPeekAngle, peekBendSpeed * Time.deltaTime);
+        Transform upperChestBone = _animator.GetBoneTransform(HumanBodyBones.UpperChest);
 
-        spineBone.localRotation *= Quaternion.Euler(0f, 0f, _currentPeekAngle);
+        float targetPeekOffset = -movement.PeekAmount * peekMaxOffset;
+        _currentPeekOffset = Mathf.Lerp(_currentPeekOffset, targetPeekOffset, peekBendSpeed * Time.deltaTime);
+
+        // Split evenly -- UpperChest is a child of Spine, so its own share adds
+        // to whatever it already inherited from Spine's shift, cascading to the
+        // full offset by UpperChest instead of one rigid hinge at the base.
+        Vector3 shiftPerBone = movement.transform.right * (_currentPeekOffset / 2f);
+
+        spineBone.position += shiftPerBone;
+        if (upperChestBone != null)
+            upperChestBone.position += shiftPerBone;
     }
 
-    private void ApplyHandIK(AvatarIKGoal goal, HumanBodyBones handBone, Transform target, HandIKState state, float? transitionDurationOverride)
+    private void ApplyHandIK(AvatarIKGoal goal, AvatarIKHint hint, HumanBodyBones handBone, Transform target, Transform hintTarget, HandIKState state, float? transitionDurationOverride)
     {
         float weight = target != null ? 1f : 0f;
         _animator.SetIKPositionWeight(goal, weight);
         _animator.SetIKRotationWeight(goal, weight);
+
+        // Without an explicit hint, Unity guesses the elbow's bend direction from
+        // the current pose each frame. That guess isn't stable when the shoulder
+        // it's guessing from keeps moving (locomotion's own hip/spine sway), so the
+        // forearm can visibly swing frame to frame even while the hand itself sits
+        // exactly on target -- an explicit hint removes the ambiguity entirely.
+        _animator.SetIKHintPositionWeight(hint, hintTarget != null ? 1f : 0f);
+        if (hintTarget != null)
+            _animator.SetIKHintPosition(hint, hintTarget.position + Vector3.up * _currentPelvisOffset);
 
         if (target == null)
         {
@@ -416,7 +552,13 @@ public class PlayerAnimator : MonoBehaviour
             state.CurrentRotation = Quaternion.Slerp(blendStartRotation, target.rotation, state.BlendT);
         }
 
-        _animator.SetIKPosition(goal, state.CurrentPosition);
+        // bodyPosition adjustments made earlier this same OnAnimatorIK don't
+        // propagate to bone/attachment Transforms (like a grip point on the
+        // weapon) until AFTER OnAnimatorIK returns -- so target.position read here
+        // is always last frame's pose regardless of call order. _currentPelvisOffset
+        // itself is a plain float updated synchronously above, so adding it here is
+        // the only way to account for this frame's pelvis shift before it's applied.
+        _animator.SetIKPosition(goal, state.CurrentPosition + Vector3.up * _currentPelvisOffset);
         _animator.SetIKRotation(goal, state.CurrentRotation);
     }
 
