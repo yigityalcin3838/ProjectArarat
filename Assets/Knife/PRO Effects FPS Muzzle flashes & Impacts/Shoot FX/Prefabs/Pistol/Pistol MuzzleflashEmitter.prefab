@@ -26,12 +26,12 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1144027742821041686}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.7071069, y: -0.00000013438688, z: -0.00000044214522, w: 0.7071067}
+  m_LocalRotation: {x: 0.7071069, y: -0.0000001343869, z: -0.00000044214522, w: 0.7071067}
   m_LocalPosition: {x: 0, y: -0.0011788013, z: 0.00047147204}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
-  m_Father: {fileID: 8923118411543203939}
+  m_Father: {fileID: 7213096435526262912}
   m_LocalEulerAnglesHint: {x: 90.00001, y: 0, z: 0}
 --- !u!198 &3181005893020262365
 ParticleSystem:
@@ -4959,13 +4959,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 5474544922983361271}
   serializedVersion: 2
-  m_LocalRotation: {x: -0, y: -0, z: 1.3544717e-14, w: 1}
+  m_LocalRotation: {x: 5.7364103e-36, y: 4.2351647e-22, z: 1.6940659e-21, w: 1}
   m_LocalPosition: {x: 0, y: -0.426, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 5994071979314632208}
-  m_Father: {fileID: 8923118411543203939}
+  m_Father: {fileID: 7213096435526262912}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!198 &5434097130709152636
 ParticleSystem:
@@ -9870,7 +9870,9 @@ Transform:
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 1
-  m_Children: []
+  m_Children:
+  - {fileID: 5599313821555397532}
+  - {fileID: 8545512906982309443}
   m_Father: {fileID: 8923118411543203939}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!198 &1470206028380604473
@@ -14776,8 +14778,6 @@ Transform:
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 1
   m_Children:
-  - {fileID: 8545512906982309443}
-  - {fileID: 5599313821555397532}
   - {fileID: 7213096435526262912}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
@@ -14887,7 +14887,7 @@ Light:
   m_BounceIntensity: 1
   m_ColorTemperature: 6570
   m_UseColorTemperature: 0
-  m_BoundingSphereOverride: {x: 1.5792994e-19, y: 1.1719943e-19, z: 58569856, w: 2.6247694e+11}
+  m_BoundingSphereOverride: {x: 0, y: 0, z: 0, w: 0}
   m_UseBoundingSphereOverride: 0
   m_UseViewFrustumForShadowCasterCull: 1
   m_ForceVisible: 0

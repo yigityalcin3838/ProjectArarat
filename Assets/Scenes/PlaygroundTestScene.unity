@@ -6176,7 +6176,7 @@ Light:
   serializedVersion: 13
   m_Type: 1
   m_Color: {r: 1, g: 0.95686275, b: 0.8392157, a: 1}
-  m_Intensity: 1.5
+  m_Intensity: 1
   m_Range: 10
   m_SpotAngle: 30
   m_InnerSpotAngle: 21.80208
@@ -6238,13 +6238,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 553676381}
   serializedVersion: 2
-  m_LocalRotation: {x: -0.01581127, y: -0.45968416, z: 0.54587865, w: 0.7003264}
+  m_LocalRotation: {x: -0.09505653, y: -0.47402844, z: 0.5083347, w: 0.712641}
   m_LocalPosition: {x: 0, y: 3, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 28.667, y: -48.893, z: 62.619}
+  m_LocalEulerAnglesHint: {x: 20.27, y: -55.411, z: 60.276}
 --- !u!114 &553676384
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -7000,7 +7000,7 @@ Transform:
   m_GameObject: {fileID: 604873297}
   serializedVersion: 2
   m_LocalRotation: {x: 0.17237954, y: 0.10227137, z: -0.6279902, w: 0.75196695}
-  m_LocalPosition: {x: 0.20500001, y: -0.24900007, z: -0.08200002}
+  m_LocalPosition: {x: 0.107, y: -0.26, z: -0.095}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -10399,7 +10399,7 @@ MonoBehaviour:
   fireHipHoldDuration: 0.2
   posDeltaPivot: {fileID: 298434135}
   hipPosition: {x: 0.03, y: -0.04, z: 0}
-  hipRotation: {x: -4.59, y: -5, z: 6}
+  hipRotation: {x: -3, y: -5, z: 6}
   walkPosition: {x: -0.05, y: -0.1, z: 0.04}
   walkRotation: {x: 15, y: -15, z: 24}
   walkTransitionSpeed: 0.5
@@ -10408,7 +10408,7 @@ MonoBehaviour:
   runRotation: {x: -45, y: 0, z: 0}
   runTransitionSpeed: 12
   aimPosition: {x: 0.03, y: -0.01, z: 0}
-  aimRotation: {x: 0, y: 0, z: 15}
+  aimRotation: {x: -2, y: -5, z: 15}
   aimTransitionSpeed: 12
   playerAnimator: {fileID: 360032582}
   rightGripPoint: {fileID: 1243831821}
