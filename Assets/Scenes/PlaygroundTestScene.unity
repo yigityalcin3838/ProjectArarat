@@ -6930,7 +6930,7 @@ RectTransform:
   m_GameObject: {fileID: 597031276}
   m_LocalRotation: {x: 0, y: 0, z: 0.38268343, w: 0.92387956}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: -0.035, y: -0.035, z: -0.035}
+  m_LocalScale: {x: -0.0436625, y: -0.0436625, z: -0.0436625}
   m_ConstrainProportionsScale: 1
   m_Children: []
   m_Father: {fileID: 1446698963}
@@ -10335,7 +10335,7 @@ MonoBehaviour:
   handGrip: {fileID: 23448795}
   inputActions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   playerLook: {fileID: 768611302}
-  aimFov: 50
+  aimFov: 45
   postProcessEffects: {fileID: 768611304}
   weaponAnimator: {fileID: 1774820536}
   fireTrigger: Fire
@@ -10354,26 +10354,26 @@ MonoBehaviour:
   movement: {fileID: 768611296}
   tiltTarget: {fileID: 1235636155}
   tiltAmount: 7
-  tiltSpeed: 7
+  tiltSpeed: 3
   bobTarget: {fileID: 1462827080}
-  bobFrequency: 4
+  bobFrequency: 7
   bobHorizontalAmount: 0.002
-  bobVerticalAmount: 0.005
-  bobPitchAmount: 2
-  bobYawAmount: 2
+  bobVerticalAmount: 0.004
+  bobPitchAmount: 1
+  bobYawAmount: 1
   bobRollAmount: 2
-  bobSprintSpeedMultiplier: 2
-  bobSprintIntensityMultiplier: 2
+  bobSprintSpeedMultiplier: 1.5
+  bobSprintIntensityMultiplier: 3
   aimBobMultiplier: 0.3
   bobSmoothing: 15
   swayTarget: {fileID: 1160431569}
   swayAmount: -0.1
   swaySmoothing: 12
   positionSwayTarget: {fileID: 108457484}
-  positionSwayHorizontalAmount: 0.025
+  positionSwayHorizontalAmount: 0.05
   positionSwayVerticalAmount: 0
   positionSwayForwardAmount: 0.025
-  positionSwaySmoothing: 3
+  positionSwaySmoothing: 1
   breathTarget: {fileID: 1598137052}
   breathFrequency: 2
   breathHorizontalAmount: 0.0015
@@ -10399,15 +10399,15 @@ MonoBehaviour:
   fireHipHoldDuration: 0.2
   posDeltaPivot: {fileID: 298434135}
   hipPosition: {x: 0.03, y: -0.04, z: 0}
-  hipRotation: {x: 0, y: 0, z: 6}
+  hipRotation: {x: -4.59, y: -5, z: 6}
   walkPosition: {x: -0.05, y: -0.1, z: 0.04}
   walkRotation: {x: 15, y: -15, z: 24}
-  walkTransitionSpeed: 1
+  walkTransitionSpeed: 0.5
   walkPoseDelay: 3
   runPosition: {x: 0.03, y: 0, z: -0.06}
   runRotation: {x: -45, y: 0, z: 0}
   runTransitionSpeed: 12
-  aimPosition: {x: 0, y: 0, z: 0}
+  aimPosition: {x: 0.03, y: -0.01, z: 0}
   aimRotation: {x: 0, y: 0, z: 15}
   aimTransitionSpeed: 12
   playerAnimator: {fileID: 360032582}
@@ -10416,9 +10416,9 @@ MonoBehaviour:
   rightElbowHint: {fileID: 604873298}
   leftElbowHint: {fileID: 1045185189}
   spineAimWeight: 0.5
-  chestAimWeight: 0.5
+  chestAimWeight: 0.25
   upperChestAimWeight: 0.25
-  neckAimWeight: 1
+  neckAimWeight: 0.9
 --- !u!4 &901984127
 Transform:
   m_ObjectHideFlags: 0
@@ -14324,8 +14324,8 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1235636153}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: -0.09, z: -0.19}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: -0.09000003, z: 0.29}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -16934,7 +16934,7 @@ Transform:
   m_GameObject: {fileID: 1462827079}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 0.012, z: 0.07}
+  m_LocalPosition: {x: 0, y: 0.012, z: -0.41}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
