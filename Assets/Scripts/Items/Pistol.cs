@@ -28,11 +28,6 @@ public class Pistol : Item
     [Header("Hit Detection")]
     [SerializeField] private float maxRange = 100f;
 
-    [Header("Bloom")]
-    [SerializeField] private float maxBloomAngle = 5f;
-    [SerializeField] private float bloomPerShot = 1f;
-    [SerializeField] private float bloomRecoverySpeed = 5f;
-
     [Header("Impact Effect")]
     [SerializeField] private GameObject impactEffectPrefab;
 
@@ -46,13 +41,11 @@ public class Pistol : Item
 
     [Header("Hand Bob")]
     [SerializeField] private Transform bobTarget;
-    [SerializeField] private float bobFrequency = 6f;
     [SerializeField] private float bobHorizontalAmount = 0.01f;
     [SerializeField] private float bobVerticalAmount = 0.02f;
     [SerializeField] private float bobPitchAmount = 2f;
     [SerializeField] private float bobYawAmount = 2f;
     [SerializeField] private float bobRollAmount = 2f;
-    [SerializeField] private float bobSprintSpeedMultiplier = 1.5f;
     [SerializeField] private float bobSprintIntensityMultiplier = 1.5f;
     [SerializeField] private float aimBobMultiplier = 0.3f;
     [SerializeField] private float bobSmoothing = 8f;
@@ -132,13 +125,11 @@ public class Pistol : Item
     private InputAction _reloadAction;
     private int[] _magazineAmmo = new int[2];
     private int _activeMagazineIndex;
-    private float _currentBloom;
     private float _currentTilt;
     private Vector3 _bobBaseLocalPosition;
     private Quaternion _bobBaseLocalRotation;
     private Vector3 _currentBobOffset;
     private Vector3 _currentBobRotation;
-    private float _bobTimer;
     private Quaternion _baseSwayLocalRotation;
     private Vector2 _currentSway;
     private Vector3 _basePositionSwayLocalPosition;
@@ -308,8 +299,6 @@ public class Pistol : Item
         movement?.SetSprintBlocked(isAiming || isFiring || isReloading);
         movement?.SetAimSpeedOverride(isAiming);
 
-        _currentBloom = Mathf.Max(0f, _currentBloom - bloomRecoverySpeed * Time.deltaTime);
-
         // Fire rate is gated on the weapon animator's own current state, not a
         // manually tracked timer -- a plain clip-length timer ignores the
         // ~0.1s crossfade back to Idle after the clip finishes, so the next
@@ -333,8 +322,6 @@ public class Pistol : Item
 
             FireHitscan();
 
-            _currentBloom = Mathf.Min(maxBloomAngle, _currentBloom + bloomPerShot);
-
             playerLook?.AddFireKick(cameraKickAmount, cameraKickHorizontalAmount, cameraRollShakeAmount);
         }
 
@@ -351,27 +338,30 @@ public class Pistol : Item
             tiltTarget.localEulerAngles = euler;
         }
 
-        if (movement != null && bobTarget != null)
+        if (movement != null && bobTarget != null && playerLook != null)
         {
             bool isMoving = movement.IsGrounded && !movement.IsMovementLocked && movement.MoveInput.sqrMagnitude > 0.01f;
             bool isSprintingBob = movement.IsSprintingStable;
-            float speedRatio = isSprintingBob ? bobSprintSpeedMultiplier : 1f;
             float intensityRatio = (isSprintingBob ? bobSprintIntensityMultiplier : 1f) * (isAiming ? aimBobMultiplier : 1f);
 
-            if (isMoving)
-                _bobTimer += Time.deltaTime * bobFrequency * speedRatio;
+            // Reads the camera bob's own phase (including its crouch/sprint
+            // rate scaling) instead of running an independent timer here --
+            // that's what keeps the weapon and camera bob genuinely
+            // synced, since two separately-advanced timers can drift apart
+            // over time even with matching frequencies.
+            float bobPhase = playerLook.BobPhase;
 
             Vector3 targetBobOffset = isMoving
-                ? new Vector3(Mathf.Cos(_bobTimer) * bobHorizontalAmount * intensityRatio, Mathf.Sin(_bobTimer * 2f) * bobVerticalAmount * intensityRatio, 0f)
+                ? new Vector3(Mathf.Cos(bobPhase) * bobHorizontalAmount * intensityRatio, Mathf.Sin(bobPhase * 2f) * bobVerticalAmount * intensityRatio, 0f)
                 : Vector3.zero;
             // Pitch (tip up/down) follows the vertical bob's phase; yaw and roll
             // (side-to-side swing and tilt) follow the horizontal bob's phase,
             // 90 degrees apart from each other for a natural circular swing.
             Vector3 targetBobRotation = isMoving
                 ? new Vector3(
-                    Mathf.Sin(_bobTimer * 2f) * bobPitchAmount * intensityRatio,
-                    Mathf.Sin(_bobTimer) * bobYawAmount * intensityRatio,
-                    Mathf.Cos(_bobTimer) * bobRollAmount * intensityRatio)
+                    Mathf.Sin(bobPhase * 2f) * bobPitchAmount * intensityRatio,
+                    Mathf.Sin(bobPhase) * bobYawAmount * intensityRatio,
+                    Mathf.Cos(bobPhase) * bobRollAmount * intensityRatio)
                 : Vector3.zero;
 
             _currentBobOffset = Vector3.Lerp(_currentBobOffset, targetBobOffset, bobSmoothing * Time.deltaTime);
@@ -578,13 +568,8 @@ public class Pistol : Item
 
         Transform cam = playerLook.CameraTransform;
 
-        // Spread within a cone around the camera's forward direction, widening
-        // with bloom -- this is what the shot actually travels along, not just a
-        // visual effect, so bloom genuinely affects where hits land.
-        Vector3 spreadDirection = Quaternion.Euler(Random.Range(-_currentBloom, _currentBloom), Random.Range(-_currentBloom, _currentBloom), 0f) * cam.forward;
-
         // No layer mask -- hits anything with a collider.
-        if (Physics.Raycast(cam.position, spreadDirection, out RaycastHit hit, maxRange))
+        if (Physics.Raycast(cam.position, cam.forward, out RaycastHit hit, maxRange))
             SpawnImpactEffect(hit.point, hit.normal);
     }
 

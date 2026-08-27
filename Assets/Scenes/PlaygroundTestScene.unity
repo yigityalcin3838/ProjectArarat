@@ -728,7 +728,7 @@ GameObject:
   m_Component:
   - component: {fileID: 23448795}
   - component: {fileID: 23448796}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: PistolHandGrip
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -1537,7 +1537,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 78354762}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: 'LeftHandIK '
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -1837,7 +1837,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 108457484}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: PosSwayPivot
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -3888,7 +3888,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 298434135}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: PosDeltaPivot
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -8697,7 +8697,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 604873298}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: 'RightElbowIK '
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -9306,7 +9306,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 670684129}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: MuzzlePivot
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -12839,7 +12839,7 @@ GameObject:
   m_Component:
   - component: {fileID: 901984127}
   - component: {fileID: 901984126}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: Pistol
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -12873,22 +12873,17 @@ MonoBehaviour:
   shellEjectEmitter: {fileID: 62136238}
   magazineCapacity: 100
   maxRange: 100
-  maxBloomAngle: 1
-  bloomPerShot: 1
-  bloomRecoverySpeed: 2
   impactEffectPrefab: {fileID: 7258679735602562002, guid: 608cb554bb30cb746956424c326042ca, type: 3}
   movement: {fileID: 768611296}
   tiltTarget: {fileID: 1235636155}
   tiltAmount: 7
   tiltSpeed: 3
   bobTarget: {fileID: 1462827080}
-  bobFrequency: 7
   bobHorizontalAmount: 0.002
   bobVerticalAmount: 0.004
   bobPitchAmount: 1
   bobYawAmount: 1
   bobRollAmount: 2
-  bobSprintSpeedMultiplier: 1.5
   bobSprintIntensityMultiplier: 3
   aimBobMultiplier: 0.3
   bobSmoothing: 15
@@ -12924,9 +12919,9 @@ MonoBehaviour:
   cameraRollShakeDamping: 10
   fireHipHoldDuration: 0.2
   posDeltaPivot: {fileID: 298434135}
-  hipPosition: {x: 0.03, y: -0.04, z: 0}
-  hipRotation: {x: -3, y: -5, z: 6}
-  walkPosition: {x: -0.05, y: -0.1, z: 0.04}
+  hipPosition: {x: 0.02, y: -0.05, z: 0}
+  hipRotation: {x: 0, y: 0, z: 6}
+  walkPosition: {x: 0.02, y: -0.05, z: 0}
   walkRotation: {x: 15, y: -15, z: 24}
   walkTransitionSpeed: 0.5
   walkPoseDelay: 3
@@ -12934,7 +12929,7 @@ MonoBehaviour:
   runRotation: {x: -45, y: 0, z: 0}
   runTransitionSpeed: 12
   aimPosition: {x: 0.03, y: -0.01, z: 0}
-  aimRotation: {x: -2, y: -5, z: 15}
+  aimRotation: {x: 0, y: 0, z: 12}
   aimTransitionSpeed: 12
   playerAnimator: {fileID: 360032582}
   rightGripPoint: {fileID: 1243831821}
@@ -13842,9 +13837,17 @@ PrefabInstance:
       propertyPath: 'm_Materials.Array.data[0]'
       value: 
       objectReference: {fileID: 2100000, guid: 8899a3dd599f00740bfaaa2e84f1456b, type: 2}
+    - target: {fileID: -516098083770646512, guid: 6e282638c37323f4bbf55ff148a7fb6a, type: 3}
+      propertyPath: m_Layer
+      value: 6
+      objectReference: {fileID: 0}
     - target: {fileID: 919132149155446097, guid: 6e282638c37323f4bbf55ff148a7fb6a, type: 3}
       propertyPath: m_Name
       value: 9mmPistol
+      objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: 6e282638c37323f4bbf55ff148a7fb6a, type: 3}
+      propertyPath: m_Layer
+      value: 6
       objectReference: {fileID: 0}
     - target: {fileID: 919132149155446097, guid: 6e282638c37323f4bbf55ff148a7fb6a, type: 3}
       propertyPath: m_IsActive
@@ -15165,7 +15168,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1045185189}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: 'LeftElbowIK  '
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -17074,7 +17077,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1160431569}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: RotSwayPivot
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -17886,7 +17889,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1235636155}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: TiltPivot
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -18030,7 +18033,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1243831821}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: RightHandIK
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -18334,9 +18337,21 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 1869360033}
     m_Modifications:
+    - target: {fileID: 4468343985606883883, guid: a082bc92011a84a43801e11d8edfde30, type: 3}
+      propertyPath: m_Layer
+      value: 6
+      objectReference: {fileID: 0}
+    - target: {fileID: 5742686104345702598, guid: a082bc92011a84a43801e11d8edfde30, type: 3}
+      propertyPath: m_Layer
+      value: 6
+      objectReference: {fileID: 0}
     - target: {fileID: 6002720521190060909, guid: a082bc92011a84a43801e11d8edfde30, type: 3}
       propertyPath: m_Name
       value: Pistol MuzzleflashEmitter
+      objectReference: {fileID: 0}
+    - target: {fileID: 6002720521190060909, guid: a082bc92011a84a43801e11d8edfde30, type: 3}
+      propertyPath: m_Layer
+      value: 6
       objectReference: {fileID: 0}
     - target: {fileID: 6002720521190060909, guid: a082bc92011a84a43801e11d8edfde30, type: 3}
       propertyPath: m_IsActive
@@ -19303,9 +19318,17 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 2055702669}
     m_Modifications:
+    - target: {fileID: 2603099217702210738, guid: 3a886e4843e092f47a377bb71912d3a3, type: 3}
+      propertyPath: m_Layer
+      value: 6
+      objectReference: {fileID: 0}
     - target: {fileID: 2608979193068105061, guid: 3a886e4843e092f47a377bb71912d3a3, type: 3}
       propertyPath: m_Name
       value: Pistol ShellEmitter
+      objectReference: {fileID: 0}
+    - target: {fileID: 2608979193068105061, guid: 3a886e4843e092f47a377bb71912d3a3, type: 3}
+      propertyPath: m_Layer
+      value: 6
       objectReference: {fileID: 0}
     - target: {fileID: 5123071060523551646, guid: 3a886e4843e092f47a377bb71912d3a3, type: 3}
       propertyPath: m_LocalPosition.x
@@ -20986,7 +21009,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1462827080}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: BobPivot
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -23071,7 +23094,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1598137052}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: BreathPivot
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -24620,6 +24643,10 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: -7124569478337759169, guid: 540a9b0b5dcb8a34ba73b37239a61ec8, type: 3}
+      propertyPath: m_Layer
+      value: 6
+      objectReference: {fileID: 0}
     - target: {fileID: -7049619300592909465, guid: 540a9b0b5dcb8a34ba73b37239a61ec8, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
       value: 
@@ -24636,6 +24663,10 @@ PrefabInstance:
       propertyPath: 'm_Materials.Array.data[0]'
       value: 
       objectReference: {fileID: 2100000, guid: f6f39e92e6811bc47bb1436c567b5196, type: 2}
+    - target: {fileID: -2855278899606414907, guid: 540a9b0b5dcb8a34ba73b37239a61ec8, type: 3}
+      propertyPath: m_Layer
+      value: 6
+      objectReference: {fileID: 0}
     - target: {fileID: -2447972748257513451, guid: 540a9b0b5dcb8a34ba73b37239a61ec8, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
       value: 
@@ -24652,6 +24683,10 @@ PrefabInstance:
       propertyPath: 'm_Materials.Array.data[3]'
       value: 
       objectReference: {fileID: 2100000, guid: 153a3312e59253643aaa0c932ed6fd38, type: 2}
+    - target: {fileID: -1965929610599524020, guid: 540a9b0b5dcb8a34ba73b37239a61ec8, type: 3}
+      propertyPath: m_Layer
+      value: 6
+      objectReference: {fileID: 0}
     - target: {fileID: -1954782501125146184, guid: 540a9b0b5dcb8a34ba73b37239a61ec8, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
       value: 
@@ -24660,6 +24695,10 @@ PrefabInstance:
       propertyPath: 'm_Materials.Array.data[0]'
       value: 
       objectReference: {fileID: 2100000, guid: f6f39e92e6811bc47bb1436c567b5196, type: 2}
+    - target: {fileID: -245535706919990777, guid: 540a9b0b5dcb8a34ba73b37239a61ec8, type: 3}
+      propertyPath: m_Layer
+      value: 6
+      objectReference: {fileID: 0}
     - target: {fileID: 666987601108053587, guid: 540a9b0b5dcb8a34ba73b37239a61ec8, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
       value: 
@@ -24669,13 +24708,37 @@ PrefabInstance:
       value: marmo
       objectReference: {fileID: 0}
     - target: {fileID: 919132149155446097, guid: 540a9b0b5dcb8a34ba73b37239a61ec8, type: 3}
+      propertyPath: m_Layer
+      value: 6
+      objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: 540a9b0b5dcb8a34ba73b37239a61ec8, type: 3}
       propertyPath: m_IsActive
       value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 2020637017146103939, guid: 540a9b0b5dcb8a34ba73b37239a61ec8, type: 3}
+      propertyPath: m_Layer
+      value: 6
+      objectReference: {fileID: 0}
+    - target: {fileID: 2755894966237624876, guid: 540a9b0b5dcb8a34ba73b37239a61ec8, type: 3}
+      propertyPath: m_Layer
+      value: 6
       objectReference: {fileID: 0}
     - target: {fileID: 4823688688310972492, guid: 540a9b0b5dcb8a34ba73b37239a61ec8, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
       value: 
       objectReference: {fileID: 2100000, guid: c7ac3578c2f9c4349957290045cd90a7, type: 2}
+    - target: {fileID: 7214732815635843589, guid: 540a9b0b5dcb8a34ba73b37239a61ec8, type: 3}
+      propertyPath: m_Layer
+      value: 6
+      objectReference: {fileID: 0}
+    - target: {fileID: 8954096551055564656, guid: 540a9b0b5dcb8a34ba73b37239a61ec8, type: 3}
+      propertyPath: m_Layer
+      value: 6
+      objectReference: {fileID: 0}
+    - target: {fileID: 9198819672223950717, guid: 540a9b0b5dcb8a34ba73b37239a61ec8, type: 3}
+      propertyPath: m_Layer
+      value: 6
+      objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
@@ -25599,7 +25662,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1736185428}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: PistolHolster
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -25932,7 +25995,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1774820535}
   - component: {fileID: 1774820536}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: PistolGlock
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -26892,7 +26955,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1822372865}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: KickPivot
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -27421,7 +27484,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1869360033}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: MuzzleEffect
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -31211,7 +31274,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 2055702669}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: ShellEffect
   m_TagString: Untagged
   m_Icon: {fileID: 0}

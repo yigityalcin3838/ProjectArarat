@@ -255,6 +255,7 @@ MonoBehaviour:
   - {fileID: 2569710598032638299}
   - {fileID: 7667057812646100481}
   - {fileID: 2126915745660156709}
+  - {fileID: 3302242269962554955}
 --- !u!114 &2126915745660156709
 MonoBehaviour:
   m_ObjectHideFlags: 3
@@ -387,6 +388,34 @@ MonoBehaviour:
   chromaticAbberationIntensity:
     m_OverrideState: 1
     m_Value: 0.5
+--- !u!114 &3302242269962554955
+MonoBehaviour:
+  m_ObjectHideFlags: 3
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1b8e47ead2019974a86b1123763794a9, type: 3}
+  m_Name: PlayerAOVolume
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerAOVolume
+  active: 1
+  radius:
+    m_OverrideState: 1
+    m_Value: 0.035
+  intensity:
+    m_OverrideState: 1
+    m_Value: 4
+  power:
+    m_OverrideState: 1
+    m_Value: 1.75
+  outlineIntensity:
+    m_OverrideState: 1
+    m_Value: 1
+  outlineThickness:
+    m_OverrideState: 1
+    m_Value: 0.5
 --- !u!114 &3378505394163896217
 MonoBehaviour:
   m_ObjectHideFlags: 3
@@ -505,7 +534,7 @@ MonoBehaviour:
   active: 1
   postExposure:
     m_OverrideState: 1
-    m_Value: 0
+    m_Value: 0.35
   contrast:
     m_OverrideState: 1
     m_Value: 0
@@ -643,13 +672,13 @@ MonoBehaviour:
   active: 1
   shadows:
     m_OverrideState: 1
-    m_Value: {r: 0.5, g: 0.5, b: 0.5, a: 1}
+    m_Value: {r: 1, g: 1, b: 1, a: 1}
   highlights:
     m_OverrideState: 1
     m_Value: {r: 0.5, g: 0.5, b: 0.5, a: 1}
   balance:
     m_OverrideState: 1
-    m_Value: 0
+    m_Value: 75
 --- !u!114 &7672734185551312865
 MonoBehaviour:
   m_ObjectHideFlags: 3

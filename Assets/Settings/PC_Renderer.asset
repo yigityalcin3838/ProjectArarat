@@ -56,7 +56,8 @@ MonoBehaviour:
   - {fileID: 7833122117494664109}
   - {fileID: -1612994808194565416}
   - {fileID: -5579033308405158290}
-  m_RendererFeatureMap: ad6b866f10d7b46cd87a0399c47d9de94e46b2cbec439bd16e2e70d6c34a93b2
+  - {fileID: 3414922772153304852}
+  m_RendererFeatureMap: ad6b866f10d7b46cd87a0399c47d9de94e46b2cbec439bd16e2e70d6c34a93b2140797112b3e642f
   xrSystemData: {fileID: 0}
   postProcessData: {fileID: 11400000, guid: 41439944d30ece34e96484bdb6645b55, type: 2}
   m_AssetVersion: 3
@@ -85,6 +86,24 @@ MonoBehaviour:
   m_AccurateGbufferNormals: 0
   m_IntermediateTextureMode: 0
   m_TileOnlyMode: 0
+--- !u!114 &3414922772153304852
+MonoBehaviour:
+  m_ObjectHideFlags: 1
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: cb168eaf03b729640acfb01507aecd79, type: 3}
+  m_Name: PlayerAOFeature
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerAOFeature
+  m_Active: 1
+  _maskShader: {fileID: 4800000, guid: 6969dbf75a12a954880824a8ce5e6403, type: 3}
+  _aoShader: {fileID: 4800000, guid: 6d5c508a1e9020148b2e1b839c49e5a7, type: 3}
+  _playerLayer:
+    serializedVersion: 2
+    m_Bits: 64
 --- !u!114 &7833122117494664109
 MonoBehaviour:
   m_ObjectHideFlags: 1

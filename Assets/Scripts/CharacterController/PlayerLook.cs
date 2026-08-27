@@ -63,6 +63,14 @@ public class PlayerLook : MonoBehaviour
     public float Pitch { get; private set; }
     public float YawDelta { get; private set; }
 
+    // The camera bob's own sine phase, including whatever crouch/sprint
+    // rate scaling it's currently applying -- exposed so the weapon's hand
+    // bob (Pistol) can drive its own bob off the exact same phase instead of
+    // running an independent timer, which is what keeps the two bobs
+    // genuinely in sync (matching frequencies alone isn't enough: two
+    // separate timers can still drift apart frame to frame).
+    public float BobPhase => _bobTimer;
+
     private InputAction _lookAction;
     private Vector2 _lookInput;
     private float _currentTilt;

@@ -108,7 +108,7 @@ Material:
     - _DepthFade: 0
     - _DetailNormalMapScale: 1
     - _DissolveSoftness: 0.5
-    - _DistortionAmount: 0.11
+    - _DistortionAmount: 0
     - _DistortionDiff: 0.5
     - _DistortionFadeSize: 0.151
     - _DistortionFadeSoftness: 0.271
