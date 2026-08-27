@@ -33,9 +33,8 @@ public class Pistol : Item
     [SerializeField] private float bloomPerShot = 1f;
     [SerializeField] private float bloomRecoverySpeed = 5f;
 
-    [Header("Hit Marker (Placeholder)")]
-    [SerializeField] private float hitMarkerSize = 0.1f;
-    [SerializeField] private float hitMarkerLifetime = 2f;
+    [Header("Impact Effect")]
+    [SerializeField] private GameObject impactEffectPrefab;
 
     [Header("Movement Effects")]
     [SerializeField] private PlayerMovement movement;
@@ -158,7 +157,6 @@ public class Pistol : Item
     private float _kickRotationOffset;
     private float _kickRotationVelocity;
     private float _fireHipTimer;
-    private float _fireCooldownTimer;
     private float _reloadTimer;
     private float _moveTimer;
 
@@ -288,35 +286,44 @@ public class Pistol : Item
 
         bool isFiring = _fireHipTimer > 0f;
 
-        // Can't sprint while aiming down sights or right after firing.
-        movement?.SetSprintBlocked(isAiming || isFiring);
-        movement?.SetAimSpeedOverride(isAiming);
-
-        if (_fireCooldownTimer > 0f)
-            _fireCooldownTimer -= Time.deltaTime;
-
         if (_reloadTimer > 0f)
             _reloadTimer -= Time.deltaTime;
 
         bool isReloading = _reloadTimer > 0f;
 
-        bool isSprintingForReload = movement != null && movement.IsSprintingStable;
-
-        if (_reloadAction != null && _reloadAction.WasPerformedThisFrame() && !isReloading && !isSprintingForReload)
+        // Reload interrupts an in-progress sprint instead of being blocked by
+        // it -- pressing reload while running drops out of the run (below)
+        // and reloads anyway.
+        if (_reloadAction != null && _reloadAction.WasPerformedThisFrame() && !isReloading)
         {
             _activeMagazineIndex = 1 - _activeMagazineIndex;
             weaponAnimator?.SetTrigger(reloadTrigger);
             _reloadTimer = GetClipLength(reloadTrigger);
+            isReloading = true;
         }
+
+        // Can't sprint while aiming down sights, right after firing, or
+        // reloading -- IsSprinting is computed live off this blocked flag,
+        // so setting it true here immediately drops an in-progress sprint.
+        movement?.SetSprintBlocked(isAiming || isFiring || isReloading);
+        movement?.SetAimSpeedOverride(isAiming);
 
         _currentBloom = Mathf.Max(0f, _currentBloom - bloomRecoverySpeed * Time.deltaTime);
 
-        // Fire rate is capped to the fire clip's own length -- can't fire again
-        // until it's finished playing, and can't fire at all while reloading.
-        if (_attackAction != null && _attackAction.WasPerformedThisFrame() && _fireCooldownTimer <= 0f && !isReloading && _magazineAmmo[_activeMagazineIndex] > 0)
+        // Fire rate is gated on the weapon animator's own current state, not a
+        // manually tracked timer -- a plain clip-length timer ignores the
+        // ~0.1s crossfade back to Idle after the clip finishes, so the next
+        // shot's SetTrigger could land before the animator had actually
+        // reached Idle (still mid-transition, not listening for the trigger
+        // yet), letting ammo/effects/hitscan race ahead of what the weapon
+        // was visually doing during rapid fire. GetCurrentAnimatorStateInfo
+        // still reports "Fire" as current for the whole crossfade back out,
+        // so this naturally covers clip length + that transition together.
+        bool isFireAnimPlaying = weaponAnimator != null && weaponAnimator.GetCurrentAnimatorStateInfo(0).IsName(fireTrigger);
+
+        if (_attackAction != null && _attackAction.WasPerformedThisFrame() && !isFireAnimPlaying && !isReloading && _magazineAmmo[_activeMagazineIndex] > 0)
         {
             _magazineAmmo[_activeMagazineIndex]--;
-            _fireCooldownTimer = GetClipLength(fireTrigger);
 
             weaponAnimator?.SetTrigger(fireTrigger);
             _fireHipTimer = fireHipHoldDuration;
@@ -578,30 +585,19 @@ public class Pistol : Item
 
         // No layer mask -- hits anything with a collider.
         if (Physics.Raycast(cam.position, spreadDirection, out RaycastHit hit, maxRange))
-            SpawnHitMarker(hit.point, hit.normal);
+            SpawnImpactEffect(hit.point, hit.normal);
     }
 
-    // Placeholder impact marker -- a plain red cube dropped at the hit point for
-    // now. Later this should pick a different prefab/decal per surface material
-    // instead of always the same one. Built with an explicit URP shader (not
-    // CreatePrimitive's default material) since the Built-in Standard shader
-    // renders pink under URP.
-    private static Material _hitMarkerMaterial;
-
-    private void SpawnHitMarker(Vector3 point, Vector3 normal)
+    // One prefab for every surface for now. Later this should pick a
+    // different prefab per surface material instead of always the same one.
+    // The prefab's own effect (e.g. a ParticleSystem with Stop Action set to
+    // Destroy) is responsible for cleaning itself up -- no manual timer here.
+    private void SpawnImpactEffect(Vector3 point, Vector3 normal)
     {
-        if (_hitMarkerMaterial == null)
-        {
-            _hitMarkerMaterial = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
-            _hitMarkerMaterial.SetColor("_BaseColor", Color.red);
-        }
+        if (impactEffectPrefab == null)
+            return;
 
-        GameObject marker = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        marker.transform.SetPositionAndRotation(point, Quaternion.LookRotation(normal));
-        marker.transform.localScale = Vector3.one * hitMarkerSize;
-        Destroy(marker.GetComponent<Collider>());
-        marker.GetComponent<Renderer>().sharedMaterial = _hitMarkerMaterial;
-        Destroy(marker, hitMarkerLifetime);
+        Instantiate(impactEffectPrefab, point, Quaternion.LookRotation(normal));
     }
 
     private void OnGUI()

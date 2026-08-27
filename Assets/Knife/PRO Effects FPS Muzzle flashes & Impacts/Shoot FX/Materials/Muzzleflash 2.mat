@@ -100,14 +100,14 @@ Material:
     - _AlphaCutoff: 0.5
     - _AlphaSoftness: 1
     - _BumpScale: 1
-    - _CenterFadeSize: -0.12
+    - _CenterFadeSize: -0.48
     - _CenterFadeSoftness: 0.813
-    - _CenterNoiseFadeSize: 0.35
-    - _CenterNoiseFadeSoftness: 0.237
+    - _CenterNoiseFadeSize: 0
+    - _CenterNoiseFadeSoftness: 0
     - _Cutoff: 0.5
     - _DepthFade: 0
     - _DetailNormalMapScale: 1
-    - _DissolveSoftness: 0.19
+    - _DissolveSoftness: 0.5
     - _DistortionAmount: 0.11
     - _DistortionDiff: 0.5
     - _DistortionFadeSize: 0.151
@@ -121,10 +121,10 @@ Material:
     - _NoiseMaskSoftness1: 0
     - _NoiseMaskSoftness2: 0.368
     - _NoiseSoftness: 1
-    - _NoiseSoftness1: 0.718
-    - _NoiseSoftness2: 0.141
+    - _NoiseSoftness1: 0
+    - _NoiseSoftness2: 0.426
     - _OcclusionStrength: 1
-    - _Opacity: 0.504
+    - _Opacity: 1
     - _Parallax: 0.02
     - _QueueControl: 0
     - _QueueOffset: 0
