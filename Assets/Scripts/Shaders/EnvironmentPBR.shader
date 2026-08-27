@@ -393,6 +393,36 @@ Shader "Custom/EnvironmentPBR"
             #include "Packages/com.unity.render-pipelines.universal/Shaders/DepthOnlyPass.hlsl"
             ENDHLSL
         }
+
+        // Required, not optional, whenever anything in the frame requests
+        // normals alongside depth -- which SSAO does when its Source is set
+        // to "Depth Normals". In that configuration URP runs a DepthNormals
+        // prepass and writes _CameraDepthTexture DIRECTLY from it (there is
+        // no separate depth-only prepass and no depth copy: see
+        // CalculateDepthCopySchedules in UniversalRendererRenderGraph.cs --
+        // "the prepass will render directly to the depthTexture", so the
+        // copy is skipped). A shader with no DepthNormals pass therefore
+        // contributes NOTHING to the depth texture, leaving those pixels at
+        // the cleared far value -- which any depth-reading full-screen
+        // effect then misreads as empty sky.
+        Pass
+        {
+            Name "DepthNormals"
+            Tags { "LightMode" = "DepthNormals" }
+
+            ZWrite On
+            Cull [_Cull]
+
+            HLSLPROGRAM
+            #pragma vertex DepthNormalsVertex
+            #pragma fragment DepthNormalsFragment
+            #pragma multi_compile_fragment _ _GBUFFER_NORMALS_OCT
+            #pragma multi_compile_instancing
+            #include_with_pragmas "Packages/com.unity.render-pipelines.universal/ShaderLibrary/RenderingLayers.hlsl"
+
+            #include "Packages/com.unity.render-pipelines.universal/Shaders/UnlitDepthNormalsPass.hlsl"
+            ENDHLSL
+        }
     }
 
     FallBack "Hidden/Universal Render Pipeline/FallbackError"

@@ -59,25 +59,36 @@ Shader "Hidden/PostProcessing/CustomFog"
             float _CutoffDistance;
             float _MaxOpacity;
 
+            // (1 - exp(-u)) / u, computed in a way that stays accurate as
+            // u -> 0. The direct formula subtracts two nearly-equal numbers
+            // there (1 and exp(-tiny)), which loses almost all precision in
+            // float math and was the actual cause of the bright, patchy
+            // artifacts seen on walls viewed nearly head-on (exactly where
+            // this term's input is naturally close to 0) -- nothing to do
+            // with draw order between shaders/passes, which can't affect a
+            // post-process pass that only runs after everything is already
+            // in the color+depth buffers.
+            float SafeOneMinusExpOverX(float u)
+            {
+                if (abs(u) > 1e-3)
+                    return (1.0 - exp(-u)) / u;
+                // 2nd-order Taylor expansion of (1-exp(-u))/u around u = 0.
+                return 1.0 - u * 0.5 + u * u / 6.0;
+            }
+
             // Inigo Quilez's closed-form ray integral of an exponentially
-            // height-varying density. rayOrigin/rayDir describe the ray
-            // already advanced to wherever fog starts accumulating from
-            // (see _StartDistance handling in Frag), and dist is the
-            // remaining distance from there to the surface.
+            // height-varying density, rewritten so rayDir.y only ever
+            // appears inside SafeOneMinusExpOverX's argument -- never as a
+            // raw divisor -- eliminating the precision blowup entirely
+            // instead of just routing around a narrow band of it.
+            // rayOrigin/rayDir describe the ray already advanced to
+            // wherever fog starts accumulating from (see _StartDistance
+            // handling in Frag), and dist is the remaining distance from
+            // there to the surface.
             float HeightFogAmount(float3 rayOrigin, float3 rayDir, float dist)
             {
-                float opticalDepth;
-                if (abs(rayDir.y) > 1e-4)
-                {
-                    opticalDepth = (_FogDensity / _FogHeightFalloff) * exp(-rayOrigin.y * _FogHeightFalloff)
-                                 * (1.0 - exp(-dist * rayDir.y * _FogHeightFalloff)) / rayDir.y;
-                }
-                else
-                {
-                    // Limit of the closed form as rayDir.y -> 0: density is
-                    // effectively constant along the ray at this height.
-                    opticalDepth = _FogDensity * exp(-rayOrigin.y * _FogHeightFalloff) * dist;
-                }
+                float u = dist * rayDir.y * _FogHeightFalloff;
+                float opticalDepth = _FogDensity * exp(-rayOrigin.y * _FogHeightFalloff) * dist * SafeOneMinusExpOverX(u);
                 return saturate(opticalDepth);
             }
 
