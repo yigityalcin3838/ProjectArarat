@@ -190,11 +190,11 @@ Material:
     - _NumLayersCount: 1
     - _OcclusionStrength: 1
     - _Parallax: 0.005
-    - _ParallaxScale0: 0
-    - _ParallaxScale1: 0
-    - _ParallaxScale2: 0
-    - _ParallaxScale3: 0
-    - _ParallaxScale4: 0
+    - _ParallaxScale0: 0.0003
+    - _ParallaxScale1: 0.0005
+    - _ParallaxScale2: 0.00015
+    - _ParallaxScale3: 0.0005
+    - _ParallaxScale4: 0.00015
     - _ParallaxScale5: 0
     - _ParallaxScale6: 0
     - _ParallaxScale7: 0
