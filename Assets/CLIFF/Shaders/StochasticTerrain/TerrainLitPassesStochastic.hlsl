@@ -230,15 +230,15 @@ void SplatmapMix(float4 uvMainAndLM, float4 uvSplat01, float4 uvSplat23, inout h
     // smoothly-varying procedural noise value, using its own scale and a
     // fixed per-layer seed offset so the pattern doesn't line up with the
     // tiling-breakup noise or with the other layers' variation patterns.
-    half variation0 = TerrainStochasticValueNoise(uvSplat01.xy * _VariationScale0 + float2(11.3, 7.1));
-    half variation1 = TerrainStochasticValueNoise(uvSplat01.zw * _VariationScale1 + float2(29.7, 3.3));
-    half variation2 = TerrainStochasticValueNoise(uvSplat23.xy * _VariationScale2 + float2(53.1, 19.9));
-    half variation3 = TerrainStochasticValueNoise(uvSplat23.zw * _VariationScale3 + float2(71.9, 37.7));
+    half variation0 = TerrainStochasticValueNoise(uvSplat01.xy * LAYER_VARIATION_0 + float2(11.3, 7.1));
+    half variation1 = TerrainStochasticValueNoise(uvSplat01.zw * LAYER_VARIATION_1 + float2(29.7, 3.3));
+    half variation2 = TerrainStochasticValueNoise(uvSplat23.xy * LAYER_VARIATION_2 + float2(53.1, 19.9));
+    half variation3 = TerrainStochasticValueNoise(uvSplat23.zw * LAYER_VARIATION_3 + float2(71.9, 37.7));
 
-    half3 tint0 = lerp(_TintColor0.rgb, _TintColor0B.rgb, variation0);
-    half3 tint1 = lerp(_TintColor1.rgb, _TintColor1B.rgb, variation1);
-    half3 tint2 = lerp(_TintColor2.rgb, _TintColor2B.rgb, variation2);
-    half3 tint3 = lerp(_TintColor3.rgb, _TintColor3B.rgb, variation3);
+    half3 tint0 = lerp(LAYER_TINT_0.rgb, LAYER_TINT_B_0.rgb, variation0);
+    half3 tint1 = lerp(LAYER_TINT_1.rgb, LAYER_TINT_B_1.rgb, variation1);
+    half3 tint2 = lerp(LAYER_TINT_2.rgb, LAYER_TINT_B_2.rgb, variation2);
+    half3 tint3 = lerp(LAYER_TINT_3.rgb, LAYER_TINT_B_3.rgb, variation3);
 
     // Tint is a material-level control on top of each layer's own Diffuse
     // Remap color, so it can be adjusted here without having to open each
@@ -255,14 +255,48 @@ void SplatmapMix(float4 uvMainAndLM, float4 uvSplat01, float4 uvSplat23, inout h
 #endif
 
 #ifdef _TERRAIN_BLEND_HEIGHT
-void HeightBasedSplatModify(inout half4 splatControl, in half4 masks[4])
+// Unity's own stock version of this function (see the comment on
+// _NumLayersCount below) only ever sees 4 layers at a time, because a
+// >4-layer terrain draws layers 4-7, 8-11, etc. in SEPARATE additive passes
+// ("Add Pass" shaders) that have no visibility into another pass's masks --
+// so it can't compute a max/sum across layers it can't see, and Unity
+// disables the whole feature above 4 layers rather than get that wrong
+// (see the ORIGINAL stock comment this replaced: "disable Height Based
+// blend when there are more than 4 layers (multi-pass breaks the
+// normalization)").
+//
+// This fixes that by evaluating the max/sum across EVERY layer, in every
+// pass. TerrainGlobalHeightBlend.cs binds all of the terrain's control maps
+// and layer Mask Maps as global shader textures, and ComputeGlobalHeightBlend
+// (TerrainLitInputStochastic.hlsl) walks all of them -- so this pass and the
+// Add Pass fork (TerrainLitStochasticAdd.shader) both divide by the same true
+// global total no matter which draw call renders a given layer, and the
+// additive blend across passes sums back to exactly 1 like it should.
+//
+// This is computed live per pixel rather than baked into a texture: the
+// height data varies at texture-TILING frequency (Tile Sizes of a few units
+// across a terrain hundreds of units wide means hundreds of repetitions,
+// each with the full Mask Map's detail inside it), so any bake at
+// splat-map resolution would be undersampled by orders of magnitude and
+// alias into blotches.
+void HeightBasedSplatModify(inout half4 splatControl, half4 heights, float2 meshUV)
 {
-    // heights are in mask blue channel, we multiply by the splat Control weights to get combined height
-    half4 splatHeight = half4(masks[0].b, masks[1].b, masks[2].b, masks[3].b) * splatControl.rgba;
-    half maxHeight = max(splatHeight.r, max(splatHeight.g, max(splatHeight.b, splatHeight.a)));
+    // No TerrainGlobalHeightBlend component feeding the globals (they're
+    // still at their uninitialized default) -- leave the plain alpha-blend
+    // weights alone rather than normalizing against a zero sum, which would
+    // scale every weight up to a garbage value instead of just quietly not
+    // height-blending.
+    if (_GlobalLayerCount < 1.0h)
+        return;
 
     // Ensure that the transition height is not zero.
     half transition = max(_HeightTransition, 1e-5);
+
+    half maxHeight, sumHeight;
+    ComputeGlobalHeightBlend(meshUV, transition, heights, maxHeight, sumHeight);
+
+    // heights are in mask blue channel, we multiply by the splat Control weights to get combined height
+    half4 splatHeight = heights * splatControl.rgba;
 
     // This sets the highest splat to "transition", and everything else to a lower value relative to that, clamping to zero
     // Then we clamp this to zero and normalize everything
@@ -273,9 +307,9 @@ void HeightBasedSplatModify(inout half4 splatControl, in half4 masks[4])
     // so that at least a layer shows up if everything's too low.
     weightedHeights = (weightedHeights + 1e-6) * splatControl;
 
-    // Normalize (and clamp to epsilon to keep from dividing by zero)
-    half sumHeight = max(dot(weightedHeights, half4(1, 1, 1, 1)), 1e-6);
-    splatControl = weightedHeights / sumHeight.xxxx;
+    // Normalize against the GLOBAL sum (covers every layer in every pass)
+    // instead of this pass's own local 4-layer sum.
+    splatControl = weightedHeights / max(sumHeight, 1e-6h).xxxx;
 }
 #endif
 
@@ -453,12 +487,33 @@ void SplatmapFragment(
     float2 splatUV = (IN.uvMainAndLM.xy * (_Control_TexelSize.zw - 1.0f) + 0.5f) * _Control_TexelSize.xy;
     half4 splatControl = SAMPLE_TEXTURE2D(_Control, sampler_Control, splatUV);
 
-    half alpha = dot(splatControl, 1.0h);
 #ifdef _TERRAIN_BLEND_HEIGHT
-    // disable Height Based blend when there are more than 4 layers (multi-pass breaks the normalization)
-    if (_NumLayersCount <= 4)
-        HeightBasedSplatModify(splatControl, masks);
+    // No _NumLayersCount <= 4 gate here (unlike Unity's stock shader) --
+    // HeightBasedSplatModify evaluates a global max/sum that already
+    // accounts for every layer, so it stays correct regardless of layer count.
+    // Heights come straight out of masks[] -- the SAME stochastically
+    // sampled values the albedo is built from, which is what stock Unity
+    // feeds this too. They have to agree: the albedo draws each stone at a
+    // tiling-breakup offset, so a height sampled WITHOUT that offset puts
+    // the blend boundary somewhere the stones aren't, which reads as the
+    // blend losing its per-stone detail and breaking into coarse blobs.
+    // The mesh uv is passed alongside so the global half of the calculation
+    // can reach the layers this pass doesn't draw.
+    HeightBasedSplatModify(splatControl, half4(masks[0].b, masks[1].b, masks[2].b, masks[3].b), IN.uvMainAndLM.xy);
 #endif
+
+    // Deliberately computed AFTER the height blend, not before it (which is
+    // where Unity's stock shader has it). This is the value SplatmapFinalColor
+    // multiplies the final color by, and it's how much of the pixel THIS pass
+    // owns -- SplatmapMix re-normalizes splatControl to sum to 1 locally, so
+    // alpha is the only thing carrying the cross-pass ratio.
+    //
+    // Taking it from the raw weights instead means a >4-layer terrain splits
+    // the pixel by plain alpha-blend weight no matter what the height blend
+    // decided, so at a boundary between a base-pass layer and an Add Pass one
+    // you get a 50/50 crossfade band -- a visible outline around any 5th+
+    // layer -- rather than the sharp height-based transition.
+    half alpha = dot(splatControl, 1.0h);
 
     // Parallax: shift the albedo/normal sampling UVs per layer using that
     // layer's Mask Map height (already sampled above by ComputeMasks), so a
@@ -469,10 +524,10 @@ void SplatmapFragment(
     half3 viewDirWS = GetWorldSpaceNormalizeViewDir(IN.positionWS);
     float4 uvSplat01Parallax = IN.uvSplat01;
     float4 uvSplat23Parallax = IN.uvSplat23;
-    uvSplat01Parallax.xy += TerrainParallaxOffset(masks[0].b, _ParallaxScale0, viewDirWS) * _Splat0_ST.xy;
-    uvSplat01Parallax.zw += TerrainParallaxOffset(masks[1].b, _ParallaxScale1, viewDirWS) * _Splat1_ST.xy;
-    uvSplat23Parallax.xy += TerrainParallaxOffset(masks[2].b, _ParallaxScale2, viewDirWS) * _Splat2_ST.xy;
-    uvSplat23Parallax.zw += TerrainParallaxOffset(masks[3].b, _ParallaxScale3, viewDirWS) * _Splat3_ST.xy;
+    uvSplat01Parallax.xy += TerrainParallaxOffset(masks[0].b, LAYER_PARALLAX_0, viewDirWS) * _Splat0_ST.xy;
+    uvSplat01Parallax.zw += TerrainParallaxOffset(masks[1].b, LAYER_PARALLAX_1, viewDirWS) * _Splat1_ST.xy;
+    uvSplat23Parallax.xy += TerrainParallaxOffset(masks[2].b, LAYER_PARALLAX_2, viewDirWS) * _Splat2_ST.xy;
+    uvSplat23Parallax.zw += TerrainParallaxOffset(masks[3].b, LAYER_PARALLAX_3, viewDirWS) * _Splat3_ST.xy;
 
     half weight;
     half4 mixedDiffuse;

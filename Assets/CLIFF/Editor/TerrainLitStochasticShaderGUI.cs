@@ -15,11 +15,10 @@ public class TerrainLitStochasticShaderGUI : ShaderGUI
 {
     private const string InnerTypeName = "UnityEditor.Rendering.Universal.TerrainLitShaderGUI";
 
-    private static readonly string[] TintPropertyNames = { "_TintColor0", "_TintColor1", "_TintColor2", "_TintColor3" };
-    private static readonly string[] TintBPropertyNames = { "_TintColor0B", "_TintColor1B", "_TintColor2B", "_TintColor3B" };
-    private static readonly string[] VariationScalePropertyNames = { "_VariationScale0", "_VariationScale1", "_VariationScale2", "_VariationScale3" };
-    private static readonly string[] ParallaxScalePropertyNames = { "_ParallaxScale0", "_ParallaxScale1", "_ParallaxScale2", "_ParallaxScale3" };
-    private static readonly string[] LayerLabels = { "Layer 0", "Layer 1", "Layer 2", "Layer 3" };
+    // 8 layers: Unity draws 0-3 in the base pass and 4-7 in the Add Pass,
+    // and each needs its own settings (see the CBUFFER comment in
+    // TerrainLitInputStochastic.hlsl).
+    private const int MaxLayers = 8;
 
     private ShaderGUI _innerGUI;
     private bool _lookedUpInnerGUI;
@@ -60,16 +59,16 @@ public class TerrainLitStochasticShaderGUI : ShaderGUI
         EditorGUILayout.Space();
         EditorGUILayout.LabelField("Stochastic Terrain -- Layer Tints", EditorStyles.boldLabel);
 
-        for (int i = 0; i < TintPropertyNames.Length; i++)
+        for (int i = 0; i < MaxLayers; i++)
         {
-            MaterialProperty tint = FindProperty(TintPropertyNames[i], properties, false);
-            MaterialProperty tintB = FindProperty(TintBPropertyNames[i], properties, false);
-            MaterialProperty variationScale = FindProperty(VariationScalePropertyNames[i], properties, false);
-            MaterialProperty parallaxScale = FindProperty(ParallaxScalePropertyNames[i], properties, false);
+            MaterialProperty tint = FindProperty($"_TintColor{i}", properties, false);
+            MaterialProperty tintB = FindProperty($"_TintColor{i}B", properties, false);
+            MaterialProperty variationScale = FindProperty($"_VariationScale{i}", properties, false);
+            MaterialProperty parallaxScale = FindProperty($"_ParallaxScale{i}", properties, false);
             if (tint == null || tintB == null || variationScale == null || parallaxScale == null)
                 continue;
 
-            EditorGUILayout.LabelField(LayerLabels[i], EditorStyles.miniBoldLabel);
+            EditorGUILayout.LabelField($"Layer {i}", EditorStyles.miniBoldLabel);
             EditorGUI.indentLevel++;
             materialEditor.ShaderProperty(tint, "Tint");
             materialEditor.ShaderProperty(tintB, "Tint Variation");
@@ -77,5 +76,11 @@ public class TerrainLitStochasticShaderGUI : ShaderGUI
             materialEditor.ShaderProperty(parallaxScale, "Parallax Scale");
             EditorGUI.indentLevel--;
         }
+
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Stochastic Terrain -- Height Blend (>4 layers)", EditorStyles.boldLabel);
+        EditorGUILayout.HelpBox(
+            "For Height Transition to work with more than 4 Terrain Layers, the Terrain needs a TerrainGlobalHeightBlend component -- it binds every layer's mask so each render pass can blend against all of them, not just its own 4. Nothing to bake; it updates live as you paint.",
+            MessageType.Info);
     }
 }

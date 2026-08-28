@@ -62,6 +62,10 @@ Shader "Custom/URP/Terrain/Lit (Stochastic)"
         _TintColor1 ("Tint 1", Color) = (1,1,1,1)
         _TintColor2 ("Tint 2", Color) = (1,1,1,1)
         _TintColor3 ("Tint 3", Color) = (1,1,1,1)
+        _TintColor4 ("Tint 4", Color) = (1,1,1,1)
+        _TintColor5 ("Tint 5", Color) = (1,1,1,1)
+        _TintColor6 ("Tint 6", Color) = (1,1,1,1)
+        _TintColor7 ("Tint 7", Color) = (1,1,1,1)
 
         // Second tint per layer, blended against the first with a procedural
         // noise value (its own scale/seed per layer, independent from the
@@ -71,16 +75,28 @@ Shader "Custom/URP/Terrain/Lit (Stochastic)"
         _TintColor1B ("Tint 1 Variation", Color) = (1,1,1,1)
         _TintColor2B ("Tint 2 Variation", Color) = (1,1,1,1)
         _TintColor3B ("Tint 3 Variation", Color) = (1,1,1,1)
+        _TintColor4B ("Tint 4 Variation", Color) = (1,1,1,1)
+        _TintColor5B ("Tint 5 Variation", Color) = (1,1,1,1)
+        _TintColor6B ("Tint 6 Variation", Color) = (1,1,1,1)
+        _TintColor7B ("Tint 7 Variation", Color) = (1,1,1,1)
 
         _VariationScale0 ("Variation Scale 0", Range(0.01, 2)) = 0.2
         _VariationScale1 ("Variation Scale 1", Range(0.01, 2)) = 0.2
         _VariationScale2 ("Variation Scale 2", Range(0.01, 2)) = 0.2
         _VariationScale3 ("Variation Scale 3", Range(0.01, 2)) = 0.2
+        _VariationScale4 ("Variation Scale 4", Range(0.01, 2)) = 0.2
+        _VariationScale5 ("Variation Scale 5", Range(0.01, 2)) = 0.2
+        _VariationScale6 ("Variation Scale 6", Range(0.01, 2)) = 0.2
+        _VariationScale7 ("Variation Scale 7", Range(0.01, 2)) = 0.2
 
         _ParallaxScale0 ("Parallax Scale 0", Range(0, 0.1)) = 0.0
         _ParallaxScale1 ("Parallax Scale 1", Range(0, 0.1)) = 0.0
         _ParallaxScale2 ("Parallax Scale 2", Range(0, 0.1)) = 0.0
         _ParallaxScale3 ("Parallax Scale 3", Range(0, 0.1)) = 0.0
+        _ParallaxScale4 ("Parallax Scale 4", Range(0, 0.1)) = 0.0
+        _ParallaxScale5 ("Parallax Scale 5", Range(0, 0.1)) = 0.0
+        _ParallaxScale6 ("Parallax Scale 6", Range(0, 0.1)) = 0.0
+        _ParallaxScale7 ("Parallax Scale 7", Range(0, 0.1)) = 0.0
     }
 
     HLSLINCLUDE
@@ -342,7 +358,11 @@ Shader "Custom/URP/Terrain/Lit (Stochastic)"
 
         UsePass "Hidden/Nature/Terrain/Utilities/PICKING"
     }
-    Dependency "AddPassShader" = "Hidden/Universal Render Pipeline/Terrain/Lit (Add Pass)"
+    // Our own fork (see TerrainLitStochasticAdd.shader) instead of Unity's
+    // stock Add Pass shader -- needed so layers 5+ also read the baked
+    // _HeightBlendGlobal texture instead of Unity's stock (always-disabled-
+    // above-4-layers) height blend, and get stochastic tiling breakup too.
+    Dependency "AddPassShader" = "Custom/URP/Terrain/Lit (Stochastic Add Pass)"
     Dependency "BaseMapShader" = "Hidden/Universal Render Pipeline/Terrain/Lit (Base Pass)"
     Dependency "BaseMapGenShader" = "Hidden/Universal Render Pipeline/Terrain/Lit (Basemap Gen)"
 

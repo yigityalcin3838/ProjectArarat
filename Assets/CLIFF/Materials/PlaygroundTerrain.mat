@@ -66,6 +66,10 @@ Material:
         m_Texture: {fileID: 0}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
+    - _HeightBlendGlobal:
+        m_Texture: {fileID: 2800000, guid: 41a39bbcab9589c42bd0ab1f5592caf7, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
     - _MainTex:
         m_Texture: {fileID: 0}
         m_Scale: {x: 1, y: 1}
@@ -173,7 +177,7 @@ Material:
     - _Glossiness: 0
     - _GlossyReflections: 0
     - _HeightBlendEnabled: 1
-    - _HeightTransition: 0.06
+    - _HeightTransition: 0.043
     - _Metallic: 0
     - _Metallic0: 0
     - _Metallic1: 0
@@ -186,10 +190,14 @@ Material:
     - _NumLayersCount: 1
     - _OcclusionStrength: 1
     - _Parallax: 0.005
-    - _ParallaxScale0: 0.0003
-    - _ParallaxScale1: 0.0002
-    - _ParallaxScale2: 0.0002
-    - _ParallaxScale3: 0.0003
+    - _ParallaxScale0: 0
+    - _ParallaxScale1: 0
+    - _ParallaxScale2: 0
+    - _ParallaxScale3: 0
+    - _ParallaxScale4: 0
+    - _ParallaxScale5: 0
+    - _ParallaxScale6: 0
+    - _ParallaxScale7: 0
     - _QueueOffset: 0
     - _ReceiveShadows: 1
     - _Smoothness: 0.5
@@ -212,10 +220,14 @@ Material:
     - _StochasticScale: 1
     - _StochasticTilingEnabled: 1
     - _Surface: 0
-    - _VariationScale0: 1
+    - _VariationScale0: 0.75
     - _VariationScale1: 0.2
     - _VariationScale2: 0.2
     - _VariationScale3: 0.2
+    - _VariationScale4: 0.2
+    - _VariationScale5: 0.2
+    - _VariationScale6: 0.2
+    - _VariationScale7: 0.2
     - _WorkflowMode: 1
     - _XRMotionVectorsPass: 1
     - _ZWrite: 1
@@ -228,13 +240,21 @@ Material:
     - _Color3: {r: 1, g: 1, b: 1, a: 1}
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
     - _SpecColor: {r: 0.19999996, g: 0.19999996, b: 0.19999996, a: 1}
-    - _TintColor0: {r: 0.990566, g: 0.990566, b: 0.990566, a: 1}
-    - _TintColor0B: {r: 1, g: 0.96804655, b: 0.6084906, a: 1}
+    - _TintColor0: {r: 1, g: 0.8537105, b: 0, a: 1}
+    - _TintColor0B: {r: 1, g: 0.95517284, b: 0.6084906, a: 1}
     - _TintColor1: {r: 1, g: 1, b: 1, a: 1}
     - _TintColor1B: {r: 1, g: 1, b: 1, a: 1}
     - _TintColor2: {r: 1, g: 1, b: 1, a: 1}
     - _TintColor2B: {r: 1, g: 1, b: 1, a: 1}
     - _TintColor3: {r: 1, g: 1, b: 1, a: 1}
     - _TintColor3B: {r: 1, g: 1, b: 1, a: 1}
+    - _TintColor4: {r: 1, g: 1, b: 1, a: 1}
+    - _TintColor4B: {r: 1, g: 1, b: 1, a: 1}
+    - _TintColor5: {r: 1, g: 1, b: 1, a: 1}
+    - _TintColor5B: {r: 1, g: 1, b: 1, a: 1}
+    - _TintColor6: {r: 1, g: 1, b: 1, a: 1}
+    - _TintColor6B: {r: 1, g: 1, b: 1, a: 1}
+    - _TintColor7: {r: 1, g: 1, b: 1, a: 1}
+    - _TintColor7B: {r: 1, g: 1, b: 1, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1
