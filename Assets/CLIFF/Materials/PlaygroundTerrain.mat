@@ -177,7 +177,7 @@ Material:
     - _Glossiness: 0
     - _GlossyReflections: 0
     - _HeightBlendEnabled: 1
-    - _HeightTransition: 0.043
+    - _HeightTransition: 0.035
     - _Metallic: 0
     - _Metallic0: 0
     - _Metallic1: 0
@@ -193,7 +193,7 @@ Material:
     - _ParallaxScale0: 0.0003
     - _ParallaxScale1: 0.0005
     - _ParallaxScale2: 0.00015
-    - _ParallaxScale3: 0.0005
+    - _ParallaxScale3: 0.00015
     - _ParallaxScale4: 0.00015
     - _ParallaxScale5: 0
     - _ParallaxScale6: 0
@@ -240,8 +240,8 @@ Material:
     - _Color3: {r: 1, g: 1, b: 1, a: 1}
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
     - _SpecColor: {r: 0.19999996, g: 0.19999996, b: 0.19999996, a: 1}
-    - _TintColor0: {r: 1, g: 0.8537105, b: 0, a: 1}
-    - _TintColor0B: {r: 1, g: 0.95517284, b: 0.6084906, a: 1}
+    - _TintColor0: {r: 0.7533262, g: 0.7830189, b: 0.631586, a: 1}
+    - _TintColor0B: {r: 0.8072528, g: 0.8301887, b: 0.58348167, a: 1}
     - _TintColor1: {r: 1, g: 1, b: 1, a: 1}
     - _TintColor1B: {r: 1, g: 1, b: 1, a: 1}
     - _TintColor2: {r: 1, g: 1, b: 1, a: 1}

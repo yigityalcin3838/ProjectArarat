@@ -1,5 +1,21 @@
 // Made with Amplify Shader Editor v1.9.8
-// Available at the Unity Asset Store - http://u3d.as/y3X 
+// Available at the Unity Asset Store - http://u3d.as/y3X
+//
+// MODIFIED LOCALLY -- not stock Knife. The lighting call in the Forward pass
+// was replaced with FlatLitParticleLighting (search for it below); everything
+// else is untouched.
+//
+// Why: stock lights particles through UniversalFragmentPBR, which includes
+// the N-dot-L term. Particle billboards face the camera, so as the sun moves
+// relative to the camera that term swings and particles visibly darken and
+// brighten with the sun's angle. The replacement drops N-dot-L but keeps the
+// shadow attenuation, so particles still go dark inside shadows while holding
+// a steady colour otherwise.
+//
+// Since this edits the asset in place, updating the Knife package WILL
+// overwrite it -- re-apply the two marked spots if that happens. (It was
+// edited here rather than forked so existing materials keep working without
+// being reassigned.)
 Shader "Knife/Particle Channel Packed"
 {
 	Properties
@@ -559,6 +575,33 @@ Shader "Knife/Particle Channel Packed"
 			}
 			#endif
 
+			// ---- LOCAL MODIFICATION 1 of 2 (see header) ----------------------
+			// How much the main light adds on top of ambient. Dropping N-dot-L
+			// makes every particle behave like it's facing the light head on,
+			// which is brighter than stock averaged out to -- this scales that
+			// back. Lower it if particles read washed out, raise it toward 1
+			// for full sun. A constant rather than a material property on
+			// purpose: this shader repeats its UnityPerMaterial CBUFFER in
+			// every pass and they all have to match exactly, so adding a
+			// property would drop it out of SRP Batcher compatibility.
+			#define FLAT_LIT_LIGHT_SCALE 0.6
+
+			// Ambient plus the main light's colour, gated by shadow only. No
+			// N-dot-L anywhere, so the sun's ANGLE has no effect -- but its
+			// colour and intensity still do, which keeps particles matching the
+			// time of day instead of looking pasted on.
+			half4 FlatLitParticleLighting( InputData inputData, SurfaceData surfaceData )
+			{
+				Light mainLight = GetMainLight( inputData.shadowCoord, inputData.positionWS, inputData.shadowMask );
+
+				half3 lighting = inputData.bakedGI
+					+ mainLight.color * mainLight.shadowAttenuation * mainLight.distanceAttenuation * FLAT_LIT_LIGHT_SCALE;
+
+				half3 litColor = surfaceData.albedo * lighting + surfaceData.emission;
+				return half4( litColor, surfaceData.alpha );
+			}
+			// ---- end LOCAL MODIFICATION 1 of 2 -------------------------------
+
 			half4 frag ( PackedVaryings input
 						#ifdef ASE_DEPTH_WRITE_ON
 						,out float outputDepth : ASE_SV_DEPTH
@@ -877,11 +920,17 @@ Shader "Knife/Particle Channel Packed"
 					ApplyDecalToSurfaceData(input.positionCS, surfaceData, inputData);
 				#endif
 
-				#ifdef _ASE_LIGHTING_SIMPLE
-					half4 color = UniversalFragmentBlinnPhong( inputData, surfaceData);
-				#else
-					half4 color = UniversalFragmentPBR( inputData, surfaceData);
-				#endif
+				// ---- LOCAL MODIFICATION 2 of 2 (see header) ------------------
+				// Was:
+				//   #ifdef _ASE_LIGHTING_SIMPLE
+				//       half4 color = UniversalFragmentBlinnPhong( inputData, surfaceData);
+				//   #else
+				//       half4 color = UniversalFragmentPBR( inputData, surfaceData);
+				//   #endif
+				// Both of those fold in N-dot-L, which is what made particles
+				// swing with the sun's angle.
+				half4 color = FlatLitParticleLighting( inputData, surfaceData );
+				// ---- end LOCAL MODIFICATION 2 of 2 ---------------------------
 
 				#ifdef ASE_TRANSMISSION
 				{

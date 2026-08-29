@@ -448,8 +448,10 @@ public class PlayerAnimator : MonoBehaviour
         Transform leftFootBone = _animator.GetBoneTransform(HumanBodyBones.LeftFoot);
         Transform rightFootBone = _animator.GetBoneTransform(HumanBodyBones.RightFoot);
 
-        bool leftHit = Physics.Raycast(leftFootBone.position + Vector3.up * footIKRayDistance, Vector3.down, out RaycastHit leftHitInfo, footIKRayDistance * 2f, groundLayer);
-        bool rightHit = Physics.Raycast(rightFootBone.position + Vector3.up * footIKRayDistance, Vector3.down, out RaycastHit rightHitInfo, footIKRayDistance * 2f, groundLayer);
+        // Triggers ignored so a feet-height interaction zone can't be mistaken
+        // for the floor and lift the foot onto nothing.
+        bool leftHit = Physics.Raycast(leftFootBone.position + Vector3.up * footIKRayDistance, Vector3.down, out RaycastHit leftHitInfo, footIKRayDistance * 2f, groundLayer, QueryTriggerInteraction.Ignore);
+        bool rightHit = Physics.Raycast(rightFootBone.position + Vector3.up * footIKRayDistance, Vector3.down, out RaycastHit rightHitInfo, footIKRayDistance * 2f, groundLayer, QueryTriggerInteraction.Ignore);
 
         float leftOffset = leftHit ? (leftHitInfo.point.y + footIKGroundOffset) - leftFootBone.position.y : 0f;
         float rightOffset = rightHit ? (rightHitInfo.point.y + footIKGroundOffset) - rightFootBone.position.y : 0f;

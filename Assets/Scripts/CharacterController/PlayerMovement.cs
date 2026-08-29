@@ -669,7 +669,10 @@ public class PlayerMovement : MonoBehaviour
         Vector3 origin = transform.position + Vector3.up * radius;
         float castDistance = standingHeight - radius * 2f;
 
-        return !Physics.SphereCast(origin, radius, Vector3.up, out _, castDistance);
+        // Triggers ignored: an interaction zone overhead isn't something you
+        // can bump your head on, and letting one block standing up would trap
+        // the player crouched for no visible reason.
+        return !Physics.SphereCast(origin, radius, Vector3.up, out _, castDistance, ~0, QueryTriggerInteraction.Ignore);
     }
 
     private void CheckGrounded()
@@ -677,7 +680,10 @@ public class PlayerMovement : MonoBehaviour
         float radius = _characterController.radius * 0.9f;
         Vector3 origin = transform.position + Vector3.up * (radius + 0.05f);
 
-        bool hitGround = Physics.SphereCast(origin, radius, Vector3.down, out RaycastHit hit, groundCheckDistance + 0.05f);
+        // Triggers ignored: walking over a door zone or a fog volume would
+        // otherwise register as standing on it, and its surface normal would
+        // be fed to the slope check as if it were real ground.
+        bool hitGround = Physics.SphereCast(origin, radius, Vector3.down, out RaycastHit hit, groundCheckDistance + 0.05f, ~0, QueryTriggerInteraction.Ignore);
         IsGrounded = hitGround && Vector3.Angle(hit.normal, Vector3.up) <= maxSlopeAngle;
         _groundNormal = hitGround ? hit.normal : Vector3.up;
 

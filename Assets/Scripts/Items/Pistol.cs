@@ -28,9 +28,6 @@ public class Pistol : Item
     [Header("Hit Detection")]
     [SerializeField] private float maxRange = 100f;
 
-    [Header("Impact Effect")]
-    [SerializeField] private GameObject impactEffectPrefab;
-
     [Header("Movement Effects")]
     [SerializeField] private PlayerMovement movement;
 
@@ -568,21 +565,22 @@ public class Pistol : Item
 
         Transform cam = playerLook.CameraTransform;
 
-        // No layer mask -- hits anything with a collider.
-        if (Physics.Raycast(cam.position, cam.forward, out RaycastHit hit, maxRange))
-            SpawnImpactEffect(hit.point, hit.normal);
+        // No layer mask -- hits anything solid. Triggers are skipped
+        // explicitly: Unity's Queries Hit Triggers project setting defaults to
+        // on, so without this a bullet stops dead on an invisible door
+        // interaction zone or fog volume instead of the wall behind it.
+        // Passed per-call rather than switching the project setting, because
+        // the interaction raycasts below DO want to find triggers.
+        if (Physics.Raycast(cam.position, cam.forward, out RaycastHit hit, maxRange, ~0, QueryTriggerInteraction.Ignore))
+            SpawnImpactEffect(hit);
     }
 
-    // One prefab for every surface for now. Later this should pick a
-    // different prefab per surface material instead of always the same one.
-    // The prefab's own effect (e.g. a ParticleSystem with Stop Action set to
-    // Destroy) is responsible for cleaning itself up -- no manual timer here.
-    private void SpawnImpactEffect(Vector3 point, Vector3 normal)
+    // Which effect plays, and how it's tinted, isn't the weapon's business --
+    // the scene's SurfaceSystem owns that, since it's the thing that knows
+    // what was hit. The weapon just reports the hit.
+    private void SpawnImpactEffect(RaycastHit hit)
     {
-        if (impactEffectPrefab == null)
-            return;
-
-        Instantiate(impactEffectPrefab, point, Quaternion.LookRotation(normal));
+        SurfaceSystem.Instance?.SpawnImpact(hit);
     }
 
     private void OnGUI()

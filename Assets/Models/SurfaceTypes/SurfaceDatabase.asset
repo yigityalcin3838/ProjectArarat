@@ -1,0 +1,28 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 077f9fd36054e5646ba33b78200040de, type: 3}
+  m_Name: SurfaceDatabase
+  m_EditorClassIdentifier: Assembly-CSharp::SurfaceDatabase
+  defaultSurface: {fileID: 11400000, guid: e70faf66a9563584ba51b6fac523fc83, type: 2}
+  terrainLayers:
+  - terrainLayer: {fileID: 8574412962073106934, guid: 2e0c5b6ce16ff7b40a60b5e1efccf3cb, type: 2}
+    surface: {fileID: 11400000, guid: ea199262bef118f4986c80e1a46c16d3, type: 2}
+    averageColor: {r: 0.6666667, g: 0.6666667, b: 0.56078434, a: 1}
+  - terrainLayer: {fileID: 8574412962073106934, guid: 99f4553a2d05c4b44b4cdb9234b010aa, type: 2}
+    surface: {fileID: 11400000, guid: e70faf66a9563584ba51b6fac523fc83, type: 2}
+    averageColor: {r: 0.41960785, g: 0.40392157, b: 0.38431373, a: 1}
+  - terrainLayer: {fileID: 8574412962073106934, guid: cfb13fb50b9263143ad23594454f507c, type: 2}
+    surface: {fileID: 11400000, guid: e70faf66a9563584ba51b6fac523fc83, type: 2}
+    averageColor: {r: 0.47058824, g: 0.4117647, b: 0.3647059, a: 1}
+  - terrainLayer: {fileID: 8574412962073106934, guid: cf37ca8056bea5647852908bda453da0, type: 2}
+    surface: {fileID: 11400000, guid: eaefacd726ba1624e82b19c00974aa25, type: 2}
+    averageColor: {r: 0.654902, g: 0.7372549, b: 0.80784315, a: 1}
