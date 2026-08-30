@@ -52,47 +52,6 @@ Shader "Hidden/PostProcessing/SunShafts"
             float _MaxDistance;
             int _Steps;
 
-            // Local density regions. Each is a unit cube in its own local
-            // space, so the matrix carries position, rotation and size at once
-            // and the inside-test is just "are all axes within +/-0.5".
-            #define SUNSHAFTS_MAX_DENSITY_VOLUMES 8
-            float4x4 _DensityVolumeWorldToLocal[SUNSHAFTS_MAX_DENSITY_VOLUMES];
-            float4 _DensityVolumeParams[SUNSHAFTS_MAX_DENSITY_VOLUMES]; // x = multiplier, y = edge falloff
-            int _DensityVolumeCount;
-
-            // Density multiplier at a world point. Evaluated per ray-march
-            // step, not once from the camera -- that's what lets a beam inside
-            // a room read correctly while standing outside looking in.
-            //
-            // The volume the point sits deepest inside wins, which handles
-            // both thickening (>1) and thinning (<1) regions and gives a
-            // sensible answer where two overlap.
-            float DensityMultiplierAt(float3 positionWS)
-            {
-                float bestMultiplier = 1.0;
-                float bestFade = 0.0;
-
-                for (int v = 0; v < _DensityVolumeCount; v++)
-                {
-                    float3 local = mul(_DensityVolumeWorldToLocal[v], float4(positionWS, 1.0)).xyz;
-
-                    // Distance in from the nearest face, in local units.
-                    float3 toFace = 0.5 - abs(local);
-                    float inside = min(min(toFace.x, toFace.y), toFace.z);
-                    if (inside <= 0.0)
-                        continue;
-
-                    float fade = saturate(inside / max(_DensityVolumeParams[v].y, 1e-4));
-                    if (fade > bestFade)
-                    {
-                        bestFade = fade;
-                        bestMultiplier = _DensityVolumeParams[v].x;
-                    }
-                }
-
-                return lerp(1.0, bestMultiplier, bestFade);
-            }
-
             // Henyey-Greenstein: how much haze scatters light toward the
             // viewer for a given angle between the view ray and the light.
             // Without it beams look equally strong in every direction, which
@@ -161,18 +120,16 @@ Shader "Hidden/PostProcessing/SunShafts"
                 // the end instead -- weights the whole ray equally, which is
                 // what let a long fully-lit ray outdoors keep piling up and
                 // wash the screen out.
+                // Extinction per metre. Treated as a purely scattering haze
+                // (nothing absorbed), so the scattering coefficient equals it.
+                float sigmaE = max(_Density, 1e-5);
+                float stepTransmittance = exp(-sigmaE * stepSize);
+
                 float transmittance = 1.0;
                 float scattering = 0.0;
 
                 for (int i = 0; i < steps; i++)
                 {
-                    // Extinction per metre at THIS point, so a local volume
-                    // thickens only the stretch of ray actually inside it.
-                    // Treated as a purely scattering haze (nothing absorbed),
-                    // so the scattering coefficient equals it.
-                    float sigmaE = max(_Density * DensityMultiplierAt(position), 1e-5);
-                    float stepTransmittance = exp(-sigmaE * stepSize);
-
                     float lightVisibility = MainLightRealtimeShadow(TransformWorldToShadowCoord(position));
 
                     // Frostbite's energy-conserving step integral: the analytic

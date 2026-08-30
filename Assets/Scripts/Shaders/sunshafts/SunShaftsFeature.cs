@@ -49,16 +49,7 @@ public class SunShaftsFeature : ScriptableRendererFeature
         private readonly Material _scatterMaterial;
         private readonly Material _compositeMaterial;
 
-        // Reused every frame rather than allocated -- SetMatrixArray/
-        // SetVectorArray need a fixed-length array, and this runs per camera
-        // per frame.
-        private readonly Matrix4x4[] _volumeMatrices = new Matrix4x4[SunShaftsDensityVolume.MaxVolumes];
-        private readonly Vector4[] _volumeParams = new Vector4[SunShaftsDensityVolume.MaxVolumes];
-
         private static readonly int DensityId = Shader.PropertyToID("_Density");
-        private static readonly int VolumeWorldToLocalId = Shader.PropertyToID("_DensityVolumeWorldToLocal");
-        private static readonly int VolumeParamsId = Shader.PropertyToID("_DensityVolumeParams");
-        private static readonly int VolumeCountId = Shader.PropertyToID("_DensityVolumeCount");
         private static readonly int ForwardScatteringId = Shader.PropertyToID("_ForwardScattering");
         private static readonly int MaxForwardBoostId = Shader.PropertyToID("_MaxForwardBoost");
         private static readonly int MaxDistanceId = Shader.PropertyToID("_MaxDistance");
@@ -107,14 +98,6 @@ public class SunShaftsFeature : ScriptableRendererFeature
             if (sun == null || !sun.isActiveAndEnabled || sun.type != LightType.Directional)
                 return;
 
-            // Set straight on the material rather than carried through
-            // PassData like the scalars are. That's safe here specifically
-            // because the volumes are camera-independent -- every camera this
-            // frame would upload identical values, so the usual "last write
-            // wins before the recorded draws run" problem has nothing to get
-            // wrong. It also avoids allocating a copy of the arrays per pass.
-            UploadDensityVolumes();
-
             var resourceData = frameData.Get<UniversalResourceData>();
             TextureHandle source = resourceData.activeColorTexture;
 
@@ -162,34 +145,6 @@ public class SunShaftsFeature : ScriptableRendererFeature
                 builder.AllowPassCulling(false);
                 builder.SetRenderFunc(static (PassData data, RasterGraphContext ctx) => Execute(data, ctx));
             }
-        }
-
-        private void UploadDensityVolumes()
-        {
-            var volumes = SunShaftsDensityVolume.ActiveVolumes;
-            int count = 0;
-
-            for (int i = 0; i < volumes.Count && count < SunShaftsDensityVolume.MaxVolumes; i++)
-            {
-                SunShaftsDensityVolume volume = volumes[i];
-                if (volume == null || !volume.isActiveAndEnabled)
-                    continue;
-
-                if (!volume.TryGetWorldToLocal(out Matrix4x4 worldToLocal))
-                    continue;
-
-                _volumeMatrices[count] = worldToLocal;
-                _volumeParams[count] = new Vector4(volume.densityMultiplier, volume.edgeFalloff, 0f, 0f);
-                count++;
-            }
-
-            _scatterMaterial.SetInt(VolumeCountId, count);
-
-            // Uploaded even when empty: the arrays have to keep a consistent
-            // length, and a stale matrix left in a slot past the count would
-            // still be read if the count later grew.
-            _scatterMaterial.SetMatrixArray(VolumeWorldToLocalId, _volumeMatrices);
-            _scatterMaterial.SetVectorArray(VolumeParamsId, _volumeParams);
         }
 
         private static void Execute(PassData data, RasterGraphContext ctx)

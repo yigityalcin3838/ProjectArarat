@@ -4,12 +4,12 @@ using UnityEngine.InputSystem;
 
 public class Pistol : Item
 {
+    // handGrip lives on Item -- the camera's head socket gets parented under it
+    // while this is equipped, and the pistol itself parents there too (SnapTo).
     [SerializeField] private Transform holster;
-    [SerializeField] private Transform handGrip;
 
     [Header("Look")]
     [SerializeField] private InputActionAsset inputActions;
-    [SerializeField] private PlayerLook playerLook;
     [SerializeField] private float aimFov = 40f;
     [SerializeField] private PlayerPostProcessEffects postProcessEffects;
 
@@ -46,11 +46,6 @@ public class Pistol : Item
     [SerializeField] private float bobSprintIntensityMultiplier = 1.5f;
     [SerializeField] private float aimBobMultiplier = 0.3f;
     [SerializeField] private float bobSmoothing = 8f;
-
-    [Header("Rotational Sway")]
-    [SerializeField] private Transform swayTarget;
-    [SerializeField] private float swayAmount = 4f;
-    [SerializeField] private float swaySmoothing = 8f;
 
     [Header("Positional Sway")]
     [SerializeField] private Transform positionSwayTarget;
@@ -102,6 +97,13 @@ public class Pistol : Item
     [SerializeField] private Vector3 aimPosition;
     [SerializeField] private Vector3 aimRotation;
     [SerializeField] private float aimTransitionSpeed = 8f;
+    // Q and E are the negative and positive halves of the Peek 1D axis, so the
+    // sign of PeekAmount is what picks between these two.
+    [SerializeField] private Vector3 peekLeftPosition;
+    [SerializeField] private Vector3 peekLeftRotation;
+    [SerializeField] private Vector3 peekRightPosition;
+    [SerializeField] private Vector3 peekRightRotation;
+    [SerializeField] private float peekTransitionSpeed = 8f;
 
     [Header("Hand IK")]
     [SerializeField] private PlayerAnimator playerAnimator;
@@ -115,10 +117,8 @@ public class Pistol : Item
     [SerializeField] private float neckAimWeight = 0.5f;
 
     private Vector3 _originalWorldScale;
-    private static bool _isQuitting;
     private InputAction _aimAction;
     private InputAction _attackAction;
-    private InputAction _lookAction;
     private InputAction _reloadAction;
     private int[] _magazineAmmo = new int[2];
     private int _activeMagazineIndex;
@@ -127,8 +127,6 @@ public class Pistol : Item
     private Quaternion _bobBaseLocalRotation;
     private Vector3 _currentBobOffset;
     private Vector3 _currentBobRotation;
-    private Quaternion _baseSwayLocalRotation;
-    private Vector2 _currentSway;
     private Vector3 _basePositionSwayLocalPosition;
     private Vector3 _currentPositionSway;
     private Vector3 _currentAdsPosition;
@@ -159,9 +157,6 @@ public class Pistol : Item
             _bobBaseLocalRotation = bobTarget.localRotation;
         }
 
-        if (swayTarget != null)
-            _baseSwayLocalRotation = swayTarget.localRotation;
-
         if (positionSwayTarget != null)
             _basePositionSwayLocalPosition = positionSwayTarget.localPosition;
 
@@ -182,7 +177,6 @@ public class Pistol : Item
             var playerMap = inputActions.FindActionMap("Player", throwIfNotFound: true);
             _aimAction = playerMap.FindAction("Aim", throwIfNotFound: true);
             _attackAction = playerMap.FindAction("Attack", throwIfNotFound: true);
-            _lookAction = playerMap.FindAction("Look", throwIfNotFound: true);
             _reloadAction = playerMap.FindAction("Reload", throwIfNotFound: true);
         }
 
@@ -192,10 +186,13 @@ public class Pistol : Item
         _magazineAmmo[1] = magazineCapacity;
     }
 
-    private void OnApplicationQuit() => _isQuitting = true;
-
-    private void OnEnable()
+    protected override void OnEnable()
     {
+        // Points the camera at this pistol's own head socket (a child of
+        // handGrip), so it rides the grip along with the weapon parented there
+        // below.
+        base.OnEnable();
+
         // A quick re-equip during a still-running holster's IK-release wait
         // must not let that stale coroutine later snap this freshly-drawn
         // weapon back to the holster and clear the hand IK we're about to set.
@@ -203,6 +200,10 @@ public class Pistol : Item
         {
             StopCoroutine(_holsterIKReleaseCoroutine);
             _holsterIKReleaseCoroutine = null;
+
+            // That coroutine was the only thing that would have ended the pose
+            // hold it started, so cancelling it has to end the hold too.
+            playerAnimator?.SetItemPoseHeld(false);
         }
 
         SnapTo(handGrip);
@@ -220,8 +221,13 @@ public class Pistol : Item
         }
     }
 
-    private void OnDisable()
+    protected override void OnDisable()
     {
+        // Puts the camera back on the character's default socket right away
+        // rather than waiting out the holster clip like hand IK below -- the
+        // camera stops riding the grip the moment the weapon is put away.
+        base.OnDisable();
+
         weaponAnimator?.SetTrigger(holsterTrigger);
         _aimAction?.Disable();
         _attackAction?.Disable();
@@ -237,6 +243,11 @@ public class Pistol : Item
         // own barrel direction for the whole clip, and a holster clip swings
         // that barrel down/away, which reads as the torso briefly contorting.
         playerAnimator?.ClearAimRigWeightOverride();
+
+        // The character stays in the item pose (Item Layer weight and the
+        // IsAiming bool driving that layer's states) for the same clip -- the
+        // release below is what ends it, so the two can't drift apart.
+        playerAnimator?.SetItemPoseHeld(true);
 
         // Hand IK keeps tracking the grip points (pistol stays parented under
         // handGrip) for the whole holster clip instead of letting go the
@@ -368,18 +379,6 @@ public class Pistol : Item
             bobTarget.localRotation = _bobBaseLocalRotation * Quaternion.Euler(_currentBobRotation.x, _currentBobRotation.y, _currentBobRotation.z);
         }
 
-        // Reads Look directly rather than through PlayerLook -- PlayerLook already
-        // owns Enable/Disable for this action, so this never touches its enabled
-        // state (holstering the pistol must not disable camera look).
-        if (swayTarget != null && _lookAction != null)
-        {
-            Vector2 lookInput = _lookAction.ReadValue<Vector2>();
-            Vector2 targetSway = new Vector2(-lookInput.y, lookInput.x) * swayAmount;
-            _currentSway = Vector2.Lerp(_currentSway, targetSway, swaySmoothing * Time.deltaTime);
-
-            swayTarget.localRotation = _baseSwayLocalRotation * Quaternion.Euler(_currentSway.x, _currentSway.y, 0f);
-        }
-
         if (positionSwayTarget != null && movement != null)
         {
             Vector3 targetPositionSway = new Vector3(
@@ -399,13 +398,14 @@ public class Pistol : Item
 
             bool isMoving = movement != null && movement.MoveInput.sqrMagnitude > 0.01f;
             bool isRunning = movement != null && movement.IsSprintingStable;
+            bool isPeeking = movement != null && Mathf.Abs(movement.PeekAmount) > 0.01f;
 
             // Only counts up while walk is actually the pose that would apply --
-            // aiming, firing, reloading or breaking into a run all take priority
-            // over walk, so any of those resets the timer too, not just stopping.
-            // That way walk pose always has to wait out the delay again after
-            // being interrupted by anything, not just resume instantly once clear.
-            bool wantsWalkPose = isMoving && !isAiming && !isFiring && !isRunning && !isReloading;
+            // aiming, peeking, firing, reloading or breaking into a run all take
+            // priority over walk, so any of those resets the timer too, not just
+            // stopping. That way walk pose always has to wait out the delay again
+            // after being interrupted by anything, not just resume instantly once clear.
+            bool wantsWalkPose = isMoving && !isAiming && !isPeeking && !isFiring && !isRunning && !isReloading;
             if (wantsWalkPose)
                 _moveTimer += Time.deltaTime;
             else
@@ -424,6 +424,17 @@ public class Pistol : Item
                 targetPosition = aimPosition;
                 targetRotationEuler = aimRotation;
                 transitionSpeed = aimTransitionSpeed;
+            }
+            // Above firing, so squeezing off a shot from behind cover doesn't
+            // drop the gun back to the hip for the fire hold and snap out to the
+            // peek again after -- but below aiming, because peeking down the
+            // sights has to leave the sight picture alone.
+            else if (isPeeking)
+            {
+                bool isPeekingLeft = movement.PeekAmount < 0f;
+                targetPosition = isPeekingLeft ? peekLeftPosition : peekRightPosition;
+                targetRotationEuler = isPeekingLeft ? peekLeftRotation : peekRightRotation;
+                transitionSpeed = peekTransitionSpeed;
             }
             else if (isFiring)
             {
@@ -527,6 +538,7 @@ public class Pistol : Item
         {
             SnapTo(holster);
             playerAnimator?.ClearHandIKTargets();
+            playerAnimator?.SetItemPoseHeld(false);
             return;
         }
 
@@ -538,6 +550,7 @@ public class Pistol : Item
         yield return new WaitForSeconds(duration);
         SnapTo(holster);
         playerAnimator?.ClearHandIKTargets();
+        playerAnimator?.SetItemPoseHeld(false);
         _holsterIKReleaseCoroutine = null;
     }
 
@@ -599,7 +612,7 @@ public class Pistol : Item
         // Holster/handGrip sit under the camera/spine, so this fires as a side
         // effect while Unity tears down that hierarchy on stopping Play Mode or
         // quitting -- reparenting mid-teardown is invalid and throws.
-        if (anchor == null || _isQuitting)
+        if (anchor == null || IsApplicationQuitting)
             return;
 
         transform.SetParent(anchor, worldPositionStays: false);

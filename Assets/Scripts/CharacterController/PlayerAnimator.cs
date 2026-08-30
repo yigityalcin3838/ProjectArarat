@@ -26,7 +26,7 @@ public class PlayerAnimator : MonoBehaviour
     [SerializeField] private MultiAimConstraint neckAim;
 
     [Header("Peek")]
-    [SerializeField] private float peekMaxOffset = 0.2f;
+    [SerializeField] private float peekMaxAngle = 15f;
     [SerializeField] private float peekBendSpeed = 8f;
 
     [Header("Car Turn Lag")]
@@ -67,6 +67,7 @@ public class PlayerAnimator : MonoBehaviour
     private float _leftFootHeight;
     private float _rightFootHeight;
     private float _currentPelvisOffset;
+    private bool _isItemPoseHeld;
     private bool _hasAimRigWeightOverride;
     private bool _wasAimRigWeightOverrideActive;
     private float _spineAimWeightOverride;
@@ -77,7 +78,7 @@ public class PlayerAnimator : MonoBehaviour
     private float _chestAimPreOverrideWeight;
     private float _upperChestAimPreOverrideWeight;
     private float _neckAimPreOverrideWeight;
-    private float _currentPeekOffset;
+    private float _currentPeekAngle;
     private Quaternion _smoothedCarRotation;
     private Transform _leftHandIKTarget;
     private Transform _rightHandIKTarget;
@@ -118,15 +119,7 @@ public class PlayerAnimator : MonoBehaviour
         _animator.SetFloat(ClimbSpeedHash, movement.IsClimbingLadder ? movement.MoveInput.y : 0f);
         _animator.SetBool(IsInCarHash, movement.IsInCar);
 
-        bool isAiming = items != null && items.HasEquippedItem;
-        _animator.SetBool(IsAimingHash, isAiming);
-
-        // Snapped instantly (not lerped) on the take/holster command -- the
-        // character's own pose switches right away; only hand IK (driven
-        // separately by the item) stays live past that point, tracking the
-        // grip points for as long as the holster clip is actually playing.
-        if (_itemLayerIndex >= 0)
-            _animator.SetLayerWeight(_itemLayerIndex, isAiming ? 1f : 0f);
+        ApplyItemPose();
 
         if (_ladderCarLayerIndex >= 0)
         {
@@ -285,6 +278,42 @@ public class PlayerAnimator : MonoBehaviour
     }
 
     public void ClearAimRigWeightOverride() => _hasAimRigWeightOverride = false;
+
+    // Lets an item keep the character in the item pose after it has already been
+    // unequipped -- for the length of its own put-away animation, so the body
+    // stays on the weapon until it's actually away rather than switching on the
+    // command. Same push-values-in pattern as hand IK targets and aim rig
+    // weights; an item that never calls this simply switches immediately.
+    //
+    // Applied straight away instead of only flagging it for the next Update.
+    // The item ends this hold from a coroutine, and coroutines resume AFTER
+    // every Update but BEFORE the Animator evaluates -- so merely setting the
+    // flag would leave this frame's already-written weight of 1 standing while
+    // the item has released its hand IK and put the weapon away, showing one
+    // frame of the character holding an empty item pose.
+    public void SetItemPoseHeld(bool isHeld)
+    {
+        _isItemPoseHeld = isHeld;
+        ApplyItemPose();
+    }
+
+    private void ApplyItemPose()
+    {
+        if (_animator == null)
+            return;
+
+        bool isAiming = (items != null && items.HasEquippedItem) || _isItemPoseHeld;
+
+        // Drives the Item Layer's own ItemIdle <-> ItemLayer transitions, so it
+        // has to be held alongside the weight below rather than dropped early --
+        // at weight 1 an early drop would visibly snap the body into ItemIdle.
+        _animator.SetBool(IsAimingHash, isAiming);
+
+        // Snapped instantly (not lerped) once the hold ends -- by then the
+        // weapon is away and the layer has nothing left to show.
+        if (_itemLayerIndex >= 0)
+            _animator.SetLayerWeight(_itemLayerIndex, isAiming ? 1f : 0f);
+    }
 
     public void SetLeftHandIKTarget(Transform target, Transform hint = null, float? transitionDuration = null)
     {
@@ -494,17 +523,21 @@ public class PlayerAnimator : MonoBehaviour
 
         Transform upperChestBone = _animator.GetBoneTransform(HumanBodyBones.UpperChest);
 
-        float targetPeekOffset = -movement.PeekAmount * peekMaxOffset;
-        _currentPeekOffset = Mathf.Lerp(_currentPeekOffset, targetPeekOffset, peekBendSpeed * Time.deltaTime);
+        float targetPeekAngle = movement.PeekAmount * peekMaxAngle;
+        _currentPeekAngle = Mathf.Lerp(_currentPeekAngle, targetPeekAngle, peekBendSpeed * Time.deltaTime);
 
-        // Split evenly -- UpperChest is a child of Spine, so its own share adds
-        // to whatever it already inherited from Spine's shift, cascading to the
-        // full offset by UpperChest instead of one rigid hinge at the base.
-        Vector3 shiftPerBone = movement.transform.right * (_currentPeekOffset / 2f);
+        // A roll about the body's own forward axis, so the torso hinges over
+        // sideways from the hips instead of sliding across as a whole. Split
+        // evenly -- UpperChest is a child of Spine, so its own half adds to what
+        // it already inherited from Spine's roll, curving the spine over the
+        // full angle rather than hinging rigidly at the base.
+        Quaternion leanPerBone = Quaternion.AngleAxis(_currentPeekAngle / 2f, movement.transform.forward);
 
-        spineBone.position += shiftPerBone;
+        // Pre-multiplied: the lean is applied in world space on top of whatever
+        // the animation already put the bone at, not folded into its local axes.
+        spineBone.rotation = leanPerBone * spineBone.rotation;
         if (upperChestBone != null)
-            upperChestBone.position += shiftPerBone;
+            upperChestBone.rotation = leanPerBone * upperChestBone.rotation;
     }
 
     private void ApplyHandIK(AvatarIKGoal goal, AvatarIKHint hint, HumanBodyBones handBone, Transform target, Transform hintTarget, HandIKState state, float? transitionDurationOverride)
