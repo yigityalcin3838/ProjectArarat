@@ -75,8 +75,6 @@ public class PlayerLook : MonoBehaviour
     private float _climbCameraYaw;
     private bool _wasClimbing;
     private float? _fovOverride;
-    private Transform _defaultCameraTarget;
-    private bool _hasDefaultCameraTarget;
     private float _breathTimer;
     private Vector3 _currentBreathRotation;
     private float _bobTimer;
@@ -99,34 +97,6 @@ public class PlayerLook : MonoBehaviour
     // push-values-in pattern as PlayerAnimator's hand IK targets.
     public void SetFovOverride(float fov) => _fovOverride = fov;
     public void ClearFovOverride() => _fovOverride = null;
-
-    // Same idea for where the camera sits: an equipped item points the vcam's
-    // tracking target at its own head socket, so the camera rides that item's
-    // hand grip. The vcam is hard-locked to the target (position only, no
-    // damping), so this only moves the camera -- look control is untouched.
-    // Captured on first use rather than at Awake, so it can't matter whether an
-    // item's OnEnable happens to beat this component's Awake at scene load.
-    public void SetCameraTargetOverride(Transform target)
-    {
-        if (cinemachineCamera == null || target == null)
-            return;
-
-        if (!_hasDefaultCameraTarget)
-        {
-            _defaultCameraTarget = cinemachineCamera.Follow;
-            _hasDefaultCameraTarget = true;
-        }
-
-        cinemachineCamera.Follow = target;
-    }
-
-    public void ClearCameraTargetOverride()
-    {
-        if (cinemachineCamera == null || !_hasDefaultCameraTarget)
-            return;
-
-        cinemachineCamera.Follow = _defaultCameraTarget;
-    }
 
     // Weapon-driven recoil kick on the camera itself -- the weapon owns the
     // amount/spring/damping (its recoil "feel") and just pushes them in,
@@ -228,9 +198,6 @@ public class PlayerLook : MonoBehaviour
 
         Pitch = Mathf.Clamp(Pitch - _lookInput.y * mouseSensitivity, -pitchUpLimit, pitchDownLimit);
 
-        // Strafe only -- peeking leans the character's own spine (PlayerAnimator's
-        // ApplyPeek), and the camera picks that up through the head socket it's
-        // locked to rather than rolling separately on top of it.
         float targetTilt = movement != null && !movement.IsMovementLocked
             ? -movement.MoveInput.x * tiltAmount
             : 0f;

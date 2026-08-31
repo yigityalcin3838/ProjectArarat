@@ -97,13 +97,6 @@ public class Pistol : Item
     [SerializeField] private Vector3 aimPosition;
     [SerializeField] private Vector3 aimRotation;
     [SerializeField] private float aimTransitionSpeed = 8f;
-    // Q and E are the negative and positive halves of the Peek 1D axis, so the
-    // sign of PeekAmount is what picks between these two.
-    [SerializeField] private Vector3 peekLeftPosition;
-    [SerializeField] private Vector3 peekLeftRotation;
-    [SerializeField] private Vector3 peekRightPosition;
-    [SerializeField] private Vector3 peekRightRotation;
-    [SerializeField] private float peekTransitionSpeed = 8f;
 
     [Header("Hand IK")]
     [SerializeField] private PlayerAnimator playerAnimator;
@@ -186,13 +179,8 @@ public class Pistol : Item
         _magazineAmmo[1] = magazineCapacity;
     }
 
-    protected override void OnEnable()
+    private void OnEnable()
     {
-        // Points the camera at this pistol's own head socket (a child of
-        // handGrip), so it rides the grip along with the weapon parented there
-        // below.
-        base.OnEnable();
-
         // A quick re-equip during a still-running holster's IK-release wait
         // must not let that stale coroutine later snap this freshly-drawn
         // weapon back to the holster and clear the hand IK we're about to set.
@@ -221,13 +209,8 @@ public class Pistol : Item
         }
     }
 
-    protected override void OnDisable()
+    private void OnDisable()
     {
-        // Puts the camera back on the character's default socket right away
-        // rather than waiting out the holster clip like hand IK below -- the
-        // camera stops riding the grip the moment the weapon is put away.
-        base.OnDisable();
-
         weaponAnimator?.SetTrigger(holsterTrigger);
         _aimAction?.Disable();
         _attackAction?.Disable();
@@ -398,14 +381,13 @@ public class Pistol : Item
 
             bool isMoving = movement != null && movement.MoveInput.sqrMagnitude > 0.01f;
             bool isRunning = movement != null && movement.IsSprintingStable;
-            bool isPeeking = movement != null && Mathf.Abs(movement.PeekAmount) > 0.01f;
 
             // Only counts up while walk is actually the pose that would apply --
-            // aiming, peeking, firing, reloading or breaking into a run all take
-            // priority over walk, so any of those resets the timer too, not just
-            // stopping. That way walk pose always has to wait out the delay again
-            // after being interrupted by anything, not just resume instantly once clear.
-            bool wantsWalkPose = isMoving && !isAiming && !isPeeking && !isFiring && !isRunning && !isReloading;
+            // aiming, firing, reloading or breaking into a run all take priority
+            // over walk, so any of those resets the timer too, not just stopping.
+            // That way walk pose always has to wait out the delay again after
+            // being interrupted by anything, not just resume instantly once clear.
+            bool wantsWalkPose = isMoving && !isAiming && !isFiring && !isRunning && !isReloading;
             if (wantsWalkPose)
                 _moveTimer += Time.deltaTime;
             else
@@ -424,17 +406,6 @@ public class Pistol : Item
                 targetPosition = aimPosition;
                 targetRotationEuler = aimRotation;
                 transitionSpeed = aimTransitionSpeed;
-            }
-            // Above firing, so squeezing off a shot from behind cover doesn't
-            // drop the gun back to the hip for the fire hold and snap out to the
-            // peek again after -- but below aiming, because peeking down the
-            // sights has to leave the sight picture alone.
-            else if (isPeeking)
-            {
-                bool isPeekingLeft = movement.PeekAmount < 0f;
-                targetPosition = isPeekingLeft ? peekLeftPosition : peekRightPosition;
-                targetRotationEuler = isPeekingLeft ? peekLeftRotation : peekRightRotation;
-                transitionSpeed = peekTransitionSpeed;
             }
             else if (isFiring)
             {
@@ -524,6 +495,11 @@ public class Pistol : Item
     // Stops any still-running release first so a quick re-equip during a
     // holster's tail doesn't have that older coroutine steal IK back off it.
     private Coroutine _holsterIKReleaseCoroutine;
+
+    // That coroutine runs for exactly as long as the holster clip, and clears
+    // itself at the end -- so its presence is the answer to "is the gun still
+    // being put away".
+    public override bool IsStowing => _holsterIKReleaseCoroutine != null;
 
     private void StartHolsterIKRelease(float duration)
     {

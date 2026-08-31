@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.Animations.Rigging;
 
 [RequireComponent(typeof(Animator))]
@@ -11,13 +11,7 @@ public class PlayerAnimator : MonoBehaviour
     [SerializeField] private float turnSpeed = 720f;
     [SerializeField] private float forwardAmountDampTime = 0.15f;
     [SerializeField] private float turnInPlaceToleranceAngle = 90f;
-    [SerializeField] private float turnAnimResetSpeed = 400f;
-    [SerializeField] private LayerMask groundLayer = ~0;
-    [SerializeField] private float footIKRayDistance = 0.5f;
-    [SerializeField] private float footIKGroundOffset = 0.05f;
-    [SerializeField] private float footIKMaxOffset = 0.15f;
-    [SerializeField] private float footIKHeightSmoothSpeed = 10f;
-    [SerializeField] private float pelvisAdjustSpeed = 8f;
+
 
     [Header("Aim Rig")]
     [SerializeField] private MultiAimConstraint spineAim;
@@ -25,19 +19,30 @@ public class PlayerAnimator : MonoBehaviour
     [SerializeField] private MultiAimConstraint upperChestAim;
     [SerializeField] private MultiAimConstraint neckAim;
 
-    [Header("Peek")]
-    [SerializeField] private float peekMaxAngle = 15f;
-    [SerializeField] private float peekBendSpeed = 8f;
-
-    [Header("Car Turn Lag")]
-    [SerializeField] private float carTurnLagSpeed = 6f;
-    [SerializeField] private float carTurnLagMaxAngle = 30f;
-
     [Header("Hand IK")]
     [SerializeField] private float handIKTransitionDuration = 0.08f;
 
     [Header("Layer Weights")]
     [SerializeField] private float layerWeightTransitionSpeed = 8f;
+
+    // State names, not parameter names -- the turn recovery reads the animator's
+    // progress through these states, and the clips inside them are called
+    // something else entirely. All four are here because the same TurnLeft and
+    // TurnRight triggers reach standing and crouching turns alike: which one
+    // plays depends on whether the animator is in Locomotion or CrouchLocomotion.
+    private static readonly string[] TurnStateNames =
+    {
+        "TurnLeft", "TurnRight", "CrouchTurnLeft", "CrouchTurnRight"
+    };
+
+    private const int BaseLayerIndex = 0;
+
+    // The mount over the top edge has no clip of its own: it is the dismount
+    // played backwards, which is why both live in the same state. PlayerMovement
+    // is what inverts the progress for that case -- the reversal is content, and
+    // stays in one place rather than spreading through the flow.
+    private const string LadderMountStateName = "LadderClimbEnter";
+    private const string LadderDismountStateName = "LadderClimbFinish";
 
     private static readonly int ForwardAmountHash = Animator.StringToHash("ForwardAmount");
     private static readonly int IsCrouchingHash = Animator.StringToHash("IsCrouching");
@@ -50,7 +55,8 @@ public class PlayerAnimator : MonoBehaviour
     private static readonly int LadderFinishHash = Animator.StringToHash("LadderFinish");
     private static readonly int LadderTransitionSpeedHash = Animator.StringToHash("LadderTransitionSpeed");
     private static readonly int LadderEnterFromTopHash = Animator.StringToHash("LadderEnterFromTop");
-    private static readonly int LadderEnterFromTopCompleteHash = Animator.StringToHash("LadderEnterFromTopComplete");
+    private static readonly int LadderMountCompleteHash = Animator.StringToHash("LadderMountComplete");
+    private static readonly int LadderExitBottomHash = Animator.StringToHash("LadderExitBottom");
     private static readonly int IsInCarHash = Animator.StringToHash("IsInCar");
     private static readonly int CarTransitionSpeedHash = Animator.StringToHash("CarTransitionSpeed");
     private static readonly int CarEnterHash = Animator.StringToHash("CarEnter");
@@ -64,9 +70,11 @@ public class PlayerAnimator : MonoBehaviour
     private float _ladderCarLayerWeight;
     private float _facingOffset;
     private bool _isRecoveringFromTurn;
-    private float _leftFootHeight;
-    private float _rightFootHeight;
-    private float _currentPelvisOffset;
+    private bool _hasEnteredTurnState;
+    private float _turnStartWaitTimer;
+    private float _turnStartOffset;
+    private bool _isSquaringUpForEntry;
+    private float _entryStartFacingOffset;
     private bool _isItemPoseHeld;
     private bool _hasAimRigWeightOverride;
     private bool _wasAimRigWeightOverrideActive;
@@ -78,8 +86,6 @@ public class PlayerAnimator : MonoBehaviour
     private float _chestAimPreOverrideWeight;
     private float _upperChestAimPreOverrideWeight;
     private float _neckAimPreOverrideWeight;
-    private float _currentPeekAngle;
-    private Quaternion _smoothedCarRotation;
     private Transform _leftHandIKTarget;
     private Transform _rightHandIKTarget;
     private Transform _leftHandIKHint;
@@ -106,11 +112,6 @@ public class PlayerAnimator : MonoBehaviour
         _animator = GetComponent<Animator>();
         _itemLayerIndex = _animator.GetLayerIndex("Item Layer");
         _ladderCarLayerIndex = _animator.GetLayerIndex("LadderCar");
-
-        _leftFootHeight = _animator.GetBoneTransform(HumanBodyBones.LeftFoot).position.y;
-        _rightFootHeight = _animator.GetBoneTransform(HumanBodyBones.RightFoot).position.y;
-
-        _smoothedCarRotation = movement.transform.rotation;
     }
 
     private void Update()
@@ -123,7 +124,14 @@ public class PlayerAnimator : MonoBehaviour
 
         if (_ladderCarLayerIndex >= 0)
         {
-            float targetLadderCarWeight = (movement.IsClimbingLadder || movement.IsInCar) ? 1f : 0f;
+            // Held down over the slide to the entry point so the walk on the base
+            // layer is what shows while the character is still on its way there.
+            // Only the weight is held: the flags above have to stay true the whole
+            // time, because the ladder and car states exit on them going false --
+            // gate those and the layer drops straight back to Idle and never
+            // finds its way back in.
+            bool hasArrived = !movement.IsSlidingToEntry;
+            float targetLadderCarWeight = (movement.IsClimbingLadder || movement.IsInCar) && hasArrived ? 1f : 0f;
             _ladderCarLayerWeight = Mathf.Lerp(_ladderCarLayerWeight, targetLadderCarWeight, layerWeightTransitionSpeed * Time.deltaTime);
             _animator.SetLayerWeight(_ladderCarLayerIndex, _ladderCarLayerWeight);
         }
@@ -132,10 +140,33 @@ public class PlayerAnimator : MonoBehaviour
 
         if (movement.IsClimbingLadder || movement.IsInCar)
         {
-            _facingOffset = Mathf.MoveTowardsAngle(_facingOffset, 0f, turnAnimResetSpeed * Time.deltaTime);
+            if (!_isSquaringUpForEntry)
+            {
+                _isSquaringUpForEntry = true;
+                _entryStartFacingOffset = _facingOffset;
+            }
+
+            // Paced by the slide to the entry point, not by a rate of its own.
+            // The root is rotating to face the ladder or car over exactly that
+            // span, so sharing its progress is what makes the two land together
+            // as a single turn instead of two overlapping ones.
+            _facingOffset = Mathf.LerpAngle(_entryStartFacingOffset, 0f, movement.EntrySlideProgress);
             transform.localRotation = Quaternion.Euler(0f, _facingOffset, 0f);
+
+            // Walk over the slide rather than gliding to the door, at a full
+            // stride throughout -- 1 is the top of the walk half of the blend
+            // tree, 2 being a run. Deliberately not scaled to the distance being
+            // covered: a partial blend over a short hop reads as trudging, and
+            // the slide is brief enough either way that a full stride sells it.
+            float entryForwardAmount = movement.IsSlidingToEntry ? 1f : 0f;
+
+            _animator.SetFloat(ForwardAmountHash, entryForwardAmount, forwardAmountDampTime, Time.deltaTime);
+            _animator.SetBool(IsMovingHash, entryForwardAmount > 0.05f);
+            _animator.SetBool(IsCrouchingHash, false);
             return;
         }
+
+        _isSquaringUpForEntry = false;
 
         Vector2 moveDir = movement.MoveInput;
         float speed = moveDir.magnitude;
@@ -166,12 +197,7 @@ public class PlayerAnimator : MonoBehaviour
         }
         else if (_isRecoveringFromTurn)
         {
-            _facingOffset = Mathf.MoveTowardsAngle(_facingOffset, 0f, turnAnimResetSpeed * Time.deltaTime);
-            if (Mathf.Abs(_facingOffset) < 0.5f)
-            {
-                _facingOffset = 0f;
-                _isRecoveringFromTurn = false;
-            }
+            UpdateTurnRecovery();
         }
         else
         {
@@ -180,12 +206,12 @@ public class PlayerAnimator : MonoBehaviour
             if (_facingOffset <= -turnInPlaceToleranceAngle)
             {
                 _animator.SetTrigger(TurnRightHash);
-                _isRecoveringFromTurn = true;
+                StartTurnRecovery();
             }
             else if (_facingOffset >= turnInPlaceToleranceAngle)
             {
                 _animator.SetTrigger(TurnLeftHash);
-                _isRecoveringFromTurn = true;
+                StartTurnRecovery();
             }
         }
 
@@ -196,58 +222,126 @@ public class PlayerAnimator : MonoBehaviour
         _animator.SetBool(IsMovingHash, speed > 0.05f);
     }
 
-    private void LateUpdate()
+    // How long a fired turn trigger is given to actually reach the animator: the
+    // time turning back unaided would have taken anyway. Past that, waiting for
+    // the animation has cost more than not having it. Measured against turnSpeed
+    // -- the rate the model already turns at while moving -- so a failure mode
+    // doesn't get a tuning value of its own.
+    private float TurnStartGracePeriod => turnSpeed > 0f
+        ? Mathf.Abs(_turnStartOffset) / turnSpeed
+        : 0f;
+
+    private void StartTurnRecovery()
     {
-        ApplyPeek();
-        ApplyCarTurnLag();
+        _isRecoveringFromTurn = true;
+        _hasEnteredTurnState = false;
+        _turnStartWaitTimer = 0f;
+        _turnStartOffset = _facingOffset;
     }
 
-    private void ApplyCarTurnLag()
+    // The facing offset is driven straight off the turn animation's own progress
+    // rather than by a rate of its own, so it reaches neutral exactly as the clip
+    // ends. Nothing has to be assigned or kept in sync: swap the clip, retime it,
+    // change the transition, scale the animator's speed -- the body follows,
+    // because the animator is the thing being read.
+    private void UpdateTurnRecovery()
     {
-        if (!movement.IsInCar)
+        bool isTurning = TryGetTurnProgress(out float progress);
+
+        if (isTurning)
         {
-            _smoothedCarRotation = movement.transform.rotation;
-            return;
+            _hasEnteredTurnState = true;
+            _facingOffset = Mathf.LerpAngle(_turnStartOffset, 0f, progress);
+
+            if (progress < 1f)
+                return;
+        }
+        else if (!_hasEnteredTurnState)
+        {
+            // The trigger was set and the animator hasn't acted on it yet. Hold
+            // the offset rather than start straightening, so the body doesn't move
+            // before the animation that moves it. But a trigger can also be
+            // swallowed -- consumed by another transition, or a state renamed in
+            // the controller -- and that must not leave the character stuck at
+            // ninety degrees. Past the grace period it gives up and turns back
+            // unaided at turnSpeed, which is smoother than snapping and is the
+            // very thing the grace period was measured against.
+            _turnStartWaitTimer += Time.deltaTime;
+            if (_turnStartWaitTimer < TurnStartGracePeriod)
+                return;
+
+            _facingOffset = Mathf.MoveTowardsAngle(_facingOffset, 0f, turnSpeed * Time.deltaTime);
+            if (Mathf.Abs(_facingOffset) > 0.01f)
+                return;
         }
 
-        _smoothedCarRotation = Quaternion.Slerp(_smoothedCarRotation, movement.transform.rotation, carTurnLagSpeed * Time.deltaTime);
-
-        Quaternion twistDelta = Quaternion.Inverse(movement.transform.rotation) * _smoothedCarRotation;
-
-        twistDelta.ToAngleAxis(out float twistAngle, out Vector3 twistAxis);
-        if (twistAngle > 180f)
-            twistAngle -= 360f;
-        twistAngle = Mathf.Clamp(twistAngle, -carTurnLagMaxAngle, carTurnLagMaxAngle);
-        twistDelta = Quaternion.AngleAxis(twistAngle, twistAxis);
-
-        Transform neckBone = _animator.GetBoneTransform(HumanBodyBones.Neck);
-        if (neckBone != null)
-            neckBone.localRotation *= twistDelta;
+        // The clip played out, or was left early, or never arrived and the body
+        // has finished squaring up without it.
+        _facingOffset = 0f;
+        _isRecoveringFromTurn = false;
     }
 
-    public void PlayLadderEnter() => _animator.SetTrigger(LadderEnterHash);
+    private bool TryGetTurnProgress(out float progress)
+    {
+        AnimatorStateInfo info = GetEffectiveStateInfo(BaseLayerIndex);
 
-    public void PlayLadderFinish()
+        foreach (string stateName in TurnStateNames)
+        {
+            if (!info.IsName(stateName))
+                continue;
+
+            progress = Mathf.Clamp01(info.normalizedTime);
+            return true;
+        }
+
+        progress = 0f;
+        return false;
+    }
+
+    // Two clips serve four moves. ClimbingEnter is the hold at the bottom of the
+    // rail -- forward to take it, backwards to let go. ClimbingExit is the move
+    // over the top edge -- forward to climb off, backwards to climb on. Which
+    // way round is set by the shared speed parameter; the transitions that start
+    // a reversed one enter at offset 1 so the clip has somewhere to run back from.
+    public void PlayLadderMountFromBottom()
     {
         _animator.SetFloat(LadderTransitionSpeedHash, 1f);
-        _animator.SetTrigger(LadderFinishHash);
+        _animator.SetTrigger(LadderEnterHash);
     }
 
-    public void PlayLadderEnterFromTop()
+    public void PlayLadderMountFromTop()
     {
         _animator.SetFloat(LadderTransitionSpeedHash, -1f);
         _animator.SetTrigger(LadderEnterFromTopHash);
     }
 
-    public void PlayLadderEnterFromTopComplete() => _animator.SetTrigger(LadderEnterFromTopCompleteHash);
-
-    public float LadderTransitionProgress
+    public void PlayLadderDismountAtTop()
     {
-        get
-        {
-            AnimatorStateInfo info = GetStateInfo("LadderClimbFinish", out bool isInState);
-            return isInState ? Mathf.Clamp01(info.normalizedTime) : 0f;
-        }
+        _animator.SetFloat(LadderTransitionSpeedHash, 1f);
+        _animator.SetTrigger(LadderFinishHash);
+    }
+
+    public void PlayLadderDismountAtBottom()
+    {
+        _animator.SetFloat(LadderTransitionSpeedHash, -1f);
+        _animator.SetTrigger(LadderExitBottomHash);
+    }
+
+    // Both mounts leave for the climb on the same signal -- the state they leave
+    // from differs, the meaning doesn't.
+    public void PlayLadderMountComplete() => _animator.SetTrigger(LadderMountCompleteHash);
+
+    // -1, not 0, when the animator isn't in the state at all. A caller waiting on
+    // one of these has to be able to tell "hasn't started yet" from "just
+    // started" -- otherwise a trigger that never lands looks exactly like an
+    // animation frozen on its first frame, and the wait never ends.
+    public float LadderMountProgress => GetLadderCarProgress(LadderMountStateName);
+    public float LadderDismountProgress => GetLadderCarProgress(LadderDismountStateName);
+
+    private float GetLadderCarProgress(string stateName)
+    {
+        AnimatorStateInfo info = GetLadderCarStateInfo(stateName, out bool isInState);
+        return isInState ? Mathf.Clamp01(info.normalizedTime) : -1f;
     }
 
     public void PlayCarEnter()
@@ -341,14 +435,14 @@ public class PlayerAnimator : MonoBehaviour
     {
         get
         {
-            AnimatorStateInfo entryInfo = GetStateInfo("CarEntry", out bool isInEntry);
+            AnimatorStateInfo entryInfo = GetLadderCarStateInfo("CarEntry", out bool isInEntry);
             if (isInEntry)
                 return Mathf.Clamp01(entryInfo.normalizedTime);
 
             // CarExit plays its own dedicated clip forward, but the caller (UpdateCarTransition)
             // interpolates DoorLeft->FrontLeft the same way for both directions, so exit progress
             // is reported as the complement -- 1 (still at FrontLeft) down to 0 (back at DoorLeft).
-            AnimatorStateInfo exitInfo = GetStateInfo("CarExit", out bool isInExit);
+            AnimatorStateInfo exitInfo = GetLadderCarStateInfo("CarExit", out bool isInExit);
             if (isInExit)
                 return 1f - Mathf.Clamp01(exitInfo.normalizedTime);
 
@@ -358,29 +452,32 @@ public class PlayerAnimator : MonoBehaviour
 
     private void OnAnimatorMove()
     {
-        GetStateInfo("LadderClimbFinish", out bool isInLadderFinish);
+        GetLadderCarStateInfo("LadderClimbFinish", out bool isInLadderFinish);
 
         if (isInLadderFinish && movement != null)
             movement.ApplyTransitionMotion(_animator.deltaPosition);
     }
 
-    private AnimatorStateInfo GetStateInfo(string stateName, out bool isInState)
+    // LadderClimbFinish/CarEntry/CarExit live on the LadderCar layer, the turn
+    // states on Base Layer -- a state is only ever found on its own layer, so the
+    // caller has to say which one it means.
+    private AnimatorStateInfo GetLadderCarStateInfo(string stateName, out bool isInState)
+        => GetStateInfo(stateName, _ladderCarLayerIndex >= 0 ? _ladderCarLayerIndex : 0, out isInState);
+
+    private AnimatorStateInfo GetStateInfo(string stateName, int layer, out bool isInState)
     {
-        // LadderClimbFinish/CarEntry/CarExit all live on the LadderCar layer, not
-        // Base Layer (index 0) -- querying layer 0 here would never find them.
-        int layer = _ladderCarLayerIndex >= 0 ? _ladderCarLayerIndex : 0;
-
-        if (_animator.IsInTransition(layer))
-        {
-            AnimatorStateInfo nextInfo = _animator.GetNextAnimatorStateInfo(layer);
-            isInState = nextInfo.IsName(stateName);
-            return nextInfo;
-        }
-
-        AnimatorStateInfo currentInfo = _animator.GetCurrentAnimatorStateInfo(layer);
-        isInState = currentInfo.IsName(stateName);
-        return currentInfo;
+        AnimatorStateInfo info = GetEffectiveStateInfo(layer);
+        isInState = info.IsName(stateName);
+        return info;
     }
+
+    // Mid-transition the state that matters is the one being entered, not the one
+    // being left -- otherwise a state isn't seen as reached until its blend has
+    // finished, and anything waiting on it starts a transition's worth of time late.
+    private AnimatorStateInfo GetEffectiveStateInfo(int layer)
+        => _animator.IsInTransition(layer)
+            ? _animator.GetNextAnimatorStateInfo(layer)
+            : _animator.GetCurrentAnimatorStateInfo(layer);
 
     // Only touches the constraints while an item is pushing an override (or while
     // still lerping back from one that just ended), and restores whatever they
@@ -455,57 +552,6 @@ public class PlayerAnimator : MonoBehaviour
         if (layerIndex != 0 && layerIndex != _ladderCarLayerIndex)
             return;
 
-        // Foot/pelvis IK only makes sense while planted -- mid-stride the swing
-        // foot is naturally lifted well off the ground as part of ordinary
-        // walking/running, and a raycast from it can still reach the real floor
-        // below, which this system would otherwise mistake for uneven ground and
-        // pull the pelvis down on every step.
-        bool isStationary = movement.MoveInput.sqrMagnitude < 0.01f;
-
-        if (movement.IsClimbingLadder || movement.IsInCar || !isStationary)
-        {
-            _animator.SetIKPositionWeight(AvatarIKGoal.LeftFoot, 0f);
-            _animator.SetIKRotationWeight(AvatarIKGoal.LeftFoot, 0f);
-            _animator.SetIKPositionWeight(AvatarIKGoal.RightFoot, 0f);
-            _animator.SetIKRotationWeight(AvatarIKGoal.RightFoot, 0f);
-            _currentPelvisOffset = Mathf.Lerp(_currentPelvisOffset, 0f, pelvisAdjustSpeed * Time.deltaTime);
-            _animator.bodyPosition += Vector3.up * _currentPelvisOffset;
-            ApplyBothHandIK();
-            return;
-        }
-
-        Transform leftFootBone = _animator.GetBoneTransform(HumanBodyBones.LeftFoot);
-        Transform rightFootBone = _animator.GetBoneTransform(HumanBodyBones.RightFoot);
-
-        // Triggers ignored so a feet-height interaction zone can't be mistaken
-        // for the floor and lift the foot onto nothing.
-        bool leftHit = Physics.Raycast(leftFootBone.position + Vector3.up * footIKRayDistance, Vector3.down, out RaycastHit leftHitInfo, footIKRayDistance * 2f, groundLayer, QueryTriggerInteraction.Ignore);
-        bool rightHit = Physics.Raycast(rightFootBone.position + Vector3.up * footIKRayDistance, Vector3.down, out RaycastHit rightHitInfo, footIKRayDistance * 2f, groundLayer, QueryTriggerInteraction.Ignore);
-
-        float leftOffset = leftHit ? (leftHitInfo.point.y + footIKGroundOffset) - leftFootBone.position.y : 0f;
-        float rightOffset = rightHit ? (rightHitInfo.point.y + footIKGroundOffset) - rightFootBone.position.y : 0f;
-
-        float leftWeight = leftHit ? Mathf.Clamp01(1f - Mathf.Abs(leftOffset) / footIKMaxOffset) : 0f;
-        float rightWeight = rightHit ? Mathf.Clamp01(1f - Mathf.Abs(rightOffset) / footIKMaxOffset) : 0f;
-
-        float targetPelvisOffset = 0f;
-        if (leftWeight > 0f)
-            targetPelvisOffset = Mathf.Min(targetPelvisOffset, leftOffset * leftWeight);
-        if (rightWeight > 0f)
-            targetPelvisOffset = Mathf.Min(targetPelvisOffset, rightOffset * rightWeight);
-
-        _currentPelvisOffset = Mathf.Lerp(_currentPelvisOffset, targetPelvisOffset, pelvisAdjustSpeed * Time.deltaTime);
-        _animator.bodyPosition += Vector3.up * _currentPelvisOffset;
-
-        ApplyFootIK(AvatarIKGoal.LeftFoot, leftHitInfo, leftWeight, ref _leftFootHeight);
-        ApplyFootIK(AvatarIKGoal.RightFoot, rightHitInfo, rightWeight, ref _rightFootHeight);
-
-        // Hand IK reads its target transforms' CURRENT positions -- calling this
-        // after the pelvis shift above (rather than before, like it used to) means
-        // a grip point that's a descendant of the skeleton (moves with bodyPosition)
-        // reports its already-shifted position, not a stale pre-shift one. That
-        // staleness was the actual cause of hands visibly detaching from the
-        // weapon when the pelvis dropped -- not the pelvis shift itself.
         ApplyBothHandIK();
     }
 
@@ -513,31 +559,6 @@ public class PlayerAnimator : MonoBehaviour
     {
         ApplyHandIK(AvatarIKGoal.LeftHand, AvatarIKHint.LeftElbow, HumanBodyBones.LeftHand, _leftHandIKTarget, _leftHandIKHint, _leftHandIKState, _leftHandIKTransitionDurationOverride);
         ApplyHandIK(AvatarIKGoal.RightHand, AvatarIKHint.RightElbow, HumanBodyBones.RightHand, _rightHandIKTarget, _rightHandIKHint, _rightHandIKState, _rightHandIKTransitionDurationOverride);
-    }
-
-    private void ApplyPeek()
-    {
-        Transform spineBone = _animator.GetBoneTransform(HumanBodyBones.Spine);
-        if (spineBone == null)
-            return;
-
-        Transform upperChestBone = _animator.GetBoneTransform(HumanBodyBones.UpperChest);
-
-        float targetPeekAngle = movement.PeekAmount * peekMaxAngle;
-        _currentPeekAngle = Mathf.Lerp(_currentPeekAngle, targetPeekAngle, peekBendSpeed * Time.deltaTime);
-
-        // A roll about the body's own forward axis, so the torso hinges over
-        // sideways from the hips instead of sliding across as a whole. Split
-        // evenly -- UpperChest is a child of Spine, so its own half adds to what
-        // it already inherited from Spine's roll, curving the spine over the
-        // full angle rather than hinging rigidly at the base.
-        Quaternion leanPerBone = Quaternion.AngleAxis(_currentPeekAngle / 2f, movement.transform.forward);
-
-        // Pre-multiplied: the lean is applied in world space on top of whatever
-        // the animation already put the bone at, not folded into its local axes.
-        spineBone.rotation = leanPerBone * spineBone.rotation;
-        if (upperChestBone != null)
-            upperChestBone.rotation = leanPerBone * upperChestBone.rotation;
     }
 
     private void ApplyHandIK(AvatarIKGoal goal, AvatarIKHint hint, HumanBodyBones handBone, Transform target, Transform hintTarget, HandIKState state, float? transitionDurationOverride)
@@ -553,7 +574,7 @@ public class PlayerAnimator : MonoBehaviour
         // exactly on target -- an explicit hint removes the ambiguity entirely.
         _animator.SetIKHintPositionWeight(hint, hintTarget != null ? 1f : 0f);
         if (hintTarget != null)
-            _animator.SetIKHintPosition(hint, hintTarget.position + Vector3.up * _currentPelvisOffset);
+            _animator.SetIKHintPosition(hint, hintTarget.position);
 
         if (target == null)
         {
@@ -614,30 +635,7 @@ public class PlayerAnimator : MonoBehaviour
             state.CurrentRotation = Quaternion.Slerp(blendStartRotation, target.rotation, state.BlendT);
         }
 
-        // bodyPosition adjustments made earlier this same OnAnimatorIK don't
-        // propagate to bone/attachment Transforms (like a grip point on the
-        // weapon) until AFTER OnAnimatorIK returns -- so target.position read here
-        // is always last frame's pose regardless of call order. _currentPelvisOffset
-        // itself is a plain float updated synchronously above, so adding it here is
-        // the only way to account for this frame's pelvis shift before it's applied.
-        _animator.SetIKPosition(goal, state.CurrentPosition + Vector3.up * _currentPelvisOffset);
+        _animator.SetIKPosition(goal, state.CurrentPosition);
         _animator.SetIKRotation(goal, state.CurrentRotation);
-    }
-
-    private void ApplyFootIK(AvatarIKGoal goal, RaycastHit hitInfo, float weight, ref float smoothedHeight)
-    {
-        _animator.SetIKPositionWeight(goal, weight);
-        _animator.SetIKRotationWeight(goal, weight);
-
-        if (weight <= 0f)
-            return;
-
-        float targetHeight = hitInfo.point.y + footIKGroundOffset;
-        smoothedHeight = Mathf.Lerp(smoothedHeight, targetHeight, footIKHeightSmoothSpeed * Time.deltaTime);
-
-        _animator.SetIKPosition(goal, new Vector3(hitInfo.point.x, smoothedHeight, hitInfo.point.z));
-
-        Quaternion targetRotation = Quaternion.FromToRotation(Vector3.up, hitInfo.normal) * _animator.GetIKRotation(goal);
-        _animator.SetIKRotation(goal, targetRotation);
     }
 }

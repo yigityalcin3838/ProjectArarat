@@ -32,6 +32,7 @@ public class PlayerMovement : MonoBehaviour
     [Header("Animator Link")]
     [SerializeField] private PlayerAnimator playerAnimator;
     [SerializeField] private PlayerStamina stamina;
+    [SerializeField] private PlayerItems items;
 
     [Header("Interaction")]
     [SerializeField] private float enterTransitionDuration = 0.4f;
@@ -50,7 +51,6 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] private string carDoorTag = "CarDoorLeft";
     [SerializeField] private float carInteractDistance = 2f;
 
-    public float PeekAmount { get; private set; }
     public bool IsInCar { get; private set; }
     public float CarSpeedRatio => _activeCar != null ? _activeCar.SpeedRatio : 0f;
 
@@ -63,8 +63,26 @@ public class PlayerMovement : MonoBehaviour
     public float SprintSpeed => sprintSpeed;
     public bool IsSprinting => IsGrounded && !IsCrouching && !IsInCar && !_sprintBlocked && _sprintAction.IsPressed() && _moveInput.sqrMagnitude > 0.01f && HasStamina;
     public bool IsSprintingStable => IsGroundedStable && !IsCrouching && !IsInCar && !_sprintBlocked && _sprintAction.IsPressed() && _moveInput.sqrMagnitude > 0.01f && HasStamina;
-    public bool IsClimbingLadder { get; private set; }
-    public bool IsMovementLocked => _isEnteringLadder || _isPlayingLadderTransition || IsInCar;
+    public bool IsClimbingLadder => _ladderPhase != LadderPhase.None;
+
+    // True whenever something other than the player is driving the character:
+    // every ladder phase except the climb itself, and the whole time in a car.
+    public bool IsMovementLocked =>
+        (_ladderPhase != LadderPhase.None && _ladderPhase != LadderPhase.Climbing) || IsInCar;
+
+    // How far through the slide to a ladder or car entry point the root is: 0 as
+    // it starts, 1 once it has arrived, and 1 whenever no slide is running.
+    // Anything that has to finish in step with that slide paces itself by this
+    // rather than by a duration of its own -- the root is turning to face the
+    // ladder or car as it goes, so a second clock running alongside would have
+    // the body finish squaring up before or after it got there, and the model
+    // would read as rotating twice.
+    public float EntrySlideProgress =>
+        _isEnteringCar ? Mathf.Clamp01(_carEnterT)
+        : _ladderPhase == LadderPhase.Approaching ? Mathf.Clamp01(_ladderApproachT)
+        : 1f;
+
+    public bool IsSlidingToEntry => _isEnteringCar || _ladderPhase == LadderPhase.Approaching;
 
     // One-frame pulses for equipped items (e.g. Pistol) to react to with a
     // one-shot effect (a jump/land kick) -- read-only, mirrors IsGrounded etc.
@@ -91,16 +109,43 @@ public class PlayerMovement : MonoBehaviour
     private InputAction _sprintAction;
     private InputAction _crouchAction;
     private InputAction _interactAction;
-    private InputAction _peekAction;
 
     private Ladder _activeLadder;
-    private bool _isEnteringLadder;
-    private bool _isEnteringFromTop;
-    private Vector3 _ladderEnterStart;
-    private Quaternion _ladderEnterStartRotation;
-    private float _ladderEnterT;
-    private bool _isPlayingLadderTransition;
-    private bool _ladderTransitionReversed;
+    // One phase at a time, in place of a handful of booleans that between them
+    // could describe states the ladder has no meaning for. Everything about being
+    // on a ladder is derived from this and _activeLadder: no combination of flags
+    // to keep consistent, and nothing to forget to clear on the way out.
+    private enum LadderPhase
+    {
+        None,
+        Approaching,  // walking to the grab point; a timed slide owns the root
+        Mounting,     // an authored clip owns it: taking hold of the ladder
+        Climbing,     // the player owns it, up and down the rail
+        Dismounting,  // an authored clip owns it again: getting off at the top
+    }
+
+    private LadderPhase _ladderPhase;
+
+    // Which end each authored phase happens at. They are separate because they
+    // can differ: climbing on at the top and off at the bottom is an ordinary
+    // way to use a ladder.
+    private bool _isMountingFromTop;
+    private bool _isDismountingAtTop;
+    private Vector3 _ladderApproachStart;
+    private Quaternion _ladderApproachStartRotation;
+    private float _ladderApproachT;
+
+    // Animation-driven phases wait on the animator reaching a state. A trigger
+    // can be swallowed, so waiting is never open-ended -- same guard as the turn
+    // recovery in PlayerAnimator, for the same reason: the alternative is a
+    // player stuck on a ladder with no way off.
+    private float _ladderAnimWaitTimer;
+    private const float LadderAnimStartGrace = 0.5f;
+
+    // What was asked for but hasn't started yet, while the hands are cleared.
+    private Ladder _pendingLadder;
+    private bool _pendingLadderFromTop;
+    private Car _pendingCar;
 
     private Car _activeCar;
     private bool _isEnteringCar;
@@ -129,7 +174,6 @@ public class PlayerMovement : MonoBehaviour
         _sprintAction = playerMap.FindAction("Sprint");
         _crouchAction = playerMap.FindAction("Crouch");
         _interactAction = playerMap.FindAction("Interact");
-        _peekAction = playerMap.FindAction("Peek");
     }
 
     private void OnEnable()
@@ -139,7 +183,6 @@ public class PlayerMovement : MonoBehaviour
         _sprintAction.Enable();
         _crouchAction.Enable();
         _interactAction.Enable();
-        _peekAction.Enable();
     }
 
     private void OnDisable()
@@ -149,7 +192,6 @@ public class PlayerMovement : MonoBehaviour
         _sprintAction.Disable();
         _crouchAction.Disable();
         _interactAction.Disable();
-        _peekAction.Disable();
     }
 
     private void Update()
@@ -164,7 +206,7 @@ public class PlayerMovement : MonoBehaviour
 
         if (_jumpAction.WasPerformedThisFrame())
         {
-            if (IsClimbingLadder && !_isEnteringLadder && !_isPlayingLadderTransition)
+            if (_ladderPhase == LadderPhase.Climbing)
             {
                 LetGoOfLadder();
             }
@@ -182,7 +224,7 @@ public class PlayerMovement : MonoBehaviour
         {
             if (IsClimbingLadder)
             {
-                if (!_isEnteringLadder && !_isPlayingLadderTransition)
+                if (_ladderPhase == LadderPhase.Climbing)
                     LetGoOfLadder();
             }
             else if (IsInCar)
@@ -192,10 +234,7 @@ public class PlayerMovement : MonoBehaviour
             }
             else if (TryFindLadder(out Ladder ladder))
             {
-                if (transform.position.y >= ladder.TipPoint.y)
-                    EnterLadderFromTop(ladder);
-                else
-                    EnterLadder(ladder);
+                RequestEntry(ladder, transform.position.y >= ladder.TipPoint.y, null);
             }
             else if (TryFindDoor(out Door door))
             {
@@ -203,12 +242,12 @@ public class PlayerMovement : MonoBehaviour
             }
             else if (TryFindCarDoor(out Car car))
             {
-                EnterCar(car);
+                RequestEntry(null, false, car);
             }
         }
 
         UpdateCrouch();
-        UpdatePeek();
+        UpdatePendingEntry();
 
         CheckGrounded();
 
@@ -227,24 +266,6 @@ public class PlayerMovement : MonoBehaviour
         ApplyMovement();
         ApplyGravity();
         _characterController.Move(_velocity * Time.deltaTime);
-    }
-
-    private void UpdatePeek()
-    {
-        float rawPeek = _peekAction.ReadValue<float>();
-
-        if (!IsGrounded || IsSprinting || IsClimbingLadder || IsInCar)
-        {
-            PeekAmount = 0f;
-            return;
-        }
-
-        bool isMoving = _moveInput.sqrMagnitude > 0.01f;
-
-        if (IsCrouching)
-            PeekAmount = isMoving ? 0f : rawPeek;
-        else
-            PeekAmount = isMoving ? rawPeek * 0.5f : rawPeek;
     }
 
     private bool TryFindLadder(out Ladder ladder)
@@ -480,44 +501,67 @@ public class PlayerMovement : MonoBehaviour
         }
     }
 
-    private void EnterLadder(Ladder ladder)
+    // Asking to get on a ladder or into a car and actually starting are separate
+    // steps, because a ladder and a steering wheel both want two free hands.
+    // Anything still in hand is put away first and the entry waits for the
+    // animation to finish -- otherwise the character walks over to the ladder
+    // stowing a pistol, and reaches for the rung mid-holster.
+    private void RequestEntry(Ladder ladder, bool ladderFromTop, Car car)
     {
-        _activeLadder = ladder;
-        IsClimbingLadder = true;
-        _isPlayingLadderTransition = false;
-        _isEnteringLadder = true;
-        _isEnteringFromTop = false;
-        _ladderEnterStart = transform.position;
-        _ladderEnterStartRotation = transform.rotation;
-        _ladderEnterT = 0f;
-        _velocity = Vector3.zero;
-        _characterController.enabled = false;
+        _pendingLadder = ladder;
+        _pendingLadderFromTop = ladderFromTop;
+        _pendingCar = car;
 
-        if (playerAnimator != null)
-            playerAnimator.PlayLadderEnter();
+        items?.StowEquippedItem();
     }
 
-    private void EnterLadderFromTop(Ladder ladder)
+    private void UpdatePendingEntry()
+    {
+        if (_pendingLadder == null && _pendingCar == null)
+            return;
+
+        if (items != null && items.AreHandsBusy)
+            return;
+
+        Ladder ladder = _pendingLadder;
+        Car car = _pendingCar;
+        _pendingLadder = null;
+        _pendingCar = null;
+
+        // Re-checked rather than taken on trust: putting an item away takes long
+        // enough to walk out of reach, and being yanked back to a ladder left
+        // behind several strides ago is worse than the press doing nothing.
+        if (ladder != null)
+        {
+            if (TryFindLadder(out Ladder stillInReach) && stillInReach == ladder)
+                EnterLadder(ladder, _pendingLadderFromTop);
+        }
+        else if (TryFindCarDoor(out Car stillAtDoor) && stillAtDoor == car)
+        {
+            EnterCar(car);
+        }
+    }
+
+    // Approaching from above or below differs only in where the grab point ends
+    // up and which clip mounts the character -- not in the flow, which is why
+    // there is one entry point rather than two near-identical ones.
+    private void EnterLadder(Ladder ladder, bool fromTop)
     {
         _activeLadder = ladder;
-        IsClimbingLadder = true;
-        _isPlayingLadderTransition = false;
-        _isEnteringLadder = true;
-        _isEnteringFromTop = true;
-        _ladderEnterStart = transform.position;
-        _ladderEnterStartRotation = transform.rotation;
-        _ladderEnterT = 0f;
+        _ladderPhase = LadderPhase.Approaching;
+        _isMountingFromTop = fromTop;
+        _ladderApproachStart = transform.position;
+        _ladderApproachStartRotation = transform.rotation;
+        _ladderApproachT = 0f;
         _velocity = Vector3.zero;
         _characterController.enabled = false;
     }
 
     private void ExitLadder()
     {
-        IsClimbingLadder = false;
-        _isEnteringLadder = false;
-        _isEnteringFromTop = false;
-        _isPlayingLadderTransition = false;
-        _ladderTransitionReversed = false;
+        _ladderPhase = LadderPhase.None;
+        _isMountingFromTop = false;
+        _isDismountingAtTop = false;
         _activeLadder = null;
         _characterController.enabled = true;
     }
@@ -537,115 +581,154 @@ public class PlayerMovement : MonoBehaviour
             return;
         }
 
-        if (_isEnteringLadder)
+        switch (_ladderPhase)
         {
-            UpdateLadderEnter();
+            case LadderPhase.Approaching: UpdateLadderApproach(); break;
+            case LadderPhase.Mounting: UpdateLadderMount(); break;
+            case LadderPhase.Climbing: UpdateLadderRail(); break;
+            case LadderPhase.Dismounting: UpdateLadderDismount(); break;
+        }
+    }
+
+    // The point on the rail the character takes hold of. Coming from below it is
+    // whatever height they were already at, clamped to the rail; from above it is
+    // the top. One function, so the two approaches can't drift apart.
+    private Vector3 GetLadderGrabPoint()
+    {
+        if (_isMountingFromTop)
+            return _activeLadder.TopStart;
+
+        float grabHeight = Mathf.Clamp(_ladderApproachStart.y, _activeLadder.BotStart.y, _activeLadder.TipPoint.y);
+        return new Vector3(_activeLadder.BotStart.x, grabHeight, _activeLadder.BotStart.z);
+    }
+
+    private void UpdateLadderApproach()
+    {
+        _ladderApproachT += Time.deltaTime / enterTransitionDuration;
+
+        Vector3 targetPosition = GetLadderGrabPoint();
+        Quaternion targetRotation = Quaternion.LookRotation(_activeLadder.Forward, Vector3.up);
+
+        if (_ladderApproachT < 1f)
+        {
+            transform.position = Vector3.Lerp(_ladderApproachStart, targetPosition, _ladderApproachT);
+            transform.rotation = Quaternion.Slerp(_ladderApproachStartRotation, targetRotation, _ladderApproachT);
             return;
         }
 
-        if (_isPlayingLadderTransition)
-        {
-            UpdateLadderTransition();
+        transform.position = targetPosition;
+        transform.rotation = targetRotation;
+        BeginLadderPhase(LadderPhase.Mounting);
+
+        // Triggered on arrival, not on the command. Both of these take the
+        // animator into their state straight from AnyState, so firing them up
+        // front had the character mounting while still walking over to the ladder.
+        if (playerAnimator == null)
             return;
+
+        if (_isMountingFromTop)
+            playerAnimator.PlayLadderMountFromTop();
+        else
+            playerAnimator.PlayLadderMountFromBottom();
+    }
+
+    private void UpdateLadderMount()
+    {
+        // The top mount is the dismount clip run backwards, so its progress counts
+        // down rather than up. That is the only place the reversal is dealt with.
+        float progress = 1f;
+        if (playerAnimator != null)
+        {
+            progress = _isMountingFromTop
+                ? playerAnimator.LadderDismountProgress
+                : playerAnimator.LadderMountProgress;
         }
 
+        if (!IsLadderAnimationFinished(progress, countsDown: _isMountingFromTop))
+            return;
+
+        if (playerAnimator != null)
+            playerAnimator.PlayLadderMountComplete();
+
+        BeginLadderPhase(LadderPhase.Climbing);
+    }
+
+    private void UpdateLadderRail()
+    {
         if (_moveInput.y > 0.1f && transform.position.y >= _activeLadder.TipPoint.y)
         {
-            StartLadderFinish();
+            StartLadderDismount(atTop: true);
             return;
         }
 
         if (_moveInput.y < -0.1f && transform.position.y <= _activeLadder.BotStart.y)
         {
-            ExitLadder();
+            StartLadderDismount(atTop: false);
             return;
         }
 
-        Vector3 climbVelocity = Vector3.up * (_moveInput.y * ladderClimbSpeed);
-        transform.position += climbVelocity * Time.deltaTime;
+        transform.position += Vector3.up * (_moveInput.y * ladderClimbSpeed) * Time.deltaTime;
     }
 
-    private void UpdateLadderEnter()
+    private void StartLadderDismount(bool atTop)
     {
-        _ladderEnterT += Time.deltaTime / enterTransitionDuration;
-
-        Vector3 targetPosition;
-        if (_isEnteringFromTop)
-        {
-            targetPosition = _activeLadder.TopStart;
-        }
-        else
-        {
-            float grabHeight = Mathf.Clamp(_ladderEnterStart.y, _activeLadder.BotStart.y, _activeLadder.TipPoint.y);
-            targetPosition = new Vector3(_activeLadder.BotStart.x, grabHeight, _activeLadder.BotStart.z);
-        }
-
-        Quaternion targetRotation = Quaternion.LookRotation(_activeLadder.Forward, Vector3.up);
-
-        if (_ladderEnterT >= 1f)
-        {
-            transform.position = targetPosition;
-            transform.rotation = targetRotation;
-            _isEnteringLadder = false;
-
-            if (_isEnteringFromTop)
-            {
-                _isEnteringFromTop = false;
-                StartLadderReverseEnter();
-            }
-
-            return;
-        }
-
-        transform.position = Vector3.Lerp(_ladderEnterStart, targetPosition, _ladderEnterT);
-        transform.rotation = Quaternion.Slerp(_ladderEnterStartRotation, targetRotation, _ladderEnterT);
-    }
-
-    private void StartLadderFinish()
-    {
-        _isPlayingLadderTransition = true;
-        _ladderTransitionReversed = false;
+        _isDismountingAtTop = atTop;
+        BeginLadderPhase(LadderPhase.Dismounting);
         _velocity = Vector3.zero;
 
-        if (playerAnimator != null)
-            playerAnimator.PlayLadderFinish();
-    }
-
-    private void StartLadderReverseEnter()
-    {
-        _isPlayingLadderTransition = true;
-        _ladderTransitionReversed = true;
-        _velocity = Vector3.zero;
-
-        if (playerAnimator != null)
-            playerAnimator.PlayLadderEnterFromTop();
-    }
-
-    private void UpdateLadderTransition()
-    {
-        float t = playerAnimator != null ? playerAnimator.LadderTransitionProgress : (_ladderTransitionReversed ? 0f : 1f);
-        bool complete = _ladderTransitionReversed ? t <= 0f : t >= 1f;
-
-        if (!complete)
+        if (playerAnimator == null)
             return;
 
-        if (_ladderTransitionReversed)
-        {
-            _isPlayingLadderTransition = false;
-            _ladderTransitionReversed = false;
-
-            if (playerAnimator != null)
-                playerAnimator.PlayLadderEnterFromTopComplete();
-        }
+        if (atTop)
+            playerAnimator.PlayLadderDismountAtTop();
         else
+            playerAnimator.PlayLadderDismountAtBottom();
+    }
+
+    private void UpdateLadderDismount()
+    {
+        // Off the top is the exit clip forwards; off the bottom is the mount clip
+        // backwards -- letting go of the rail is taking hold of it in reverse.
+        float progress = 1f;
+        if (playerAnimator != null)
         {
-            ExitLadder();
+            progress = _isDismountingAtTop
+                ? playerAnimator.LadderDismountProgress
+                : playerAnimator.LadderMountProgress;
         }
+
+        if (IsLadderAnimationFinished(progress, countsDown: !_isDismountingAtTop))
+            ExitLadder();
+    }
+
+    private void BeginLadderPhase(LadderPhase phase)
+    {
+        _ladderPhase = phase;
+        _ladderAnimWaitTimer = 0f;
+    }
+
+    // Shared by both animation-driven phases. Progress comes back as -1 until the
+    // animator has actually reached the state, which is exactly what a swallowed
+    // trigger looks like -- so that is waited out rather than read as "at the
+    // start", and once the wait runs long the phase reports done anyway. Being
+    // stranded on a ladder with no way off is far worse than a missing animation.
+    private bool IsLadderAnimationFinished(float progress, bool countsDown)
+    {
+        if (progress < 0f)
+        {
+            _ladderAnimWaitTimer += Time.deltaTime;
+            return _ladderAnimWaitTimer >= LadderAnimStartGrace;
+        }
+
+        _ladderAnimWaitTimer = 0f;
+        return countsDown ? progress <= 0f : progress >= 1f;
     }
 
     public void ApplyTransitionMotion(Vector3 deltaPosition)
     {
-        if (_isPlayingLadderTransition)
+        // Only the authored phases move the character by root motion; the climb
+        // itself is driven by input, and the approach by its own slide.
+        if (_ladderPhase == LadderPhase.Mounting || _ladderPhase == LadderPhase.Dismounting)
             transform.position += deltaPosition;
     }
 

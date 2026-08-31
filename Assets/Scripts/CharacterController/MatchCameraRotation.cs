@@ -5,12 +5,12 @@ using UnityEngine;
 // rotation from the head bone) -- so the weapon always points exactly where the
 // camera is looking, on top of whatever position it inherits from its parent.
 //
-// Runs after every other default-order LateUpdate (PlayerAnimator is 50, and
-// directly rotates bones like Spine there via ApplyPeek) so nothing touches the
-// parent chain after this sets the final rotation -- otherwise this object's
-// world rotation gets pulled along with whatever the parent does next, popping
-// back and forth every frame and reading as jitter (this is what fixed the
-// vertical trembling).
+// In LateUpdate, and late in it, for two reasons. The animation update poses the
+// parent bone first, so anything set before that gets dragged along with it and
+// pops back and forth every frame (this ordering is what fixed the vertical
+// trembling). And the camera being read is driven by CinemachineBrain, whose own
+// LateUpdate carries no execution order and therefore runs at 0 -- reading it any
+// earlier hands this object a rotation one frame out of date.
 [DefaultExecutionOrder(1000)]
 public class MatchCameraRotation : MonoBehaviour
 {

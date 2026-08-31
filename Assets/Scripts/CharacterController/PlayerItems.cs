@@ -21,6 +21,37 @@ public class PlayerItems : MonoBehaviour
 
     public bool HasEquippedItem => _equippedSlot >= 0;
 
+    // Both hands count as busy until the last frame of putting something away,
+    // not just until the slot is cleared -- a ladder rung reached for with a
+    // pistol still visibly in hand is the thing this exists to prevent.
+    public bool AreHandsBusy => HasEquippedItem || IsStowingItem;
+
+    private bool IsStowingItem
+    {
+        get
+        {
+            foreach (GameObject slot in itemSlots)
+            {
+                if (slot == null)
+                    continue;
+
+                Item item = slot.GetComponent<Item>();
+                if (item != null && item.IsStowing)
+                    return true;
+            }
+
+            return false;
+        }
+    }
+
+    // For anything that needs the hands free before it can start. Safe to call
+    // with nothing equipped.
+    public void StowEquippedItem()
+    {
+        if (_equippedSlot >= 0)
+            SetEquippedSlot(-1);
+    }
+
     private readonly InputAction[] _selectItemActions = new InputAction[3];
     private int _equippedSlot = -1;
 

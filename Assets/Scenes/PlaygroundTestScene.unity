@@ -749,37 +749,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 834450944}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &16859969
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 16859970}
-  m_Layer: 6
-  m_Name: PistolHeadSocket
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &16859970
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 16859969}
-  serializedVersion: 2
-  m_LocalRotation: {x: -0.0000000037252903, y: -2.1931242e-15, z: -5.680177e-14, w: 1}
-  m_LocalPosition: {x: -0.055652194, y: 0.06173888, z: -0.28695646}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 23448795}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &22651357
 GameObject:
   m_ObjectHideFlags: 0
@@ -890,8 +859,7 @@ Transform:
   m_LocalPosition: {x: 0.055652194, y: -0.061738882, z: 0.28695652}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
-  m_Children:
-  - {fileID: 16859970}
+  m_Children: []
   m_Father: {fileID: 1915127692}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!114 &23448796
@@ -5243,26 +5211,13 @@ MonoBehaviour:
   movement: {fileID: 768611296}
   look: {fileID: 768611302}
   items: {fileID: 768611306}
-  turnSpeed: 360
-  forwardAmountDampTime: 0.1
-  turnInPlaceToleranceAngle: 60
-  turnAnimResetSpeed: 100
-  groundLayer:
-    serializedVersion: 2
-    m_Bits: 55
-  footIKRayDistance: 0
-  footIKGroundOffset: 0.1
-  footIKMaxOffset: 5
-  footIKHeightSmoothSpeed: 10
-  pelvisAdjustSpeed: 8
+  turnSpeed: 420
+  forwardAmountDampTime: 0.05
+  turnInPlaceToleranceAngle: 95
   spineAim: {fileID: 1150645817}
   chestAim: {fileID: 1365446285}
   upperChestAim: {fileID: 1234812889}
   neckAim: {fileID: 1262805108}
-  peekMaxAngle: -45
-  peekBendSpeed: 7
-  carTurnLagSpeed: 12
-  carTurnLagMaxAngle: 30
   handIKTransitionDuration: 0.175
   layerWeightTransitionSpeed: 8
 --- !u!95 &360032583
@@ -11527,6 +11482,7 @@ MonoBehaviour:
   crouchHeight: 1.35
   playerAnimator: {fileID: 360032582}
   stamina: {fileID: 768611303}
+  items: {fileID: 0}
   enterTransitionDuration: 0.225
   ladderTag: Ladder
   ladderInteractDistance: 1
@@ -12202,8 +12158,8 @@ Transform:
   m_GameObject: {fileID: 807179938}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0.53901005, y: 0.3307, z: 0.298}
-  m_LocalScale: {x: -0.07802732, y: 5.885584, z: 0.80444646}
+  m_LocalPosition: {x: 0.539, y: -0.0226, z: 0.298}
+  m_LocalScale: {x: -0.07802732, y: 5.1787252, z: 0.80444646}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 22651358}
@@ -13939,7 +13895,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Weapon
   handGrip: {fileID: 23448795}
-  itemHeadSocket: {fileID: 16859970}
   playerLook: {fileID: 768611302}
   holster: {fileID: 1736185428}
   inputActions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
@@ -14008,11 +13963,6 @@ MonoBehaviour:
   aimPosition: {x: 0.03, y: -0.01, z: 0}
   aimRotation: {x: 0, y: 0, z: 12}
   aimTransitionSpeed: 12
-  peekLeftPosition: {x: -0.125, y: -0.04, z: -0.04}
-  peekLeftRotation: {x: 0, y: 0, z: 30}
-  peekRightPosition: {x: 0.02, y: -0.04, z: -0.04}
-  peekRightRotation: {x: 0, y: 0, z: -30}
-  peekTransitionSpeed: 8
   playerAnimator: {fileID: 360032582}
   rightGripPoint: {fileID: 1243831821}
   leftGripPoint: {fileID: 78354762}
@@ -17829,7 +17779,7 @@ Camera:
     height: 1
   near clip plane: 0.01
   far clip plane: 30000
-  field of view: 60
+  field of view: 75
   orthographic: 0
   orthographic size: 5
   m_Depth: -1
@@ -17856,7 +17806,7 @@ Transform:
   m_GameObject: {fileID: 1141664080}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -0.000043254982, y: 1.9081068, z: 0.14405231}
+  m_LocalPosition: {x: -0.000043254917, y: 1.9081068, z: 0.14405236}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -20840,7 +20790,7 @@ MonoBehaviour:
     LookAtTarget: {fileID: 0}
     CustomLookAtTarget: 0
   Lens:
-    FieldOfView: 60
+    FieldOfView: 75
     OrthographicSize: 5
     NearClipPlane: 0.01
     FarClipPlane: 30000
@@ -20868,7 +20818,7 @@ Transform:
   m_GameObject: {fileID: 1325837976}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: -0.000043254982, y: 1.9081068, z: 0.14405231}
+  m_LocalPosition: {x: -0.000043254917, y: 1.9081068, z: 0.14405236}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -32243,7 +32193,7 @@ Transform:
   m_GameObject: {fileID: 2027848658}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 1.755, z: -0.22}
+  m_LocalPosition: {x: 0, y: 1, z: -0.22}
   m_LocalScale: {x: 1, y: 5.2243156, z: 0.20835184}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -32277,8 +32227,8 @@ Transform:
   m_GameObject: {fileID: 2031164380}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -0.53901005, y: 0.3307, z: 0.298}
-  m_LocalScale: {x: -0.07802732, y: 5.885584, z: 0.80444646}
+  m_LocalPosition: {x: -0.53901005, y: -0.0226, z: 0.298}
+  m_LocalScale: {x: -0.07802732, y: 5.1787252, z: 0.80444646}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 22651358}
@@ -33306,7 +33256,7 @@ Transform:
   m_GameObject: {fileID: 2095002200}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: -2.5, z: -0.42999983}
+  m_LocalPosition: {x: 0, y: -2.268, z: -0.77}
   m_LocalScale: {x: 1, y: 5.2243156, z: 0.20835184}
   m_ConstrainProportionsScale: 0
   m_Children: []
