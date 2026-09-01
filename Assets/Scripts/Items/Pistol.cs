@@ -4,8 +4,10 @@ using UnityEngine.InputSystem;
 
 public class Pistol : Item
 {
-    // handGrip lives on Item -- the camera's head socket gets parented under it
-    // while this is equipped, and the pistol itself parents there too (SnapTo).
+    // itemHold lives on Item and sits under the camera pivot -- that is where this
+    // parents while equipped. The holster is the opposite: it stays on the hip
+    // bone, because a stowed weapon should ride the body and nobody is looking
+    // down a sight through it.
     [SerializeField] private Transform holster;
 
     [Header("Look")]
@@ -27,6 +29,19 @@ public class Pistol : Item
 
     [Header("Hit Detection")]
     [SerializeField] private float maxRange = 100f;
+
+    [Header("Hit Marker")]
+    // A box left where the shot landed, alongside the impact effect. The effect is
+    // tuned to read as an impact and is gone in a moment; this is for the other
+    // question -- did the round go where the crosshair was -- which needs something
+    // that stays put and can be walked up to. Debug aid, not a game feature.
+    [SerializeField] private bool showHitMarker = true;
+    [SerializeField] private Color hitMarkerColor = Color.red;
+    [SerializeField] private float hitMarkerSize = 0.1f;
+
+    // Seconds before it disappears. 0 or less leaves it there for good, which is
+    // what a grouping test wants.
+    [SerializeField] private float hitMarkerDuration = 10f;
 
     [Header("Movement Effects")]
     [SerializeField] private PlayerMovement movement;
@@ -113,7 +128,7 @@ public class Pistol : Item
             playerAnimator?.SetItemPoseHeld(false);
         }
 
-        SnapTo(handGrip);
+        SnapTo(itemHold);
         weaponAnimator?.SetTrigger(takeTrigger);
         _aimAction?.Enable();
         _attackAction?.Enable();
@@ -152,7 +167,7 @@ public class Pistol : Item
         playerAnimator?.SetItemPoseHeld(true);
 
         // Hand IK keeps tracking the grip points (pistol stays parented under
-        // handGrip) for the whole holster clip instead of letting go the
+        // itemHold) for the whole holster clip instead of letting go the
         // instant OnDisable fires -- only once the clip has actually finished
         // does it snap to the real holster socket and let go of IK.
         StartHolsterIKRelease(GetClipLength(holsterTrigger));
@@ -366,7 +381,10 @@ public class Pistol : Item
         if (playerLook == null || playerLook.CameraTransform == null)
             return;
 
-        Transform cam = playerLook.CameraTransform;
+        // Straight down the middle of the rendered image -- see PlayerLook.AimRay.
+        // Where the crosshair is, is where the round goes, whatever the camera rig
+        // is doing to put the crosshair there.
+        Ray aimRay = playerLook.AimRay;
 
         // No layer mask -- hits anything solid. Triggers are skipped
         // explicitly: Unity's Queries Hit Triggers project setting defaults to
@@ -374,8 +392,11 @@ public class Pistol : Item
         // interaction zone or fog volume instead of the wall behind it.
         // Passed per-call rather than switching the project setting, because
         // the interaction raycasts below DO want to find triggers.
-        if (Physics.Raycast(cam.position, cam.forward, out RaycastHit hit, maxRange, ~0, QueryTriggerInteraction.Ignore))
+        if (Physics.Raycast(aimRay, out RaycastHit hit, maxRange, ~0, QueryTriggerInteraction.Ignore))
+        {
             SpawnImpactEffect(hit);
+            SpawnHitMarker(hit);
+        }
     }
 
     // Which effect plays, and how it's tinted, isn't the weapon's business --
@@ -384,6 +405,74 @@ public class Pistol : Item
     private void SpawnImpactEffect(RaycastHit hit)
     {
         SurfaceSystem.Instance?.SpawnImpact(hit);
+    }
+
+    // Looked up by name and cached, in pipeline order: URP's unlit, then the
+    // built-in one, then the last-resort error shader so a marker still shows as
+    // magenta rather than silently not existing. A debug aid that can fail to
+    // appear is worse than no debug aid, because the absence reads as a miss.
+    private static Shader _hitMarkerShader;
+
+    private static Shader HitMarkerShader
+    {
+        get
+        {
+            if (_hitMarkerShader != null)
+                return _hitMarkerShader;
+
+            _hitMarkerShader = Shader.Find("Universal Render Pipeline/Unlit")
+                ?? Shader.Find("Unlit/Color")
+                ?? Shader.Find("Hidden/InternalErrorShader");
+
+            return _hitMarkerShader;
+        }
+    }
+
+    private void SpawnHitMarker(RaycastHit hit)
+    {
+        if (!showHitMarker)
+            return;
+
+        GameObject marker = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        marker.name = "HitMarker";
+
+        // The collider has to go. CreatePrimitive brings one, and a box collider
+        // sitting on the surface would take the next shot aimed at the same spot --
+        // every marker would become a wall in front of the one behind it.
+        Destroy(marker.GetComponent<Collider>());
+
+        marker.transform.localScale = Vector3.one * hitMarkerSize;
+
+        // Laid flat against the surface and lifted off it by half its own depth, so
+        // it sits on the wall rather than half inside it and doesn't z-fight.
+        marker.transform.SetPositionAndRotation(
+            hit.point + hit.normal * (hitMarkerSize * 0.5f),
+            Quaternion.LookRotation(hit.normal));
+
+        Renderer renderer = marker.GetComponent<Renderer>();
+
+        // Built outright rather than tinting whatever CreatePrimitive handed over.
+        // That default comes from the render pipeline and is lit, so a marker in
+        // shadow or facing away from the sun is a dark grey box on a dark grey wall
+        // -- present, and impossible to see. Unlit, it is the colour it was asked
+        // for from any angle in any light, which is the entire point of it.
+        Material material = new Material(HitMarkerShader);
+        material.color = hitMarkerColor;
+
+        // URP's own colour property. Material.color only reaches it when the shader
+        // tags one as its main colour, and a fallback shader might not.
+        if (material.HasProperty("_BaseColor"))
+            material.SetColor("_BaseColor", hitMarkerColor);
+
+        renderer.material = material;
+
+        // Nothing about a debug marker should reach the lighting: a shadow cast by
+        // one is a shadow the shot didn't make.
+        renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        renderer.receiveShadows = false;
+
+        if (hitMarkerDuration > 0f)
+            Destroy(marker, hitMarkerDuration);
     }
 
     private void OnGUI()
@@ -399,7 +488,7 @@ public class Pistol : Item
 
     private void SnapTo(Transform anchor)
     {
-        // Holster/handGrip sit under the camera/spine, so this fires as a side
+        // Holster/itemHold sit under the camera/spine, so this fires as a side
         // effect while Unity tears down that hierarchy on stopping Play Mode or
         // quitting -- reparenting mid-teardown is invalid and throws.
         if (anchor == null || IsApplicationQuitting)

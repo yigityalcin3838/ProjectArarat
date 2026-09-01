@@ -79,6 +79,18 @@ public class PlayerMovement : MonoBehaviour
     // yet. World space -- whoever reads it decides which axis it cares about.
     public Vector3 HorizontalVelocity => new Vector3(_velocity.x, 0f, _velocity.z);
 
+    // Ground speed as a fraction of a walk: 0 standing, 1 at a full walk, 1.6 at a
+    // sprint, half that crouched -- and every value in between while accelerating.
+    //
+    // Exists so a bob doesn't have to be told which gait it is in. Crouching is
+    // slower and a sprint faster because the character is moving slower and faster,
+    // not because a multiplier was looked up, so there is nothing to keep in step
+    // with the speeds themselves and nothing that stays wrong through the stretch
+    // where the character is between two gaits.
+    public float GaitSpeedRatio => walkSpeed > 0f
+        ? HorizontalVelocity.magnitude / walkSpeed
+        : 0f;
+
     public float WalkSpeed => walkSpeed;
     public float SprintSpeed => sprintSpeed;
     public bool IsSprinting => IsGrounded && !IsCrouching && !IsInCar && !_sprintBlocked && _sprintAction.IsPressed() && _moveInput.sqrMagnitude > 0.01f && HasStamina;
@@ -755,6 +767,16 @@ public class PlayerMovement : MonoBehaviour
     private void UpdateCrouch()
     {
         if (IsClimbingLadder || IsInCar)
+            return;
+
+        // Frozen for the length of a turn-in-place, in whichever state the turn
+        // started. The standing and crouching turns are separate states with no
+        // transition between them, so the legs finish the turn they began however
+        // hard the key is held -- and letting the crouch go through anyway left
+        // the capsule, the camera and the speed all describing a crouch the body
+        // was visibly not in. Nothing about crouching happens until the turn is
+        // done, at which point the key is read again and it takes effect at once.
+        if (playerAnimator != null && playerAnimator.IsTurningInPlace)
             return;
 
         bool wantsCrouch = _crouchAction.IsPressed();

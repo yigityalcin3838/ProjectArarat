@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using UnityEngine.Animations.Rigging;
 
 [RequireComponent(typeof(Animator))]
@@ -16,6 +16,31 @@ public class PlayerAnimator : MonoBehaviour
     [SerializeField] private MultiAimConstraint chestAim;
     [SerializeField] private MultiAimConstraint upperChestAim;
     [SerializeField] private MultiAimConstraint neckAim;
+
+    [Header("Peek Slide")]
+    // The body's share of the lean. PlayerLook steps the view sideways; these three
+    // carry the torso the same distance so the model goes with it instead of the
+    // camera sliding out of a body left standing where it was.
+    //
+    // Split equally between them rather than dropped on one joint. They sit in a
+    // chain, so each one's share carries everything above it: a third at the spine,
+    // a third more at the chest, a third more again at the upper chest, and the
+    // shoulders arrive at the full distance having bent through three joints rather
+    // than sheared at one.
+    [SerializeField] private Transform peekSpineBone;
+    [SerializeField] private Transform peekChestBone;
+    [SerializeField] private Transform peekUpperChestBone;
+
+    // Rolled with the lean, so the head cocks rather than riding it out square.
+    // Nothing in first person can see this -- it is for the silhouette, and the
+    // shadow is where a lean either reads or doesn't.
+    [SerializeField] private Transform peekHeadBone;
+
+    // Scales that roll against the view's. 1 matches the camera exactly, which is
+    // the honest answer for a head the camera is nominally inside; anything else
+    // is for the shadow's sake, where the head reads small and a little more cock
+    // than the view took can be what makes the pose legible from outside.
+    [SerializeField] private float peekHeadTiltMultiplier = 1f;
 
     [Header("Hand IK")]
     [SerializeField] private float handIKTransitionDuration = 0.08f;
@@ -51,6 +76,26 @@ public class PlayerAnimator : MonoBehaviour
     // stays in one place rather than spreading through the flow.
     private const string LadderMountStateName = "LadderClimbEnter";
     private const string LadderDismountStateName = "LadderClimbFinish";
+
+    // True from the moment a turn-in-place is asked for until the body has come
+    // all the way back round. The standing and crouching turns are separate
+    // states with no transition between them, so a crouch pressed during one
+    // doesn't reach the model at all -- the legs finish the turn they started,
+    // standing. Anything that would otherwise drop the player into a crouch the
+    // model isn't taking can gate on this and wait its turn out.
+    public bool IsTurningInPlace => _isRecoveringFromTurn;
+
+    // How far through its current clip the base layer is, in radians -- one full
+    // stride to a turn of 2 pi.
+    //
+    // This is the walk cycle. Not an approximation of it, not a sine at roughly the
+    // right frequency: the actual clip, at whatever rate the blend tree is playing
+    // it, which is what decides when a foot lands. Anything that should agree with
+    // the footfall -- the camera's bob, the hands' -- reads this instead of running
+    // a clock of its own, because two clocks at nearly the same rate are worse than
+    // useless. They drift into and out of phase, and the walk looks wrong in a way
+    // no amount of retuning either one fixes.
+    public float LocomotionPhase { get; private set; }
 
     private static readonly int ForwardAmountHash = Animator.StringToHash("ForwardAmount");
     private static readonly int IsCrouchingHash = Animator.StringToHash("IsCrouching");
@@ -124,6 +169,12 @@ public class PlayerAnimator : MonoBehaviour
 
     private void Update()
     {
+        // Read before anything is written, so it is the pose the frame was actually
+        // drawn with rather than one the parameters below have already moved on
+        // from. normalizedTime keeps counting up across loops, which trigonometry
+        // wraps on its own -- there is nothing to reset and so nothing to jump.
+        LocomotionPhase = GetEffectiveStateInfo(BaseLayerIndex).normalizedTime * Mathf.PI * 2f;
+
         _animator.SetBool(IsClimbingLadderHash, movement.IsClimbingLadder);
         _animator.SetFloat(ClimbSpeedHash, movement.IsClimbingLadder ? movement.MoveInput.y : 0f);
         _animator.SetBool(IsInCarHash, movement.IsInCar);
@@ -624,6 +675,54 @@ public class PlayerAnimator : MonoBehaviour
         _wasAimRigWeightOverrideActive = _hasAimRigWeightOverride;
     }
 
+
+    // In LateUpdate because it is the only place a plain bone write survives: the
+    // aim constraints re-pose this same chain during the rig's evaluation and would
+    // overwrite anything set earlier. Re-applied every frame, since the animation
+    // wipes it back to the clip's pose each time -- which is what keeps it from
+    // accumulating.
+    private void LateUpdate()
+    {
+        ApplyPeekSlide();
+    }
+
+    private void ApplyPeekSlide()
+    {
+        if (look == null)
+            return;
+
+        // Gated on the lean itself rather than on the slide, so a setup that rolls
+        // without sliding -- or the other way round -- still gets its half.
+        if (Mathf.Approximately(look.PeekAmount, 0f))
+            return;
+
+        // A third each, applied in order up the chain. Moving a bone takes its
+        // children with it, so the chest's own share lands on top of the spine's
+        // and the upper chest's on top of both -- three equal steps that add up to
+        // the whole slide by the time they reach the shoulders.
+        Vector3 step = transform.root.right * (look.PeekOffset / 3f);
+
+        if (peekSpineBone != null)
+            peekSpineBone.position += step;
+
+        if (peekChestBone != null)
+            peekChestBone.position += step;
+
+        if (peekUpperChestBone != null)
+            peekUpperChestBone.position += step;
+
+        // About the body's forward, the same axis and the same angle the pivot
+        // rolled by, so the head and the view cock together. Applied last: it hangs
+        // off the chain above, and rolling it before those had moved would only
+        // have it carried again.
+        if (peekHeadBone != null)
+        {
+            Quaternion tilt = Quaternion.AngleAxis(
+                look.PeekTiltAngle * peekHeadTiltMultiplier, transform.root.forward);
+            peekHeadBone.rotation = tilt * peekHeadBone.rotation;
+        }
+    }
+
     private void OnAnimatorIK(int layerIndex)
     {
         // Car/ladder grip IK (steering wheel, gear, handbrake, door) now needs to
@@ -635,6 +734,20 @@ public class PlayerAnimator : MonoBehaviour
 
         ApplyBothHandIK();
     }
+
+    // How far the arm is about to be carried sideways, after this solve has already
+    // finished. The slide lands in LateUpdate -- it has to, or the aim constraints
+    // overwrite it -- but the hands are solved back here, against shoulders that
+    // have not moved yet while the weapon already has. Left alone the slide is
+    // applied twice over: once to the weapon, once again to the arm chasing it.
+    //
+    // Taken off the goal instead, the hand is aimed short by exactly what the
+    // torso is about to add, and lands on the weapon. Exact rather than
+    // approximate, because a translation is trivially invertible: the upper chest
+    // ends at three equal thirds, which is the whole offset, and everything below
+    // the shoulder rides it rigidly.
+    private Vector3 PeekSlideCompensation =>
+        look != null ? transform.root.right * look.PeekOffset : Vector3.zero;
 
     private void ApplyBothHandIK()
     {
@@ -653,9 +766,11 @@ public class PlayerAnimator : MonoBehaviour
         // it's guessing from keeps moving (locomotion's own hip/spine sway), so the
         // forearm can visibly swing frame to frame even while the hand itself sits
         // exactly on target -- an explicit hint removes the ambiguity entirely.
+        Vector3 peekSlideCompensation = PeekSlideCompensation;
+
         _animator.SetIKHintPositionWeight(hint, hintTarget != null ? 1f : 0f);
         if (hintTarget != null)
-            _animator.SetIKHintPosition(hint, hintTarget.position);
+            _animator.SetIKHintPosition(hint, hintTarget.position - peekSlideCompensation);
 
         if (target == null)
         {
@@ -716,7 +831,9 @@ public class PlayerAnimator : MonoBehaviour
             state.CurrentRotation = Quaternion.Slerp(blendStartRotation, target.rotation, state.BlendT);
         }
 
-        _animator.SetIKPosition(goal, state.CurrentPosition);
+        // Rotation is left alone: the slide is a translation, and a translation
+        // doesn't turn the hand.
+        _animator.SetIKPosition(goal, state.CurrentPosition - peekSlideCompensation);
         _animator.SetIKRotation(goal, state.CurrentRotation);
     }
 }
