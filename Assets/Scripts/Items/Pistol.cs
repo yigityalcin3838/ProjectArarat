@@ -31,48 +31,6 @@ public class Pistol : Item
     [Header("Movement Effects")]
     [SerializeField] private PlayerMovement movement;
 
-    [Header("Strafe Tilt")]
-    [SerializeField] private Transform tiltTarget;
-    [SerializeField] private float tiltAmount = 10f;
-    [SerializeField] private float tiltSpeed = 8f;
-
-    [Header("Hand Bob")]
-    [SerializeField] private Transform bobTarget;
-    [SerializeField] private float bobHorizontalAmount = 0.01f;
-    [SerializeField] private float bobVerticalAmount = 0.02f;
-    [SerializeField] private float bobPitchAmount = 2f;
-    [SerializeField] private float bobYawAmount = 2f;
-    [SerializeField] private float bobRollAmount = 2f;
-    [SerializeField] private float bobSprintIntensityMultiplier = 1.5f;
-    [SerializeField] private float aimBobMultiplier = 0.3f;
-    [SerializeField] private float bobSmoothing = 8f;
-
-    [Header("Positional Sway")]
-    [SerializeField] private Transform positionSwayTarget;
-    [SerializeField] private float positionSwayHorizontalAmount = 0.01f;
-    [SerializeField] private float positionSwayVerticalAmount = 0.01f;
-    [SerializeField] private float positionSwayForwardAmount = 0.01f;
-    [SerializeField] private float positionSwaySmoothing = 8f;
-
-    [Header("Breathing")]
-    [SerializeField] private Transform breathTarget;
-    [SerializeField] private float breathFrequency = 1f;
-    [SerializeField] private float breathHorizontalAmount = 0.005f;
-    [SerializeField] private float breathVerticalAmount = 0.01f;
-    [SerializeField] private float breathPitchAmount = 1f;
-    [SerializeField] private float breathRollAmount = 1f;
-    [SerializeField] private float aimBreathMultiplier = 0.3f;
-    [SerializeField] private float breathSmoothing = 4f;
-
-    [Header("Jump / Land Kick")]
-    [SerializeField] private Transform kickTarget;
-    [SerializeField] private float jumpKickAmount = 0.6f;
-    [SerializeField] private float landKickAmount = 1.2f;
-    [SerializeField] private float jumpKickRotationAmount = 30f;
-    [SerializeField] private float landKickRotationAmount = 60f;
-    [SerializeField] private float kickSpring = 200f;
-    [SerializeField] private float kickDamping = 20f;
-
     [Header("Fire Camera Kick")]
     [SerializeField] private float cameraKickAmount = 1.5f;
     [SerializeField] private float cameraKickHorizontalAmount = 1f;
@@ -115,26 +73,8 @@ public class Pistol : Item
     private InputAction _reloadAction;
     private int[] _magazineAmmo = new int[2];
     private int _activeMagazineIndex;
-    private float _currentTilt;
-    private Vector3 _bobBaseLocalPosition;
-    private Quaternion _bobBaseLocalRotation;
-    private Vector3 _currentBobOffset;
-    private Vector3 _currentBobRotation;
-    private Vector3 _basePositionSwayLocalPosition;
-    private Vector3 _currentPositionSway;
     private Vector3 _currentAdsPosition;
     private Quaternion _currentAdsRotation;
-    private Vector3 _breathBaseLocalPosition;
-    private Quaternion _breathBaseLocalRotation;
-    private Vector3 _currentBreathOffset;
-    private Vector2 _currentBreathRotation;
-    private float _breathTimer;
-    private Vector3 _kickBaseLocalPosition;
-    private Quaternion _kickBaseLocalRotation;
-    private float _kickOffset;
-    private float _kickVelocity;
-    private float _kickRotationOffset;
-    private float _kickRotationVelocity;
     private float _fireHipTimer;
     private float _reloadTimer;
     private float _moveTimer;
@@ -143,27 +83,6 @@ public class Pistol : Item
     {
         _originalWorldScale = transform.lossyScale;
         SnapTo(holster);
-
-        if (bobTarget != null)
-        {
-            _bobBaseLocalPosition = bobTarget.localPosition;
-            _bobBaseLocalRotation = bobTarget.localRotation;
-        }
-
-        if (positionSwayTarget != null)
-            _basePositionSwayLocalPosition = positionSwayTarget.localPosition;
-
-        if (breathTarget != null)
-        {
-            _breathBaseLocalPosition = breathTarget.localPosition;
-            _breathBaseLocalRotation = breathTarget.localRotation;
-        }
-
-        if (kickTarget != null)
-        {
-            _kickBaseLocalPosition = kickTarget.localPosition;
-            _kickBaseLocalRotation = kickTarget.localRotation;
-        }
 
         if (inputActions != null)
         {
@@ -316,63 +235,6 @@ public class Pistol : Item
             playerLook?.AddFireKick(cameraKickAmount, cameraKickHorizontalAmount, cameraRollShakeAmount);
         }
 
-        // If tiltTarget sits under something with its own MatchCameraRotation
-        // (e.g. HandGrip), that component's Match Roll needs to be OFF so it
-        // doesn't overwrite the Z value set here every LateUpdate.
-        if (movement != null && tiltTarget != null)
-        {
-            float targetTilt = -movement.MoveInput.x * tiltAmount;
-            _currentTilt = Mathf.Lerp(_currentTilt, targetTilt, tiltSpeed * Time.deltaTime);
-
-            Vector3 euler = tiltTarget.localEulerAngles;
-            euler.z = _currentTilt;
-            tiltTarget.localEulerAngles = euler;
-        }
-
-        if (movement != null && bobTarget != null && playerLook != null)
-        {
-            bool isMoving = movement.IsGrounded && !movement.IsMovementLocked && movement.MoveInput.sqrMagnitude > 0.01f;
-            bool isSprintingBob = movement.IsSprintingStable;
-            float intensityRatio = (isSprintingBob ? bobSprintIntensityMultiplier : 1f) * (isAiming ? aimBobMultiplier : 1f);
-
-            // Reads the camera bob's own phase (including its crouch/sprint
-            // rate scaling) instead of running an independent timer here --
-            // that's what keeps the weapon and camera bob genuinely
-            // synced, since two separately-advanced timers can drift apart
-            // over time even with matching frequencies.
-            float bobPhase = playerLook.BobPhase;
-
-            Vector3 targetBobOffset = isMoving
-                ? new Vector3(Mathf.Cos(bobPhase) * bobHorizontalAmount * intensityRatio, Mathf.Sin(bobPhase * 2f) * bobVerticalAmount * intensityRatio, 0f)
-                : Vector3.zero;
-            // Pitch (tip up/down) follows the vertical bob's phase; yaw and roll
-            // (side-to-side swing and tilt) follow the horizontal bob's phase,
-            // 90 degrees apart from each other for a natural circular swing.
-            Vector3 targetBobRotation = isMoving
-                ? new Vector3(
-                    Mathf.Sin(bobPhase * 2f) * bobPitchAmount * intensityRatio,
-                    Mathf.Sin(bobPhase) * bobYawAmount * intensityRatio,
-                    Mathf.Cos(bobPhase) * bobRollAmount * intensityRatio)
-                : Vector3.zero;
-
-            _currentBobOffset = Vector3.Lerp(_currentBobOffset, targetBobOffset, bobSmoothing * Time.deltaTime);
-            _currentBobRotation = Vector3.Lerp(_currentBobRotation, targetBobRotation, bobSmoothing * Time.deltaTime);
-
-            bobTarget.localPosition = _bobBaseLocalPosition + _currentBobOffset;
-            bobTarget.localRotation = _bobBaseLocalRotation * Quaternion.Euler(_currentBobRotation.x, _currentBobRotation.y, _currentBobRotation.z);
-        }
-
-        if (positionSwayTarget != null && movement != null)
-        {
-            Vector3 targetPositionSway = new Vector3(
-                -movement.MoveInput.x * positionSwayHorizontalAmount,
-                -movement.Velocity.y * positionSwayVerticalAmount,
-                -movement.MoveInput.y * positionSwayForwardAmount);
-
-            _currentPositionSway = Vector3.Lerp(_currentPositionSway, targetPositionSway, positionSwaySmoothing * Time.deltaTime);
-            positionSwayTarget.localPosition = _basePositionSwayLocalPosition + _currentPositionSway;
-        }
-
         if (posDeltaPivot != null)
         {
             Vector3 targetPosition;
@@ -437,54 +299,6 @@ public class Pistol : Item
 
             posDeltaPivot.localPosition = _currentAdsPosition;
             posDeltaPivot.localRotation = _currentAdsRotation;
-        }
-
-        if (breathTarget != null)
-        {
-            float breathIntensity = isAiming ? aimBreathMultiplier : 1f;
-
-            _breathTimer += Time.deltaTime * breathFrequency;
-            Vector3 targetBreathOffset = new Vector3(
-                Mathf.Sin(_breathTimer) * breathHorizontalAmount * breathIntensity,
-                Mathf.Sin(_breathTimer * 0.5f) * breathVerticalAmount * breathIntensity,
-                0f);
-            Vector2 targetBreathRotation = new Vector2(
-                Mathf.Sin(_breathTimer * 0.5f) * breathPitchAmount * breathIntensity,
-                Mathf.Sin(_breathTimer) * breathRollAmount * breathIntensity);
-
-            _currentBreathOffset = Vector3.Lerp(_currentBreathOffset, targetBreathOffset, breathSmoothing * Time.deltaTime);
-            _currentBreathRotation = Vector2.Lerp(_currentBreathRotation, targetBreathRotation, breathSmoothing * Time.deltaTime);
-
-            breathTarget.localPosition = _breathBaseLocalPosition + _currentBreathOffset;
-            breathTarget.localRotation = _breathBaseLocalRotation * Quaternion.Euler(_currentBreathRotation.x, 0f, _currentBreathRotation.y);
-        }
-
-        if (kickTarget != null && movement != null)
-        {
-            if (movement.JumpedThisFrame)
-            {
-                _kickVelocity += jumpKickAmount;
-                _kickRotationVelocity -= jumpKickRotationAmount;
-            }
-            if (movement.LandedThisFrame)
-            {
-                _kickVelocity -= landKickAmount;
-                _kickRotationVelocity += landKickRotationAmount;
-            }
-
-            // Simple damped spring pulling the offsets back to 0 -- an impulse on
-            // velocity makes them snap away and settle back, instead of a plain
-            // lerp which can't overshoot/oscillate.
-            _kickVelocity += (-kickSpring * _kickOffset - kickDamping * _kickVelocity) * Time.deltaTime;
-            _kickOffset += _kickVelocity * Time.deltaTime;
-
-            _kickRotationVelocity += (-kickSpring * _kickRotationOffset - kickDamping * _kickRotationVelocity) * Time.deltaTime;
-            _kickRotationOffset += _kickRotationVelocity * Time.deltaTime;
-
-            Vector3 pos = _kickBaseLocalPosition;
-            pos.y += _kickOffset;
-            kickTarget.localPosition = pos;
-            kickTarget.localRotation = _kickBaseLocalRotation * Quaternion.Euler(_kickRotationOffset, 0f, 0f);
         }
     }
 

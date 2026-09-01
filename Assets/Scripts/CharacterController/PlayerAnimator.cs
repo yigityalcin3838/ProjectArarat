@@ -9,9 +9,7 @@ public class PlayerAnimator : MonoBehaviour
     [SerializeField] private PlayerLook look;
     [SerializeField] private PlayerItems items;
     [SerializeField] private float turnSpeed = 720f;
-    [SerializeField] private float forwardAmountDampTime = 0.15f;
     [SerializeField] private float turnInPlaceToleranceAngle = 90f;
-
 
     [Header("Aim Rig")]
     [SerializeField] private MultiAimConstraint spineAim;
@@ -36,6 +34,16 @@ public class PlayerAnimator : MonoBehaviour
     };
 
     private const int BaseLayerIndex = 0;
+
+    // Input below this reads as no input at all -- the same figure the movement
+    // and animation code already used in several places, named once instead.
+    private const float MoveThreshold = 0.05f;
+
+    // Metres per second, not the 0-1 input figure: below this the character has
+    // effectively stopped, whatever is or isn't being pressed. The two are
+    // separate because acceleration pulled them apart -- there is now a stretch
+    // at either end of a move where one is zero and the other isn't.
+    private const float SpeedThreshold = 0.1f;
 
     // The mount over the top edge has no clip of its own: it is the dismount
     // played backwards, which is why both live in the same state. PlayerMovement
@@ -158,28 +166,40 @@ public class PlayerAnimator : MonoBehaviour
             // tree, 2 being a run. Deliberately not scaled to the distance being
             // covered: a partial blend over a short hop reads as trudging, and
             // the slide is brief enough either way that a full stride sells it.
+            // Set outright rather than ramped: the slide is a lerp over a fixed
+            // duration, so it really is at full speed from its first frame. There
+            // is nothing to accelerate through.
             float entryForwardAmount = movement.IsSlidingToEntry ? 1f : 0f;
 
-            _animator.SetFloat(ForwardAmountHash, entryForwardAmount, forwardAmountDampTime, Time.deltaTime);
-            _animator.SetBool(IsMovingHash, entryForwardAmount > 0.05f);
+            _animator.SetFloat(ForwardAmountHash, entryForwardAmount);
+            _animator.SetBool(IsMovingHash, entryForwardAmount > MoveThreshold);
             _animator.SetBool(IsCrouchingHash, false);
             return;
         }
 
         _isSquaringUpForEntry = false;
 
-        Vector2 moveDir = movement.MoveInput;
-        float speed = moveDir.magnitude;
-        bool isBackward = moveDir.y < 0f;
-        float forwardAmount = 0f;
+        // Clamped the way ApplyMovement clamps its own direction, and for the same
+        // reason: the Move binding is a Digital composite rather than a Digital
+        // Normalized one, so a diagonal reads 1.41 where a straight press reads 1.
+        // Movement already caps that, the blend tree did not -- which had walking
+        // diagonally blend 40% into the run clip. A longer stride and far more hip
+        // travel than the ground actually being covered, and the camera takes all
+        // of it straight off the head bone.
+        Vector2 moveDir = Vector2.ClampMagnitude(movement.MoveInput, 1f);
+        bool hasMoveInput = moveDir.magnitude > MoveThreshold;
 
-        if (speed > 0.05f)
+        // Direction from the input, pace from the velocity. Intent is instant --
+        // the moment a key goes down the model should start turning to face that
+        // way -- but the speed it travels at is not, and at a standstill the
+        // velocity has no direction to read anyway.
+        Vector3 horizontalVelocity = movement.HorizontalVelocity;
+        bool isMoving = horizontalVelocity.magnitude > SpeedThreshold;
+
+        if (hasMoveInput)
         {
-            bool useRunAnimation = movement.IsSprinting || !movement.IsGroundedStable;
-            float sprintMultiplier = useRunAnimation ? 2f : 1f;
-            forwardAmount = (isBackward ? -speed : speed) * sprintMultiplier;
-
             float rawAngle = Mathf.Atan2(moveDir.x, moveDir.y) * Mathf.Rad2Deg;
+            bool isBackward = moveDir.y < 0f;
             float referenceAngle = isBackward ? (rawAngle >= 0f ? 180f : -180f) : 0f;
             float targetFacingOffset = rawAngle - referenceAngle;
 
@@ -203,23 +223,84 @@ public class PlayerAnimator : MonoBehaviour
         {
             _facingOffset -= look.YawDelta;
 
-            if (_facingOffset <= -turnInPlaceToleranceAngle)
+            // Nothing is pressed but the character is still coasting to a stop:
+            // the legs are mid-stride and the animator is still in Locomotion, so
+            // a turn fired now would cut the walk short over a stop the player
+            // has not actually reached yet. The facing still holds its heading
+            // against the camera above, it just doesn't turn to catch up.
+            if (!isMoving)
             {
-                _animator.SetTrigger(TurnRightHash);
-                StartTurnRecovery();
-            }
-            else if (_facingOffset >= turnInPlaceToleranceAngle)
-            {
-                _animator.SetTrigger(TurnLeftHash);
-                StartTurnRecovery();
+                if (_facingOffset <= -turnInPlaceToleranceAngle)
+                {
+                    _animator.SetTrigger(TurnRightHash);
+                    StartTurnRecovery();
+                }
+                else if (_facingOffset >= turnInPlaceToleranceAngle)
+                {
+                    _animator.SetTrigger(TurnLeftHash);
+                    StartTurnRecovery();
+                }
             }
         }
 
         transform.localRotation = Quaternion.Euler(0f, _facingOffset, 0f);
 
-        _animator.SetFloat(ForwardAmountHash, forwardAmount, forwardAmountDampTime, Time.deltaTime);
+        // Measured along the model's own forward, after it has been turned to face
+        // wherever it is going. That axis is what the clips are: strafing right
+        // has the model facing right and walking, so the projection is a full
+        // forward walk, and going backwards has it still facing front with the
+        // projection negative. Reading the sign off the root's axes instead put a
+        // pure strafe at a forward component of nothing but float noise, flipping
+        // the blend between a walk and a backwards walk from frame to frame.
+        //
+        // It also makes a reversal continuous, which is the other half of the
+        // same point: pressing S at a full walk sweeps +1 -> 0 -> -1 as the
+        // velocity actually turns around, rather than jumping straight to -1 over
+        // a body still travelling forwards.
+        float signedSpeed = isMoving ? Vector3.Dot(horizontalVelocity, transform.forward) : 0f;
+
+        _animator.SetFloat(ForwardAmountHash, SpeedToForwardAmount(signedSpeed));
         _animator.SetBool(IsCrouchingHash, movement.IsCrouching);
-        _animator.SetBool(IsMovingHash, speed > 0.05f);
+        _animator.SetBool(IsMovingHash, isMoving);
+    }
+
+    // Metres per second along the model's facing onto the blend tree's own axis,
+    // where 1 is a full walk stride, 2 a run, and the negatives their backwards
+    // counterparts. The references come from movement rather than being constants
+    // here so retuning a speed retunes the animation with it, and so that the
+    // halves stay separate: a walk that tops out at 5 and a run that tops out at
+    // 8 are not the same axis scaled, they are two clips with a seam at 1, and
+    // stretching one figure across both would leave a full sprint reading as 1.6
+    // with the run clip never fully reached.
+    //
+    // Backwards has its own pair of references, so which pair applies changes at
+    // zero -- where both answer zero regardless, which is what keeps the sweep
+    // through a reversal unbroken.
+    private float SpeedToForwardAmount(float signedSpeed)
+    {
+        bool isBackward = signedSpeed < 0f;
+        float speed = Mathf.Abs(signedSpeed);
+
+        float walkSpeed = movement.GetGaitSpeed(false, isBackward);
+        if (walkSpeed <= 0f)
+            return 0f;
+
+        float amount;
+        if (speed <= walkSpeed)
+        {
+            amount = speed / walkSpeed;
+        }
+        else
+        {
+            // Crouching answers with its own walk speed for both gaits, so the
+            // run half collapses and the blend holds at a full crouched stride.
+            float runSpeed = movement.GetGaitSpeed(true, isBackward);
+            amount = runSpeed > walkSpeed
+                ? 1f + (speed - walkSpeed) / (runSpeed - walkSpeed)
+                : 1f;
+        }
+
+        return isBackward ? -amount : amount;
     }
 
     // How long a fired turn trigger is given to actually reach the animator: the

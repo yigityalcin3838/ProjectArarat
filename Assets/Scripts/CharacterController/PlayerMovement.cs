@@ -15,9 +15,20 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] private float sprintSpeed = 8f;
     [SerializeField] private float jumpForce = 6f;
 
-    [Header("Movement Feel")]
+    // Metres per second squared: how fast the horizontal velocity closes on the
+    // speed the input is asking for, in both directions. The animator reads the
+    // resulting velocity rather than the raw key press, so this is also what
+    // ramps the legs from idle into a stride -- which is why there is no damping
+    // on the blend parameter any more. The ramp is the character's, not a filter
+    // laid over the top of an instant one.
     [SerializeField] private float acceleration = 40f;
-    [SerializeField] private float airMultiplier = 0.4f;
+
+    // Applied to the whole movement vector the moment there is any backward
+    // component, so a back-diagonal is no faster than going straight back --
+    // otherwise retreating at an angle becomes the quickest way to retreat.
+    [Header("Backward Speeds")]
+    [SerializeField] private float walkBackSpeed = 3.5f;
+    [SerializeField] private float sprintBackSpeed = 5f;
 
     [Header("Ground Check")]
     [SerializeField] private float groundCheckDistance = 0.15f;
@@ -26,6 +37,7 @@ public class PlayerMovement : MonoBehaviour
 
     [Header("Crouch")]
     [SerializeField] private float crouchSpeed = 2.5f;
+    [SerializeField] private float crouchBackSpeed = 1.8f;
     [SerializeField] private float standingHeight = 1.8f;
     [SerializeField] private float crouchHeight = 1f;
 
@@ -59,6 +71,14 @@ public class PlayerMovement : MonoBehaviour
     public bool IsCrouching { get; private set; }
     public Vector3 Velocity => _velocity;
     public Vector2 MoveInput => _moveInput;
+
+    // What the character is actually doing across the ground, rather than what is
+    // being asked of it. The two differ for as long as acceleration takes, and
+    // that difference is the whole point: the legs follow this, so they ramp with
+    // the body instead of snapping to a key press the body hasn't caught up with
+    // yet. World space -- whoever reads it decides which axis it cares about.
+    public Vector3 HorizontalVelocity => new Vector3(_velocity.x, 0f, _velocity.z);
+
     public float WalkSpeed => walkSpeed;
     public float SprintSpeed => sprintSpeed;
     public bool IsSprinting => IsGrounded && !IsCrouching && !IsInCar && !_sprintBlocked && _sprintAction.IsPressed() && _moveInput.sqrMagnitude > 0.01f && HasStamina;
@@ -743,7 +763,17 @@ public class PlayerMovement : MonoBehaviour
         IsCrouching = IsGroundedStable && (wantsCrouch || blockedFromStanding);
 
         _characterController.height = IsCrouching ? crouchHeight : standingHeight;
-        _characterController.center = new Vector3(0f, _characterController.height * 0.5f, 0f);
+
+        // Raised by the skin width, not just half the height. A CharacterController
+        // never lets its capsule touch a surface -- it always keeps that much
+        // clearance -- so with the capsule bottom sitting exactly on the transform
+        // origin the whole character comes to rest a skin width above the floor,
+        // and the model's feet hang in the air by the same amount. Lifting the
+        // capsule instead puts the origin, and with it the feet, back on the ground.
+        _characterController.center = new Vector3(
+            0f,
+            _characterController.height * 0.5f + _characterController.skinWidth,
+            0f);
     }
 
     private bool HasHeadroomToStand()
@@ -780,17 +810,39 @@ public class PlayerMovement : MonoBehaviour
             _lastGroundedTime = Time.time;
     }
 
+    // The speed a given gait settles at. Public because the animator divides the
+    // actual velocity by it to place the character on its blend tree: the same
+    // figures that decide how fast the character moves are the ones that decide
+    // what a full stride means, so a full press reads as exactly one walk (or
+    // one run) rather than whatever fraction a hardcoded reference left over.
+    //
+    // Crouching has no run half at all, so it answers with its own walk speed
+    // either way. Aiming borrows the crouch pair rather than having a pair of
+    // its own: the point of both is the same restricted, deliberate pace.
+    public float GetGaitSpeed(bool running, bool backward)
+    {
+        if (IsCrouching || _aimSpeedOverride)
+            return backward ? crouchBackSpeed : crouchSpeed;
+
+        if (running)
+            return backward ? sprintBackSpeed : sprintSpeed;
+
+        return backward ? walkBackSpeed : walkSpeed;
+    }
+
     private void ApplyMovement()
     {
         Vector3 wishDir = transform.right * _moveInput.x + transform.forward * _moveInput.y;
         wishDir = Vector3.ClampMagnitude(wishDir, 1f);
 
-        float currentSpeed = (IsCrouching || _aimSpeedOverride) ? crouchSpeed : (IsSprinting ? sprintSpeed : walkSpeed);
-        Vector3 targetHorizontal = wishDir * currentSpeed;
-
-        float accel = acceleration * (IsGrounded ? 1f : airMultiplier);
+        Vector3 targetHorizontal = wishDir * GetGaitSpeed(IsSprinting, _moveInput.y < 0f);
         Vector3 currentHorizontal = new Vector3(_velocity.x, 0f, _velocity.z);
-        currentHorizontal = Vector3.MoveTowards(currentHorizontal, targetHorizontal, accel * Time.deltaTime);
+
+        // Symmetric on purpose: the same figure that gets the character moving is
+        // the one that brings it to a stop, so releasing a key coasts out over the
+        // same span the press ramped in over.
+        currentHorizontal = Vector3.MoveTowards(
+            currentHorizontal, targetHorizontal, acceleration * Time.deltaTime);
 
         _velocity.x = currentHorizontal.x;
         _velocity.z = currentHorizontal.z;
