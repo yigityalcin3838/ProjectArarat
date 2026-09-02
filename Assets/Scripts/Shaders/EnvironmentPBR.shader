@@ -58,6 +58,23 @@ Shader "Custom/EnvironmentPBR"
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
             #pragma multi_compile _ _ADDITIONAL_LIGHTS_VERTEX _ADDITIONAL_LIGHTS
             #pragma multi_compile_fragment _ _ADDITIONAL_LIGHT_SHADOWS
+
+            // Forward+ keeps its lights in a screen-space cluster grid, and the
+            // light loop only reads that grid when this keyword is on. Without
+            // it the shader still compiles -- into the older per-object path,
+            // which asks for a per-object light list that Forward+ never fills
+            // in. The loop then runs zero times and the surface is lit by the
+            // directional light and nothing else, silently and with no error.
+            //
+            // This project's renderer is Forward+ (PC_Renderer, Rendering Path),
+            // so without this line every point and spot light in the scene is
+            // invisible to this shader.
+            #pragma multi_compile _ _CLUSTER_LIGHT_LOOP
+
+            // Lets the surface receive the SSAO the renderer already computes.
+            // Same failure shape as above: absent, the ambient occlusion texture
+            // is produced every frame and then simply never read here.
+            #pragma multi_compile_fragment _ _SCREEN_SPACE_OCCLUSION
             #pragma multi_compile_fragment _ _SHADOWS_SOFT _SHADOWS_SOFT_LOW _SHADOWS_SOFT_MEDIUM _SHADOWS_SOFT_HIGH
             #pragma multi_compile _ LIGHTMAP_ON
             #pragma multi_compile_fog

@@ -1,9 +1,39 @@
+using System.Collections.Generic;
 using Knife.Effects;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-public class Pistol : Item
+// One component for every firearm, with the differences between them declared
+// rather than subclassed. A pistol, a rifle and a shotgun disagree about three
+// things -- when the trigger counts, how many projectiles leave per pull, and how
+// rounds get back in -- and all three are settings.
+public class Weapon : Item
 {
+    // What a trigger pull means, and what has to happen before the next one counts.
+    public enum FireMode
+    {
+        // One shot per press. Holding does nothing.
+        SemiAuto,
+
+        // Fires for as long as the trigger is held, paced by the fire clip.
+        FullAuto,
+
+        // One press, one round, and rounds go back in one at a time -- each with its
+        // own reload animation. A pump gun and a bolt gun are the same weapon as far
+        // as this component is concerned: both fire once per pull, both are fed
+        // singly, and both throw their case when the action is worked rather than
+        // when the shot goes off. What separates them is pelletsPerShot.
+        // Written with a dash rather than a slash: Unity reads a slash in an enum
+        // label as a submenu separator and would file this as "Bolt Action" nested
+        // under a "Shotgun" folder, as though they were two entries.
+        [InspectorName("Shotgun - Bolt Action")]
+        ShotgunBoltAction,
+
+        // Two shells to fire in turn and then a break-action reload that takes both.
+        // Reloading with one still in the chamber is allowed and simply refills.
+        DoubleBarrel,
+    }
+
     // itemHold lives on Item and sits under the camera pivot -- that is where this
     // parents while equipped. The holster is the opposite: it stays on the hip
     // bone, because a stowed weapon should ride the body and nobody is looking
@@ -24,9 +54,42 @@ public class Pistol : Item
     [SerializeField] private ParticleGroupEmitter muzzleFlashEmitter;
     [SerializeField] private ParticleGroupEmitter shellEjectEmitter;
 
+    // When the case leaves. On, it goes at the shot, which is what a self-loading
+    // action does -- the slide cycles as part of firing and there is nothing else to
+    // wait for. Off, only an animation event on a clip can throw it, so a pump or a
+    // break action ejects when the shooter works it rather than when the round goes.
+    //
+    // Left to the fire mode this would be a guess about how a weapon is animated,
+    // which is not something the mode knows: a semi-auto animated with an explicit
+    // ejection event, or a bolt gun with none, are both perfectly ordinary and the
+    // mode would be wrong about each. So it is asked rather than inferred, and with
+    // it off and no event on the clip, nothing is ejected at all -- an empty result
+    // that is chosen, not a failure.
+    [SerializeField] private bool ejectShellOnFire = true;
+
 
     [Header("Ammo")]
+    // Shells, not projectiles. One trigger pull spends one of these however many
+    // things leave the barrel -- a shotgun shell is one round that happens to carry
+    // a handful of pellets, and counting the pellets would have a full tube empty
+    // itself in a shot.
+    // How much the magazine or tube holds, and the only ammunition figure there is:
+    // reserve is unlimited, so a reload always has something to put in. What running
+    // dry costs is the time to reload, not the ability to.
     [SerializeField] private int magazineCapacity = 12;
+
+    // Everything that differs between a pistol and a shotgun, defaulted so that a
+    // weapon set up before any of this existed behaves exactly as it did: one shot
+    // per press, one projectile, no spread.
+    [SerializeField] private FireMode fireMode = FireMode.SemiAuto;
+
+    // Projectiles per shell. Above 1 they share the shot's spread cone, which is the
+    // only thing that stops them landing in the same hole.
+    [SerializeField] private int pelletsPerShot = 1;
+
+    // Half-angle of that cone, in degrees. At 0 every pellet goes exactly where the
+    // crosshair points, which is right for a rifle and useless for a shotgun.
+    [SerializeField] private float spreadAngle = 0f;
 
     [Header("Hit Detection")]
     [SerializeField] private float maxRange = 100f;
@@ -106,8 +169,7 @@ public class Pistol : Item
     private InputAction _aimAction;
     private InputAction _attackAction;
     private InputAction _reloadAction;
-    private int[] _magazineAmmo = new int[2];
-    private int _activeMagazineIndex;
+    private int _loadedAmmo;
     private Vector3 _currentAdsPosition;
     private Quaternion _currentAdsRotation;
     private float _fireHipTimer;
@@ -117,8 +179,15 @@ public class Pistol : Item
     private float _weaponRollShakeVelocity;
     private float _drawTimer;
     private bool _wasInWalkPose;
+    private bool _isFeedingShells;
+    private bool _feedInterrupted;
 
     public override bool IsDrawing => _drawTimer > 0f;
+
+    // The feed flag counts as well as the timer: between two shells of a tube reload
+    // there is a moment with no clip running, and a swap slipping through it would
+    // put the weapon away with the loading half done.
+    public override bool IsReloading => _reloadTimer > 0f || _isFeedingShells;
 
     private void Awake()
     {
@@ -133,10 +202,7 @@ public class Pistol : Item
             _reloadAction = playerMap.FindAction("Reload", throwIfNotFound: true);
         }
 
-        // Two magazines, swapped (not refilled) on reload -- picking up ammo/mags
-        // from the ground later is what actually replenishes them.
-        _magazineAmmo[0] = magazineCapacity;
-        _magazineAmmo[1] = magazineCapacity;
+        _loadedAmmo = magazineCapacity;
     }
 
     private void OnEnable()
@@ -155,7 +221,7 @@ public class Pistol : Item
         }
 
         SnapTo(itemHold);
-        weaponAnimator?.SetTrigger(takeTrigger);
+        SetTriggerIfPresent(takeTrigger);
 
         // Timed off the clip rather than watched on the animator, because the state
         // isn't reached until the crossfade into it has finished and the draw is
@@ -183,14 +249,23 @@ public class Pistol : Item
 
     private void OnDisable()
     {
-        weaponAnimator?.SetTrigger(holsterTrigger);
         _aimAction?.Disable();
         _attackAction?.Disable();
         _reloadAction?.Disable();
         playerLook?.ClearFovOverride();
         postProcessEffects?.SetAiming(false);
+        postProcessEffects?.SetReloading(false);
         movement?.SetSprintBlocked(false);
         movement?.SetAimSpeedOverride(false);
+
+        // A reload cannot survive the weapon leaving the hand. Both of these count
+        // down or clear in Update, which stops running the moment this does, so a
+        // weapon put away mid-reload would come back still reporting itself open --
+        // and, being unable to finish, stay that way. Ladders and cars stow whatever
+        // is held without asking, so this is reachable however well swaps behave.
+        _reloadTimer = 0f;
+        _isFeedingShells = false;
+        _feedInterrupted = false;
 
         // Cleared immediately (now lerped, so this fades smoothly) rather than
         // delayed to the end of the holster clip like hand IK below -- the aim
@@ -198,6 +273,24 @@ public class Pistol : Item
         // own barrel direction for the whole clip, and a holster clip swings
         // that barrel down/away, which reads as the torso briefly contorting.
         playerAnimator?.ClearAimRigWeightOverride();
+
+        // Nothing to put away, because nothing was ever taken out. Undo what the
+        // spurious enable did and stop -- straight to the hip, no clip, no hold.
+        //
+        // Clearing the draw timer is the part that matters most. It counts down in
+        // Update, which a disabled component does not get, so a timer left running
+        // here never reaches zero: IsDrawing stays true for the rest of the session,
+        // PlayerItems reads that as a swap permanently in progress, and every slot
+        // key is ignored from then on.
+        if (IsResetting)
+        {
+            _drawTimer = 0f;
+            SnapTo(holster);
+            playerAnimator?.ClearHandIKTargets();
+            return;
+        }
+
+        SetTriggerIfPresent(holsterTrigger);
 
         // The character stays in the item pose (Item Layer weight and the
         // IsAiming bool driving that layer's states) for the same clip -- the
@@ -246,27 +339,58 @@ public class Pistol : Item
             _reloadTimer -= Time.deltaTime;
 
             // On the way out, not on the way in: the hand comes back to the weapon
-            // once the magazine is seated, and jolting at the start would land on
-            // the one part of a reload where the grip is still where it was.
+            // once the round is seated, and jolting at the start would land on the
+            // one part of a reload where the grip is still where it was.
             //
             // The view's half only. The reload clip is already moving the weapon
             // through this exact moment, and a spring on the hands as well would be
             // two things saying where it is.
             if (_reloadTimer <= 0f)
+            {
+                CompleteReloadStep();
                 handMotion?.TriggerCameraShouldering();
+            }
         }
 
+        // Held for full auto, pressed for everything else. That one difference is
+        // the whole of what makes a mode automatic -- the rate is already governed
+        // by the fire clip below, so holding simply asks again the moment it can be
+        // answered.
+        bool wantsFire = _attackAction != null && (fireMode == FireMode.FullAuto
+            ? _attackAction.IsPressed()
+            : _attackAction.WasPerformedThisFrame());
+
         bool isReloading = _reloadTimer > 0f;
+
+        // The trigger stops a tube being fed, but does not fire. Loading a shotgun a
+        // shell at a time is a long commitment and has to be breakable the instant
+        // something appears -- what it does not have to be is instant. The round in
+        // hand finishes going in, the loop simply stops asking for another, and the
+        // next pull is the one that shoots.
+        //
+        // Firing through the animation instead would be a shot with the weapon
+        // visibly open and a hand on the tube.
+        if (isReloading && _isFeedingShells && wantsFire)
+            _feedInterrupted = true;
 
         // Reload interrupts an in-progress sprint instead of being blocked by
         // it -- pressing reload while running drops out of the run (below)
         // and reloads anyway.
-        if (_reloadAction != null && _reloadAction.WasPerformedThisFrame() && !isReloading)
+        //
+        // _isFeedingShells is what makes a shotgun keep going: one press starts it
+        // and every completed round asks for the next, so the loop lives in the
+        // state rather than in a coroutine that would have to be cancelled.
+        bool wantsReload = _reloadAction != null && _reloadAction.WasPerformedThisFrame();
+
+        // Asking for a reload clears any earlier interruption, so a tube stopped
+        // half-full can be topped up again by pressing again.
+        if (wantsReload)
+            _feedInterrupted = false;
+
+        if (!isReloading && (wantsReload || _isFeedingShells) && HasRoomToReload)
         {
-            _activeMagazineIndex = 1 - _activeMagazineIndex;
-            weaponAnimator?.SetTrigger(reloadTrigger);
-            _reloadTimer = GetClipLength(reloadTrigger);
-            isReloading = true;
+            BeginReloadStep();
+            isReloading = _reloadTimer > 0f;
         }
 
         // Read here rather than at the top of the frame, because a reload refuses it
@@ -277,6 +401,7 @@ public class Pistol : Item
         bool isAiming = _aimAction != null && _aimAction.IsPressed() && !isReloading;
 
         postProcessEffects?.SetAiming(isAiming);
+        postProcessEffects?.SetReloading(isReloading);
 
         if (playerLook != null)
         {
@@ -307,15 +432,19 @@ public class Pistol : Item
         // still on its way up: a round leaving it there would come out of a barrel
         // pointing at the floor, and the fire clip would cut the draw off partway
         // and leave the weapon wherever it had got to.
-        if (_attackAction != null && _attackAction.WasPerformedThisFrame() && !IsDrawing && !isFireAnimPlaying && !isReloading && _magazineAmmo[_activeMagazineIndex] > 0)
+        if (wantsFire && !IsDrawing && !isFireAnimPlaying && !isReloading && _loadedAmmo > 0)
         {
-            _magazineAmmo[_activeMagazineIndex]--;
+            _loadedAmmo--;
 
-            weaponAnimator?.SetTrigger(fireTrigger);
+            SetTriggerIfPresent(fireTrigger);
             _fireHipTimer = fireHipHoldDuration;
 
             muzzleFlashEmitter?.Emit(1);
-            shellEjectEmitter?.Emit(1);
+
+            // Only for the actions that throw the case as they cycle. The rest wait
+            // for EmitShell to be called from a clip.
+            if (ejectShellOnFire)
+                shellEjectEmitter?.Emit(1);
 
             FireHitscan();
 
@@ -421,7 +550,7 @@ public class Pistol : Item
         }
     }
 
-    // The character's own pose (PistolAim layer weight, aim rig) switches
+    // The character's own pose (Item Layer weight, aim rig) switches
     // instantly on the take/holster command -- only hand IK stays live past
     // that, tracking the grip points for the holster clip's actual duration,
     // so the hands don't let go of the gun before it's visually put away.
@@ -473,6 +602,88 @@ public class Pistol : Item
         playerAnimator?.SetItemPoseHeld(false);
     }
 
+    // A tube or a bolt gun takes a round at a time; everything else takes a magazine.
+    // The distinction is the whole of what makes those reloads feel like themselves,
+    // and it is worth exactly this one property.
+    private bool FeedsSingleShells => fireMode == FireMode.ShotgunBoltAction;
+
+    // For an animation event, and the only other way a case comes out. Reached
+    // through WeaponAnimationEvents rather than directly -- see that class for why
+    // the event cannot land here. Safe on any frame of any clip: where the case
+    // leaves from and what it looks like are the emitter's business, and this only
+    // says when.
+    //
+    // Not guarded against ejectShellOnFire: a weapon set up with both would throw
+    // two, which is visible immediately and easily undone. Refusing quietly would
+    // instead look like a broken event.
+    public void EmitShell() => shellEjectEmitter?.Emit(1);
+
+    // Somewhere to put it, which with an unlimited reserve is the only question.
+    // Reloading a half-empty rifle is a decision the player is allowed to make, so
+    // being short of full is enough -- and a full magazine has to refuse, or a
+    // shotgun's feed loop would never end.
+    private bool HasRoomToReload => _loadedAmmo < magazineCapacity;
+
+    private void BeginReloadStep()
+    {
+        SetTriggerIfPresent(reloadTrigger);
+        _reloadTimer = GetClipLength(reloadTrigger);
+        _isFeedingShells = FeedsSingleShells;
+
+        // No clip to wait on -- finish on the spot rather than leaving a shotgun
+        // asking for a round it will never be given.
+        if (_reloadTimer <= 0f)
+            CompleteReloadStep();
+    }
+
+    private void CompleteReloadStep()
+    {
+        // A shotgun takes one round, everything else takes a full magazine. That is
+        // the entire difference between the two reloads: one is a gesture repeated
+        // until the tube is full, the other is a gesture that fills it.
+        _loadedAmmo = FeedsSingleShells
+            ? Mathf.Min(_loadedAmmo + 1, magazineCapacity)
+            : magazineCapacity;
+
+        // Asks for the next one only while there is still room and nobody has cut in.
+        // The interruption is checked here rather than acted on the moment it
+        // arrives, which is what lets the round already going in finish going in.
+        _isFeedingShells = FeedsSingleShells && HasRoomToReload && !_feedInterrupted;
+    }
+
+    // Every trigger this weapon's controller actually declares, cached because
+    // Animator.parameters rebuilds its array on each read and these are asked about
+    // on the firing path.
+    private HashSet<string> _animatorTriggers;
+
+    // Fires a trigger only if the controller has one by that name.
+    //
+    // The four triggers here are what a fully animated firearm has, not what every
+    // firearm has: a weapon partway through being set up, or one that simply has no
+    // holster clip, is a legitimate state and not worth an engine error on every
+    // single call. Unity's SetTrigger has no opinion about that -- it logs
+    // "Parameter 'X' does not exist" and moves on -- so the question is asked here
+    // instead, and a missing trigger quietly means no animation.
+    private void SetTriggerIfPresent(string triggerName)
+    {
+        if (weaponAnimator == null || string.IsNullOrEmpty(triggerName))
+            return;
+
+        if (_animatorTriggers == null)
+        {
+            _animatorTriggers = new HashSet<string>();
+
+            foreach (AnimatorControllerParameter parameter in weaponAnimator.parameters)
+            {
+                if (parameter.type == AnimatorControllerParameterType.Trigger)
+                    _animatorTriggers.Add(parameter.name);
+            }
+        }
+
+        if (_animatorTriggers.Contains(triggerName))
+            weaponAnimator.SetTrigger(triggerName);
+    }
+
     // Reads the clip length straight from the Animator Controller already
     // assigned to weaponAnimator, matched by state/clip name -- no separate
     // AnimationClip fields to keep in sync by hand.
@@ -500,17 +711,46 @@ public class Pistol : Item
         // is doing to put the crosshair there.
         Ray aimRay = playerLook.AimRay;
 
-        // No layer mask -- hits anything solid. Triggers are skipped
-        // explicitly: Unity's Queries Hit Triggers project setting defaults to
-        // on, so without this a bullet stops dead on an invisible door
-        // interaction zone or fog volume instead of the wall behind it.
-        // Passed per-call rather than switching the project setting, because
-        // the interaction raycasts below DO want to find triggers.
-        if (Physics.Raycast(aimRay, out RaycastHit hit, maxRange, ~0, QueryTriggerInteraction.Ignore))
+        // One trace per projectile, all from the same origin. A shell is one round
+        // that carries several, so the ammo has already been spent once by the time
+        // this runs and the loop is only about where they land.
+        int pellets = Mathf.Max(1, pelletsPerShot);
+
+        for (int i = 0; i < pellets; i++)
         {
-            SpawnImpactEffect(hit);
-            SpawnHitMarker(hit);
+            Vector3 direction = ApplySpread(aimRay.direction);
+
+            // No layer mask -- hits anything solid. Triggers are skipped
+            // explicitly: Unity's Queries Hit Triggers project setting defaults to
+            // on, so without this a bullet stops dead on an invisible door
+            // interaction zone or fog volume instead of the wall behind it.
+            // Passed per-call rather than switching the project setting, because
+            // the interaction raycasts below DO want to find triggers.
+            if (Physics.Raycast(aimRay.origin, direction, out RaycastHit hit, maxRange, ~0, QueryTriggerInteraction.Ignore))
+            {
+                SpawnImpactEffect(hit);
+                SpawnHitMarker(hit);
+            }
         }
+    }
+
+    // Deflects a direction by a random amount inside a cone around it. Built off the
+    // direction's own frame rather than by adding degrees to world angles, which
+    // only approximates a cone and stops approximating it at all when looking
+    // straight up or down.
+    //
+    // Uniform across the disc, so pellets spread evenly rather than crowding the
+    // middle -- a shotgun pattern with a dense core is a rifle with extra steps.
+    private Vector3 ApplySpread(Vector3 direction)
+    {
+        if (spreadAngle <= 0f)
+            return direction;
+
+        Vector2 offset = Random.insideUnitCircle * spreadAngle;
+
+        return Quaternion.LookRotation(direction)
+            * Quaternion.Euler(offset.y, offset.x, 0f)
+            * Vector3.forward;
     }
 
     // Which effect plays, and how it's tinted, isn't the weapon's business --
@@ -589,15 +829,18 @@ public class Pistol : Item
             Destroy(marker, hitMarkerDuration);
     }
 
+    public int LoadedAmmo => _loadedAmmo;
+    public int MagazineCapacity => magazineCapacity;
+
     private void OnGUI()
     {
         const float width = 240f;
         const float height = 24f;
         const float margin = 20f;
-        float x = Screen.width - width - margin;
 
-        GUI.Label(new Rect(x, Screen.height - height * 2f - margin, width, height), $"Magazine 1{(_activeMagazineIndex == 0 ? " (active)" : "")}: {_magazineAmmo[0]} / {magazineCapacity}");
-        GUI.Label(new Rect(x, Screen.height - height - margin, width, height), $"Magazine 2{(_activeMagazineIndex == 1 ? " (active)" : "")}: {_magazineAmmo[1]} / {magazineCapacity}");
+        GUI.Label(
+            new Rect(Screen.width - width - margin, Screen.height - height - margin, width, height),
+            $"Ammo: {_loadedAmmo} / {magazineCapacity}");
     }
 
     private void SnapTo(Transform anchor)

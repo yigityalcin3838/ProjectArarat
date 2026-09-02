@@ -73,14 +73,40 @@ Shader "Hidden/PostProcessing/SunShafts"
                 return (1.0 - gSqr) / pow(max(denom, 1e-4), 1.5);
             }
 
-            // Cheap per-pixel dither. With only a couple dozen steps every ray
-            // would otherwise start at the same place and the shared step
-            // boundaries show up as hard banded shells through the beam --
-            // offsetting each pixel's start scatters that into noise, which
-            // the downsample and bilinear upscale then smooth away.
-            float Dither(float2 uv)
+            // Ordered 4x4 Bayer dither on the pixel's position in the buffer
+            // being rendered. With only a couple dozen steps every ray would
+            // otherwise start at the same place and the shared step boundaries
+            // show up as hard banded shells through the beam, so each pixel's
+            // start gets offset along the ray instead.
+            //
+            // Ordered rather than hashed, which is the fix for the grain. A hash
+            // gives every pixel an unrelated offset, so neighbouring rays land
+            // between the same two steps by chance and disagree at random --
+            // speckle, and speckle that survives the upscale, because filtering
+            // uncorrelated noise only grows it into softer blotches.
+            //
+            // The Bayer tile instead hands out sixteen evenly spaced offsets in
+            // a fixed repeating pattern, so any small neighbourhood samples the
+            // step interval once each, uniformly, and averages to the integral
+            // the march is trying to estimate. That is something the downsample
+            // and bilinear upscale can genuinely smooth.
+            static const float kBayer4x4[16] =
             {
-                return frac(sin(dot(uv, float2(12.9898, 78.233))) * 43758.5453);
+                 0.0,  8.0,  2.0, 10.0,
+                12.0,  4.0, 14.0,  6.0,
+                 3.0, 11.0,  1.0,  9.0,
+                15.0,  7.0, 13.0,  5.0
+            };
+
+            float Dither(float2 positionCS)
+            {
+                int x = (int)floor(fmod(positionCS.x, 4.0));
+                int y = (int)floor(fmod(positionCS.y, 4.0));
+
+                // Centred on the step rather than starting at zero, so the
+                // offsets straddle the sample point instead of all landing
+                // early and biasing the whole march toward the camera.
+                return (kBayer4x4[y * 4 + x] + 0.5) * (1.0 / 16.0);
             }
 
             half4 FragScatter(Varyings input) : SV_Target
@@ -103,7 +129,7 @@ Shader "Hidden/PostProcessing/SunShafts"
                 float stepSize = marchDistance / steps;
 
                 float3 stepVec = rayDir * stepSize;
-                float3 position = _WorldSpaceCameraPos + stepVec * Dither(uv);
+                float3 position = _WorldSpaceCameraPos + stepVec * Dither(input.positionCS.xy);
 
                 // Capped: the phase function's peak is by far the sharpest term
                 // in the whole effect, and it lands exactly where the view

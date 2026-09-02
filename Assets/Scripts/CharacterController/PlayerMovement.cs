@@ -116,12 +116,12 @@ public class PlayerMovement : MonoBehaviour
 
     public bool IsSlidingToEntry => _isEnteringCar || _ladderPhase == LadderPhase.Approaching;
 
-    // One-frame pulses for equipped items (e.g. Pistol) to react to with a
+    // One-frame pulses for equipped items (e.g. Weapon) to react to with a
     // one-shot effect (a jump/land kick) -- read-only, mirrors IsGrounded etc.
     public bool JumpedThisFrame { get; private set; }
     public bool LandedThisFrame { get; private set; }
 
-    // Lets an equipped item (e.g. Pistol) block sprinting while active (e.g. while
+    // Lets an equipped item (e.g. Weapon) block sprinting while active (e.g. while
     // aiming down sights), without PlayerMovement needing to know anything about
     // items -- same push-values-in pattern as PlayerLook's FOV override.
     public void SetSprintBlocked(bool blocked) => _sprintBlocked = blocked;

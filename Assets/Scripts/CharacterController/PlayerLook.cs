@@ -278,7 +278,7 @@ public class PlayerLook : MonoBehaviour
     private InputAction _peekAction;
     private float _currentPeek;
 
-    // Lets an equipped item (e.g. Pistol) override FOV while it's active,
+    // Lets an equipped item (e.g. Weapon) override FOV while it's active,
     // without PlayerLook needing to know anything about items -- same
     // push-values-in pattern as PlayerAnimator's hand IK targets.
     public void SetFovOverride(float fov) => _fovOverride = fov;

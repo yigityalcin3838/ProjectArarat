@@ -55,45 +55,73 @@ Shader "Hidden/PostProcessing/PlayerAO"
             float _PlayerAOOutlineThickness;
 
             #define PLAYER_AO_SAMPLE_COUNT 10
+            #define PLAYER_AO_ROTATION_COUNT 16
 
-            float Hash1(float2 p)
+            // Van der Corput radical inverse, base 2. Spreads the fixed sample
+            // set evenly over the hemisphere -- ten directions that actually
+            // cover it, rather than ten that happen to clump.
+            float RadicalInverse(uint bits)
             {
-                p = frac(p * float2(123.34, 456.21));
-                p += dot(p, p + 45.32);
-                return frac(p.x * p.y);
+                bits = (bits << 16u) | (bits >> 16u);
+                bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+                bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+                bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+                bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+                return float(bits) * 2.3283064365386963e-10;
             }
 
-            float2 Hash2(float2 p)
+            // One of sixteen rotations, picked by where the pixel falls in a
+            // repeating 4x4 tile. Every 4x4 block therefore contains each
+            // rotation exactly once, and that is the entire reason this is a
+            // tile rather than a random number: the blur pass below averages a
+            // 5x5 neighbourhood, so it always spans a complete set of rotations
+            // and the difference between them cancels to the true average.
+            //
+            // Random per-pixel rotations cannot cancel like that. Averaging
+            // uncorrelated noise only reduces it by the square root of the tap
+            // count and turns what is left into larger, softer blotches -- which
+            // is exactly what the grain was.
+            float2 SampleRotation(float2 positionCS)
             {
-                float x = Hash1(p);
-                float y = Hash1(p + 19.19h);
-                return float2(x, y);
+                float index = floor(fmod(positionCS.y, 4.0)) * 4.0 + floor(fmod(positionCS.x, 4.0));
+                float angle = index * (TWO_PI / PLAYER_AO_ROTATION_COUNT);
+
+                float s, c;
+                sincos(angle, s, c);
+                return float2(c, s);
             }
 
-            half ComputePlayerAO(float2 uv, float3 positionWS, float3 normalWS)
+            half ComputePlayerAO(float3 positionWS, float3 normalWS, float2 positionCS)
             {
-                // Build an arbitrary (per-pixel randomized) tangent frame
-                // around the surface normal -- the AO estimate is an
-                // average over many directions, so it doesn't need to be
-                // the "real" tangent, just something to spread samples
-                // evenly across the hemisphere.
-                float3 randomVec = normalize(float3(
-                    Hash1(uv * 13.1h + 1.7h) * 2.0h - 1.0h,
-                    Hash1(uv * 7.3h + 9.1h) * 2.0h - 1.0h,
-                    Hash1(uv * 3.7h + 5.3h) * 2.0h - 1.0h));
-                float3 tangent = normalize(randomVec - normalWS * dot(randomVec, normalWS));
+                // A stable frame built from the normal alone, deliberately not a
+                // randomised one. The rotation tile only cancels if every pixel
+                // starts from the same basis -- randomising the frame as well
+                // would put the noise straight back in.
+                float3 up = abs(normalWS.z) < 0.999 ? float3(0.0, 0.0, 1.0) : float3(1.0, 0.0, 0.0);
+                float3 tangent = normalize(cross(up, normalWS));
                 float3 bitangent = cross(normalWS, tangent);
+
+                float2 rotation = SampleRotation(positionCS);
 
                 half occlusion = 0.0h;
 
                 UNITY_UNROLL
                 for (int i = 0; i < PLAYER_AO_SAMPLE_COUNT; i++)
                 {
-                    float2 h = Hash2(uv * 971.3h + i * 57.7h);
-                    float r = sqrt(h.x);
-                    float theta = h.y * TWO_PI;
+                    // The same ten directions for every pixel on screen. Only
+                    // their rotation about the normal differs, and only by the
+                    // tile above.
+                    float u1 = (i + 0.5) / PLAYER_AO_SAMPLE_COUNT;
+                    float u2 = RadicalInverse((uint)i);
+
+                    float r = sqrt(u1);
+                    float theta = u2 * TWO_PI;
+                    float2 disk = float2(r * cos(theta), r * sin(theta));
+                    disk = float2(disk.x * rotation.x - disk.y * rotation.y,
+                                  disk.x * rotation.y + disk.y * rotation.x);
+
                     // Cosine-weighted hemisphere direction in the tangent frame.
-                    float3 localDir = float3(r * cos(theta), r * sin(theta), sqrt(max(1e-4h, 1.0h - h.x)));
+                    float3 localDir = float3(disk, sqrt(max(1e-4, 1.0 - u1)));
                     float3 sampleDirWS = tangent * localDir.x + bitangent * localDir.y + normalWS * localDir.z;
                     float3 samplePosWS = positionWS + sampleDirWS * _PlayerAORadius;
 
@@ -173,7 +201,7 @@ Shader "Hidden/PostProcessing/PlayerAO"
                 float3 normalWS = SampleSceneNormals(uv);
                 float centerEyeDepth = LinearEyeDepth(rawDepth, _ZBufferParams);
 
-                half customAO = ComputePlayerAO(uv, positionWS, normalWS);
+                half customAO = ComputePlayerAO(positionWS, normalWS, input.positionCS.xy);
                 half edge = ComputeEdgeAO(uv, normalWS, centerEyeDepth) * _PlayerAOOutlineIntensity;
 
                 half finalAO = saturate(customAO - edge);
@@ -182,13 +210,20 @@ Shader "Hidden/PostProcessing/PlayerAO"
             ENDHLSL
         }
 
-        // A handful of random hemisphere samples per pixel (see above) is
-        // cheap but inherently noisy -- without smoothing it reads as a
-        // stippled/dirty speckle pattern instead of a soft occlusion
-        // gradient. This blurs that noise away while stopping at real depth
-        // edges (a bilateral blur, weighted by how close each neighbor's
-        // depth is to the center pixel's), so contact shadows stay crisp
-        // instead of bleeding across object silhouettes. Runs over the
+        // The other half of the sampling scheme above, not an optional
+        // clean-up pass. Ten directions per pixel is far too few on its own;
+        // what makes the result smooth is that neighbouring pixels use
+        // different rotations of those ten, and this is what averages them
+        // back together into the ~160 effective directions the pair is worth.
+        //
+        // So the 5x5 radius is load-bearing. It has to span the rotation
+        // tile's full 4x4 period for the set to come out complete -- shrink it
+        // to 3x3 and some rotations are counted twice and others not at all,
+        // which is grain again, just finer.
+        //
+        // Bilateral rather than a plain box: each neighbour is weighted by how
+        // close its depth is to the centre pixel's, so contact shadows stay
+        // crisp instead of bleeding across object silhouettes. Runs over the
         // whole result, not just the Player-masked area -- built-in SSAO
         // pixels are already smooth, so re-blurring them is a no-op in
         // practice, and skipping them would need an extra mask sample per

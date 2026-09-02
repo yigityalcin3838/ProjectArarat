@@ -3,7 +3,7 @@ using UnityEngine.InputSystem;
 
 // Pure inventory plumbing: which item slot is active and switching between them
 // on 1/2/3. Knows nothing about what an item actually does -- that lives entirely
-// in the item's own Item-derived component (see Item.cs / Pistol.cs), which reacts
+// in the item's own Item-derived component (see Item.cs / Weapon.cs), which reacts
 // to being equipped/unequipped through Unity's normal OnEnable/OnDisable. Toggling
 // the Item component's `enabled` (not the GameObject's active state) so an item can
 // stay visible in the scene the whole time and just reposition itself (e.g. a
@@ -56,6 +56,23 @@ public class PlayerItems : MonoBehaviour
         }
     }
 
+    // Only the equipped one can be mid-reload, and only it should block a swap. Kept
+    // out of IsChangingItem, which is about the hands being between two items --
+    // ladders and cars stow whatever is held and are entitled to interrupt a reload
+    // to do it, where reaching for another weapon is not.
+    private bool IsEquippedItemReloading
+    {
+        get
+        {
+            if (_equippedSlot < 0 || _equippedSlot >= itemSlots.Length || itemSlots[_equippedSlot] == null)
+                return false;
+
+            Item item = itemSlots[_equippedSlot].GetComponent<Item>();
+
+            return item != null && item.IsReloading;
+        }
+    }
+
     // For anything that needs the hands free before it can start. Safe to call
     // with nothing equipped. Drops a queued draw as well: whatever wants the hands
     // free wants them to stay that way, not to fill again the moment they are.
@@ -78,8 +95,17 @@ public class PlayerItems : MonoBehaviour
         for (int i = 0; i < _selectItemActions.Length; i++)
             _selectItemActions[i] = playerMap.FindAction($"SelectItem{i + 1}", throwIfNotFound: true);
 
+        // Not SetSlotEnabled: that is the unequip, and nothing here has been equipped
+        // yet. See Item.ResetToUnequipped for what the difference costs.
         foreach (GameObject slot in itemSlots)
-            SetSlotEnabled(slot, false);
+        {
+            if (slot == null)
+                continue;
+
+            Item item = slot.GetComponent<Item>();
+            if (item != null)
+                item.ResetToUnequipped();
+        }
     }
 
     private void OnEnable()
@@ -111,7 +137,11 @@ public class PlayerItems : MonoBehaviour
         // start a take over a holster that hasn't finished, and the two animations
         // would play across each other with the item ending up wherever the last
         // one left it.
-        if (IsChangingItem)
+        //
+        // A reload holds the slot for the same reason it holds the trigger: the
+        // weapon is open with a hand off the grip, and holstering out of that would
+        // put it away in pieces.
+        if (IsChangingItem || IsEquippedItemReloading)
             return;
 
         for (int i = 0; i < _selectItemActions.Length; i++)

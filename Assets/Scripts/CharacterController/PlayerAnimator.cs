@@ -490,7 +490,7 @@ public class PlayerAnimator : MonoBehaviour
 
     public void PlayCarEnterComplete() => _animator.SetTrigger(CarEnterCompleteHash);
 
-    // Lets an equipped item (e.g. Pistol) override the spine/chest/upperChest/neck
+    // Lets an equipped item (e.g. Weapon) override the spine/chest/upperChest/neck
     // aim rig weights (independently per bone) while it's active, without
     // PlayerAnimator needing to know anything about items -- same push-values-in
     // pattern as hand IK targets.
