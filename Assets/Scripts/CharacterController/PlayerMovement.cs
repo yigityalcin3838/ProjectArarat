@@ -130,6 +130,12 @@ public class PlayerMovement : MonoBehaviour
     // script needing to know anything about items.
     public void SetAimSpeedOverride(bool isAiming) => _aimSpeedOverride = isAiming;
 
+    // Whether an item currently has the player aiming. Pushed in by the item rather
+    // than worked out here, and exposed because it is a stance like crouching is:
+    // anything that behaves differently down the sights can read it without having
+    // to know which item put it there.
+    public bool IsAiming => _aimSpeedOverride;
+
     private bool HasStamina => stamina == null || stamina.CurrentStamina > 0f;
     private bool CanJump => stamina == null || stamina.HasEnoughForJump;
 
@@ -252,7 +258,14 @@ public class PlayerMovement : MonoBehaviour
             }
         }
 
-        if (_interactAction.WasPerformedThisFrame())
+        // Ignored outright while an item is being drawn or put away, rather than
+        // queued behind it. Entry already waits for the hands, so queueing would
+        // work -- but a ladder taken half a second after the key was pressed, with
+        // a holster playing in between, reads as the input having been dropped.
+        // Refusing it while the hands are busy is at least legible.
+        bool handsChangingItem = items != null && items.IsChangingItem;
+
+        if (_interactAction.WasPerformedThisFrame() && !handsChangingItem)
         {
             if (IsClimbingLadder)
             {

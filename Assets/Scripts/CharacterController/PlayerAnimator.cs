@@ -528,7 +528,19 @@ public class PlayerAnimator : MonoBehaviour
         if (_animator == null)
             return;
 
-        bool isAiming = (items != null && items.HasEquippedItem) || _isItemPoseHeld;
+        // IsChangingItem is what carries the pose across a swap, and it matters more
+        // than a single frame usually would. The Item Layer's two transitions are
+        // uninterruptible, so one frame of this going false starts a 0.1s blend into
+        // ItemIdle that setting it back true cannot cancel -- 0.2s of the character
+        // dropping the pose and picking it up again, out of one frame's gap.
+        //
+        // That gap is real: the hold an item sets on its way out ends the moment its
+        // holster clip does, which on a swap lands a frame before the next item is
+        // drawn. Nothing is lost bridging it -- a swap is one continuous request and
+        // the hands are occupied for every frame of it. A stow with nothing queued
+        // behind it still lets go, which is the case the hold was written for.
+        bool isAiming = _isItemPoseHeld
+            || (items != null && (items.HasEquippedItem || items.IsChangingItem));
 
         // Drives the Item Layer's own ItemIdle <-> ItemLayer transitions, so it
         // has to be held alongside the weight below rather than dropped early --
@@ -557,6 +569,19 @@ public class PlayerAnimator : MonoBehaviour
 
     public void ClearHandIKTargets()
     {
+        // Refused while another item is on its way up. The hands are about to be
+        // handed straight to it, and letting go in between costs twice: the IK is
+        // weighted off for the frame the outgoing item releases in, dropping the
+        // hands to the raw pose, and clearing the target resets the blend so they
+        // then sweep back onto the new weapon over a full transition instead of
+        // simply following it.
+        //
+        // Left in place they stay on the outgoing item's grips for that one frame,
+        // which by then are down at the hip, and the handover reads as the hands
+        // going with one weapon and coming back up with the next.
+        if (items != null && items.IsChangingItem)
+            return;
+
         _leftHandIKTarget = null;
         _rightHandIKTarget = null;
         _leftHandIKHint = null;
@@ -625,6 +650,21 @@ public class PlayerAnimator : MonoBehaviour
 
     private void UpdateAimRigWeightOverride()
     {
+        // Held exactly where the outgoing item left them for the length of a swap.
+        // An item clears its override the instant it is unequipped, so between one
+        // going away and the next coming up nobody is pushing weights and the
+        // constraints unwind toward their resting values -- measured at 0.50 mid-
+        // swap against the 0.85 the pistol asks for. The torso untwists and twists
+        // back over the better part of a second, which is the whole of what is left
+        // of the swap glitch now that the layer weight and the hand IK hold.
+        //
+        // Returning outright rather than skipping the restore, so the bookkeeping
+        // below is untouched too: the pre-override weights stay the ones from before
+        // the first item, and the next item's push lerps on from here instead of
+        // caching a value that is itself an override.
+        if (!_hasAimRigWeightOverride && items != null && items.IsChangingItem)
+            return;
+
         float t = layerWeightTransitionSpeed * Time.deltaTime;
 
         if (_hasAimRigWeightOverride)

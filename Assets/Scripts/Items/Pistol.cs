@@ -24,6 +24,7 @@ public class Pistol : Item
     [SerializeField] private ParticleGroupEmitter muzzleFlashEmitter;
     [SerializeField] private ParticleGroupEmitter shellEjectEmitter;
 
+
     [Header("Ammo")]
     [SerializeField] private int magazineCapacity = 12;
 
@@ -46,6 +47,12 @@ public class Pistol : Item
     [Header("Movement Effects")]
     [SerializeField] private PlayerMovement movement;
 
+    // Told when this weapon changes to or from its walking carry, which is a moment
+    // only the weapon can see: it lands walkPoseDelay after the legs set off and has
+    // nothing to do with the step that started them. The jolt's own figures live on
+    // HandMotion -- all this supplies is the timing.
+    [SerializeField] private HandMotion handMotion;
+
     [Header("Fire Camera Kick")]
     [SerializeField] private float cameraKickAmount = 1.5f;
     [SerializeField] private float cameraKickHorizontalAmount = 1f;
@@ -54,6 +61,19 @@ public class Pistol : Item
     [SerializeField] private float cameraRollShakeAmount = 1f;
     [SerializeField] private float cameraRollShakeSpring = 200f;
     [SerializeField] private float cameraRollShakeDamping = 20f;
+
+    [Header("Fire Weapon Roll Shake")]
+    // The weapon's own cant on firing, on its own spring. Separate from the camera
+    // roll above because the two are no longer the same motion seen twice: the kick
+    // lands on the rendered camera alone now, so the weapon riding it is not an
+    // option and its recoil has to be stated here or it has none.
+    //
+    // Which is the better arrangement anyway. A weapon and a head do not recoil
+    // alike -- one is braced against a shoulder and the other is watching -- and
+    // this is where that difference gets to be said.
+    [SerializeField] private float weaponRollShakeAmount = 6f;
+    [SerializeField] private float weaponRollShakeSpring = 300f;
+    [SerializeField] private float weaponRollShakeDamping = 18f;
 
     [Header("Weapon Pose")]
     [SerializeField] private float fireHipHoldDuration = 0.2f;
@@ -93,6 +113,12 @@ public class Pistol : Item
     private float _fireHipTimer;
     private float _reloadTimer;
     private float _moveTimer;
+    private float _weaponRollShakeOffset;
+    private float _weaponRollShakeVelocity;
+    private float _drawTimer;
+    private bool _wasInWalkPose;
+
+    public override bool IsDrawing => _drawTimer > 0f;
 
     private void Awake()
     {
@@ -130,6 +156,18 @@ public class Pistol : Item
 
         SnapTo(itemHold);
         weaponAnimator?.SetTrigger(takeTrigger);
+
+        // Timed off the clip rather than watched on the animator, because the state
+        // isn't reached until the crossfade into it has finished and the draw is
+        // already visibly under way before then.
+        _drawTimer = GetClipLength(takeTrigger);
+
+        // Pushed here as well as every frame in Update, so the hands have somewhere
+        // to be from the moment this is equipped. Update alone is a frame late when
+        // the equip happens after it has already run -- which is exactly when it
+        // happens on a swap, since the outgoing item releases from a coroutine.
+        playerAnimator?.SetRightHandIKTarget(rightGripPoint, rightElbowHint);
+        playerAnimator?.SetLeftHandIKTarget(leftGripPoint, leftElbowHint);
         _aimAction?.Enable();
         _attackAction?.Enable();
         _reloadAction?.Enable();
@@ -175,9 +213,6 @@ public class Pistol : Item
 
     private void Update()
     {
-        bool isAiming = _aimAction != null && _aimAction.IsPressed();
-        postProcessEffects?.SetAiming(isAiming);
-
         // Pushed every frame (not just once at equip) so grip point/hint
         // reassignments and the aim weight sliders below stay live-tweakable
         // in the Inspector while playing, instead of only taking effect on
@@ -189,12 +224,16 @@ public class Pistol : Item
         playerLook?.SetFireKickProfile(cameraKickSpring, cameraKickDamping);
         playerLook?.SetRollShakeProfile(cameraRollShakeSpring, cameraRollShakeDamping);
 
-        if (_aimAction != null && playerLook != null)
+        if (_drawTimer > 0f)
         {
-            if (isAiming)
-                playerLook.SetFovOverride(aimFov);
-            else
-                playerLook.ClearFovOverride();
+            _drawTimer -= Time.deltaTime;
+
+            // The view's half at the end of the draw, for the same reason as the
+            // reload's: the take clip has been moving the weapon the whole way up
+            // and is only now finished with it, so the hands have nothing left to
+            // settle from -- but the weapon arriving is a thing worth registering.
+            if (_drawTimer <= 0f)
+                handMotion?.TriggerCameraShouldering();
         }
 
         if (_fireHipTimer > 0f)
@@ -203,7 +242,19 @@ public class Pistol : Item
         bool isFiring = _fireHipTimer > 0f;
 
         if (_reloadTimer > 0f)
+        {
             _reloadTimer -= Time.deltaTime;
+
+            // On the way out, not on the way in: the hand comes back to the weapon
+            // once the magazine is seated, and jolting at the start would land on
+            // the one part of a reload where the grip is still where it was.
+            //
+            // The view's half only. The reload clip is already moving the weapon
+            // through this exact moment, and a spring on the hands as well would be
+            // two things saying where it is.
+            if (_reloadTimer <= 0f)
+                handMotion?.TriggerCameraShouldering();
+        }
 
         bool isReloading = _reloadTimer > 0f;
 
@@ -216,6 +267,23 @@ public class Pistol : Item
             weaponAnimator?.SetTrigger(reloadTrigger);
             _reloadTimer = GetClipLength(reloadTrigger);
             isReloading = true;
+        }
+
+        // Read here rather than at the top of the frame, because a reload refuses it
+        // and the reload's own state is only settled by this point. Holding the
+        // button through a reload simply does nothing; letting go and pressing again
+        // afterwards is not required, since this is read fresh every frame and picks
+        // the aim up the moment the magazine is in.
+        bool isAiming = _aimAction != null && _aimAction.IsPressed() && !isReloading;
+
+        postProcessEffects?.SetAiming(isAiming);
+
+        if (playerLook != null)
+        {
+            if (isAiming)
+                playerLook.SetFovOverride(aimFov);
+            else
+                playerLook.ClearFovOverride();
         }
 
         // Can't sprint while aiming down sights, right after firing, or
@@ -235,7 +303,11 @@ public class Pistol : Item
         // so this naturally covers clip length + that transition together.
         bool isFireAnimPlaying = weaponAnimator != null && weaponAnimator.GetCurrentAnimatorStateInfo(0).IsName(fireTrigger);
 
-        if (_attackAction != null && _attackAction.WasPerformedThisFrame() && !isFireAnimPlaying && !isReloading && _magazineAmmo[_activeMagazineIndex] > 0)
+        // IsDrawing blocks the shot for the length of the take clip. The weapon is
+        // still on its way up: a round leaving it there would come out of a barrel
+        // pointing at the floor, and the fire clip would cut the draw off partway
+        // and leave the weapon wherever it had got to.
+        if (_attackAction != null && _attackAction.WasPerformedThisFrame() && !IsDrawing && !isFireAnimPlaying && !isReloading && _magazineAmmo[_activeMagazineIndex] > 0)
         {
             _magazineAmmo[_activeMagazineIndex]--;
 
@@ -248,7 +320,18 @@ public class Pistol : Item
             FireHitscan();
 
             playerLook?.AddFireKick(cameraKickAmount, cameraKickHorizontalAmount, cameraRollShakeAmount);
+
+            // Set, not added, so holding the trigger can't stack shots into a
+            // runaway cant -- the same rule the camera kick follows.
+            _weaponRollShakeVelocity = weaponRollShakeAmount;
         }
+
+        // Damped spring pulling the cant back to nothing. An impulse on the velocity
+        // snaps it away and lets it settle back, which a lerp toward zero can't do:
+        // a lerp only ever approaches, and recoil overshoots.
+        _weaponRollShakeVelocity += (-weaponRollShakeSpring * _weaponRollShakeOffset
+            - weaponRollShakeDamping * _weaponRollShakeVelocity) * Time.deltaTime;
+        _weaponRollShakeOffset += _weaponRollShakeVelocity * Time.deltaTime;
 
         if (posDeltaPivot != null)
         {
@@ -271,6 +354,20 @@ public class Pistol : Item
                 _moveTimer = 0f;
 
             bool isMovingPastDelay = wantsWalkPose && _moveTimer >= walkPoseDelay;
+
+            // Leaving the walking carry only, never settling into it. The two are
+            // not the same event despite being the same transition: the weapon
+            // eases into the walk pose over walkTransitionSpeed, slowly enough that
+            // there is no moment for a jolt to belong to, and comes out of it the
+            // instant anything else takes priority -- a stop, a shot, a sprint, the
+            // sights going up -- at the far quicker rate those poses use.
+            if (isMovingPastDelay != _wasInWalkPose)
+            {
+                _wasInWalkPose = isMovingPastDelay;
+
+                if (!isMovingPastDelay)
+                    handMotion?.TriggerShouldering();
+            }
 
             if (isReloading)
             {
@@ -313,7 +410,14 @@ public class Pistol : Item
             _currentAdsRotation = Quaternion.Slerp(_currentAdsRotation, Quaternion.Euler(targetRotationEuler), transitionSpeed * Time.deltaTime);
 
             posDeltaPivot.localPosition = _currentAdsPosition;
-            posDeltaPivot.localRotation = _currentAdsRotation;
+
+            // Composed on top of the pose rather than lerped into it, so the shake
+            // settles on its own spring while the pose goes on easing between hip
+            // and aim underneath. Blended into the target instead, the two would be
+            // arguing over one value and the recoil would be dragged toward
+            // whichever pose was winning.
+            posDeltaPivot.localRotation = _currentAdsRotation
+                * Quaternion.Euler(0f, 0f, _weaponRollShakeOffset);
         }
     }
 
@@ -353,10 +457,20 @@ public class Pistol : Item
     private System.Collections.IEnumerator HolsterIKReleaseRoutine(float duration)
     {
         yield return new WaitForSeconds(duration);
+
+        // Cleared first, before anything is told the hold is over. IsStowing is this
+        // reference, and PlayerAnimator asks whether any item is still changing
+        // hands when it decides whether to keep the item pose -- so releasing the
+        // hold while this still points at a live coroutine has it answer "yes, keep
+        // it" and the pose survives a frame longer than the hands and the weapon do.
+        //
+        // One frame of the character holding a weapon that is already back on the
+        // hip, with no hand IK to correct it. Order is the whole of the fix.
+        _holsterIKReleaseCoroutine = null;
+
         SnapTo(holster);
         playerAnimator?.ClearHandIKTargets();
         playerAnimator?.SetItemPoseHeld(false);
-        _holsterIKReleaseCoroutine = null;
     }
 
     // Reads the clip length straight from the Animator Controller already

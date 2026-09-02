@@ -16,27 +16,35 @@ using UnityEngine;
 [DefaultExecutionOrder(60)]
 public class HandMotion : MonoBehaviour
 {
-    // One figure per gait, for whichever of the two things it is describing: how
+    // One figure per stance, for whichever of the two things it is describing: how
     // far a layer moves, or how fast it settles.
     //
-    // Written out per gait rather than derived from a speed ratio. A ratio is one
-    // dial and it decides all three together -- crouching can only ever be a scaled
+    // Written out per stance rather than derived from a speed ratio. A ratio is one
+    // dial and it decides them all together -- crouching can only ever be a scaled
     // walk and a sprint the same walk scaled the other way. Crouching wants tight
-    // and slow, a sprint wants wide and loose, and those are not the same curve
-    // read at two points. Three numbers say it directly and nothing has to be
-    // fought to get them apart.
+    // and small, a sprint wants wide and loose, and those are not the same curve
+    // read at two points. Four numbers say it directly and nothing has to be fought
+    // to get them apart.
+    //
+    // Aiming is in here beside the gaits despite not being one, because it behaves
+    // like one: it replaces the figures outright rather than scaling them, and a
+    // player down the sights wants the same steadiness whether they are crouched or
+    // walking. Keeping it as a fifth thing to multiply by would only mean tuning
+    // every gait twice.
     [System.Serializable]
-    private struct GaitValues
+    private struct StanceValues
     {
         public float crouch;
         public float walk;
         public float sprint;
+        public float aim;
 
-        public GaitValues(float crouch, float walk, float sprint)
+        public StanceValues(float crouch, float walk, float sprint, float aim)
         {
             this.crouch = crouch;
             this.walk = walk;
             this.sprint = sprint;
+            this.aim = aim;
         }
     }
 
@@ -63,8 +71,24 @@ public class HandMotion : MonoBehaviour
     // Smoothing is a catch-up rate, so higher is tighter, not slower. Crouching
     // gets the tightest of the three and a sprint the loosest -- the pace is the
     // whole difference between a placed step and a thrown one.
-    [SerializeField] private GaitValues bobIntensity = new GaitValues(0.35f, 1f, 2f);
-    [SerializeField] private GaitValues bobSmoothing = new GaitValues(12f, 9f, 6f);
+    [SerializeField] private StanceValues bobIntensity = new StanceValues(0.35f, 1f, 2f, 0.2f);
+    [SerializeField] private StanceValues bobSmoothing = new StanceValues(12f, 9f, 6f, 14f);
+
+    [Header("Breathing")]
+    // The slow drift of a weapon held still. Only while the character is standing:
+    // the bob takes over the moment it moves, and the two running together would be
+    // a stride with a wobble laid over it rather than either one read clearly.
+    //
+    // Phase comes from PlayerLook, so this is the same breath the camera is taking.
+    //
+    // No stance column, unlike every layer below. Those exist to tell a crouch from
+    // a sprint, and this never runs during either -- a standstill is the only state
+    // it has, so there would be one figure in four dressed up as a choice.
+    [SerializeField] private float breathHorizontalAmount = 0.004f;
+    [SerializeField] private float breathVerticalAmount = 0.008f;
+    [SerializeField] private float breathPitchAmount = 0.8f;
+    [SerializeField] private float breathRollAmount = 0.6f;
+    [SerializeField] private float breathSmoothing = 4f;
 
     [Header("Strafe Sway")]
     // The movement half of the lag, against the look half further down. Horizontal
@@ -84,8 +108,8 @@ public class HandMotion : MonoBehaviour
     [SerializeField] private float swayHorizontalAmount = 0.05f;
     [SerializeField] private float swayVerticalAmount = 0f;
     [SerializeField] private float swayForwardAmount = 0.04f;
-    [SerializeField] private GaitValues swayIntensity = new GaitValues(0.4f, 1f, 1.8f);
-    [SerializeField] private GaitValues swaySmoothing = new GaitValues(10f, 7f, 5f);
+    [SerializeField] private StanceValues swayIntensity = new StanceValues(0.4f, 1f, 1.8f, 0.3f);
+    [SerializeField] private StanceValues swaySmoothing = new StanceValues(10f, 7f, 5f, 12f);
 
     [Header("Strafe Tilt")]
     // Degrees of roll into the direction being strafed, and roll only. A sidestep
@@ -96,8 +120,8 @@ public class HandMotion : MonoBehaviour
     // leaning is a suggestion of a lean, the hands leaning is the lean itself, so
     // the two are tuned apart rather than sharing a figure.
     [SerializeField] private float tiltAmount = 14f;
-    [SerializeField] private GaitValues tiltIntensity = new GaitValues(0.5f, 1f, 1.6f);
-    [SerializeField] private GaitValues tiltSmoothing = new GaitValues(10f, 8f, 6f);
+    [SerializeField] private StanceValues tiltIntensity = new StanceValues(0.5f, 1f, 1.6f, 0.3f);
+    [SerializeField] private StanceValues tiltSmoothing = new StanceValues(10f, 8f, 6f, 12f);
 
     [Header("Look Sway")]
     // The hands lagging a turn, which is what gives a weapon any sense of mass.
@@ -117,90 +141,229 @@ public class HandMotion : MonoBehaviour
     // the hands no further than a firm one.
     [SerializeField] private float lookSwayReferenceRate = 240f;
 
-    [SerializeField] private GaitValues lookSwayIntensity = new GaitValues(0.6f, 1f, 1.5f);
+    [SerializeField] private StanceValues lookSwayIntensity = new StanceValues(0.6f, 1f, 1.5f, 0.35f);
 
     // Its own filter rather than sharing the movement sway's: raw mouse deltas are
     // spiky in a way a key press never is, and the two want different amounts of
     // smoothing to sit still.
-    [SerializeField] private GaitValues lookSwaySmoothing = new GaitValues(16f, 12f, 9f);
+    [SerializeField] private StanceValues lookSwaySmoothing = new StanceValues(16f, 12f, 9f, 18f);
+
+    [Header("Jump / Land Kick")]
+    // The hands' own, and the only jump and landing they get -- the camera's version
+    // is deliberately kept off the items (see PlayerLook), so without this a landing
+    // would shake the view around a weapon nailed in place.
+    //
+    // Separate from the camera's rather than shared, because a braced weapon and a
+    // head do not answer a landing alike: one is absorbed by arms and a shoulder,
+    // the other by a neck.
+    //
+    // Impulses on velocity, not offsets: a spring flung and left to settle overshoots
+    // and comes back, which is what an impact does. A lerp toward a target only ever
+    // approaches it.
+    [SerializeField] private float jumpKickAmount = 0.6f;
+    [SerializeField] private float landKickAmount = 1.2f;
+    [SerializeField] private float jumpKickPitchAmount = 30f;
+    [SerializeField] private float landKickPitchAmount = 60f;
+
+    // Roll kept smaller than pitch. A landing drives the weapon down far more than
+    // it cants it, and a large roll here reads as the whole view being twisted
+    // rather than as a weight settling in the hands.
+    [SerializeField] private float jumpKickRollAmount = 15f;
+    [SerializeField] private float landKickRollAmount = 30f;
+
+    // One spring for all three, so they arrive and settle together -- a landing is
+    // one impact, not three springs going off at their own pace.
+    [SerializeField] private float kickSpring = 200f;
+    [SerializeField] private float kickDamping = 20f;
+
+    [Header("Shouldering")]
+    // The weapon being re-settled against the shoulder. Fired whenever the way the
+    // character is carrying itself changes: dropping into a crouch or standing back
+    // up, setting off walking, raising or lowering the sights, leaning out or back.
+    //
+    // One impulse for all of them, not a value per event. They are the same physical
+    // thing -- a grip adjusting to a body that has just moved under it -- and giving
+    // each its own figure would only be the same settle written seven times, drifting
+    // apart as they were tuned.
+    //
+    // Impulses on velocity, in metres per second and degrees per second, so the shape
+    // is a throw and a recovery rather than a slide between two points. Peak travel is
+    // roughly the impulse over the square root of the spring: at 220, 0.3 is about two
+    // centimetres and 25 about a degree and a half.
+    [SerializeField] private Vector3 shoulderingPosition = new Vector3(0f, -0.25f, 0.3f);
+    [SerializeField] private Vector3 shoulderingRotation = new Vector3(-25f, 0f, 8f);
+    [SerializeField] private float shoulderingSpring = 220f;
+    [SerializeField] private float shoulderingDamping = 22f;
+
+    // The view's share of the same jolt, fired at the same instant and tuned here
+    // rather than in PlayerLook. One motion, one place to set it: split across two
+    // components the halves would be adjusted separately and end up disagreeing
+    // about a thing that only ever happens once.
+    //
+    // Far smaller figures than the hands'. A stance change moves a weapon held out
+    // at arm's length several centimetres; it moves the head a few millimetres, and
+    // matching the two would read as the camera being shoved rather than the body
+    // resettling under it.
+    [SerializeField] private Vector3 cameraShoulderingPosition = new Vector3(0f, -0.1f, 0.08f);
+    [SerializeField] private Vector3 cameraShoulderingRotation = new Vector3(-12f, 0f, 4f);
+    [SerializeField] private float cameraShoulderingSpring = 220f;
+    [SerializeField] private float cameraShoulderingDamping = 22f;
+
+    [Header("Peek")]
+    // Degrees at a full lean, mirrored the other way for the other side. On top of
+    // whatever the camera pivot's own peek roll already gives the weapon by carrying
+    // it -- this is the hands doing something of their own, not a restatement of
+    // that: bringing the weapon in tighter or turning it into the corner while the
+    // view leans past it.
+    //
+    // Unsmoothed on purpose. PeekAmount is already eased into over peekSpeed, so
+    // this follows a curve that has been shaped once rather than filtering a filter.
+    [SerializeField] private Vector3 peekRotation = new Vector3(0f, 0f, -6f);
 
     [Header("Look Tilt")]
-    // The point the tilt turns about. A marker, not a parent: nothing has to hang
-    // off it, and it can sit anywhere in the scene. Its position is read once at
-    // startup and kept as a fixed point in this transform's own space, so the
-    // marker can even be moved or deleted afterwards without the maths noticing.
-    //
-    // It matters because a rotation is only ever as interesting as the distance
-    // between its centre and what is turning around it. Put it at the grip and the
-    // weapon turns in place; set it back behind the shoulder and the muzzle swings
-    // out. The point that looks right is rarely the one the bob happens to be
-    // written from, and this is how the two stop having to be the same point.
-    //
-    // Empty means the transform's own resting position, which is a turn in place.
-    [SerializeField] private Transform lookPivot;
-
-    // Degrees on each axis, because what should trail a turn here is the muzzle.
-    // Roll alone can't do that -- it spins the weapon about its own barrel and
-    // leaves the tip pointing exactly where it was. Pitch off the vertical turn and
-    // yaw off the horizontal one are what swing the far end of the weapon behind
-    // the view, which is the whole of what a heavy thing does when you whip the
-    // camera around.
-    //
-    // Roll is still here for the bank on top, and signed to match the strafe tilt
-    // so turning right and stepping right cant the hands the same way rather than
+    // Degrees of roll into the turn -- the same bank the strafe tilt gives, off the
+    // mouse instead of the keys, and roll only like it is. Signed to match it, so
+    // turning right and stepping right cant the hands the same way rather than
     // cancelling when both happen at once.
-    // Yaw leads, because horizontal is what a player actually whips the mouse
-    // through; pitch behind it, roll least of the three so the bank stays a
-    // seasoning on the swing rather than the swing itself.
-    [SerializeField] private float lookTiltPitchAmount = 6f;
-    [SerializeField] private float lookTiltYawAmount = 9f;
-    [SerializeField] private float lookTiltRollAmount = 5f;
+    //
+    // Travel on the other axes is the look sway's, which is what it is for.
+    [SerializeField] private float lookTiltAmount = 5f;
 
     // The tilt's own rate and filter, deliberately not the sway's. A cant tends to
     // want a lower ceiling and a slower settle than a slide: the same flick that
     // should shove the hands right across should only tip them.
     [SerializeField] private float lookTiltReferenceRate = 200f;
-    [SerializeField] private GaitValues lookTiltIntensity = new GaitValues(0.6f, 1f, 1.4f);
-    [SerializeField] private GaitValues lookTiltSmoothing = new GaitValues(14f, 10f, 7f);
+    [SerializeField] private StanceValues lookTiltIntensity = new StanceValues(0.6f, 1f, 1.4f, 0.35f);
+    [SerializeField] private StanceValues lookTiltSmoothing = new StanceValues(14f, 10f, 7f, 16f);
 
     private Vector3 _baseLocalPosition;
     private Quaternion _baseLocalRotation;
-    private Vector3 _lookPivotLocalPosition;
-    private Vector3 _currentLookTilt;
+    private float _currentLookTilt;
+    private Vector3 _currentBreathOffset;
+    private Vector2 _currentBreathRotation;
+    private float _kickOffset;
+    private float _kickVelocity;
+    private float _kickPitchOffset;
+    private float _kickPitchVelocity;
+    private float _kickRollOffset;
+    private float _kickRollVelocity;
+    private Vector3 _shoulderingPositionOffset;
+    private Vector3 _shoulderingPositionVelocity;
+    private Vector3 _shoulderingRotationOffset;
+    private Vector3 _shoulderingRotationVelocity;
+    private bool _wasCrouching;
+    private bool _wasAiming;
+    private bool _wasSprinting;
     private Vector3 _currentBobOffset;
     private Vector3 _currentBobRotation;
     private Vector3 _currentSway;
     private Vector3 _currentLookSway;
     private float _currentTilt;
 
-    // Which of the three is in force. Crouch first, which costs nothing: sprinting
-    // already requires not being crouched, so the two can never both be true.
+    // Which of the four is in force. Aiming wins outright -- someone lining up a
+    // shot while walking wants the steadiness of the sights, not a walk with a
+    // discount. Crouch next, which costs nothing: sprinting already requires not
+    // being crouched, so those two can never both be true.
     //
-    // The switch is a hard one, and it is the smoothing below that absorbs it --
-    // every layer's result is lerped, so a gait change slides the amplitude across
+    // The switch is a hard one, and it is the smoothing that absorbs it -- every
+    // layer's result is lerped, so a stance change slides the amplitude across
     // rather than stepping it. Blending the figures themselves as well would only
     // smooth what is already smooth.
-    private float ForGait(GaitValues values)
-        => movement.IsCrouching ? values.crouch
+    private float ForStance(StanceValues values)
+        => movement.IsAiming ? values.aim
+            : movement.IsCrouching ? values.crouch
             : movement.IsSprintingStable ? values.sprint
             : values.walk;
+
+    // Public, because a jolt in the hands is not only a stance thing: a reload, a
+    // melee, a door shouldered open all want the same spring, and all of them would
+    // otherwise grow one of their own. Set rather than added, so two in quick
+    // succession read as the second replacing the first instead of stacking into a
+    // throw neither asked for -- which matters here, since crouching while already
+    // moving fires two of these a frame apart.
+    public void AddKick(Vector3 positionImpulse, Vector3 rotationImpulse)
+    {
+        _shoulderingPositionVelocity = positionImpulse;
+        _shoulderingRotationVelocity = rotationImpulse;
+    }
+
+    // The configured shouldering jolt, hands and view together. Public so an item
+    // can fire it for a moment only the item can see -- a weapon settling into its
+    // walking carry, say, which happens some seconds after the legs set off and
+    // nowhere near it. The figures stay here either way; what the caller supplies is
+    // the timing.
+    public void TriggerShouldering()
+    {
+        AddKick(shoulderingPosition, shoulderingRotation);
+        TriggerCameraShouldering();
+    }
+
+    // The view's half on its own, for the moments where the hands are the wrong
+    // place to put it. A reload ends with the weapon already being moved by its own
+    // clip, and a swap with it on its way out of one hand and into the other -- a
+    // spring on top of either is a second opinion about where the weapon is. The
+    // head has no such animation and is free to register that something happened.
+    public void TriggerCameraShouldering()
+    {
+        if (look == null)
+            return;
+
+        look.AddShoulderingKick(
+            cameraShoulderingPosition,
+            cameraShoulderingRotation,
+            cameraShoulderingSpring,
+            cameraShoulderingDamping);
+    }
+
+    // Edges, not states. What is wanted is the moment the character changes how it
+    // is carrying itself, and a flag that is simply true for a while has two of those
+    // in it -- so crouching, aiming and leaning each fire on the way in and on the way
+    // out. Walking fires only on setting off: coming to a stop is the body settling,
+    // not the grip being re-taken.
+    private void UpdateShouldering()
+    {
+        bool isCrouching = movement.IsCrouching;
+        bool isAiming = movement.IsAiming;
+
+        // The same figure the stance columns are read against, so the jolt lands on
+        // the frame the amplitudes change rather than a frame either side of it.
+        bool isSprinting = movement.IsSprintingStable;
+
+        // Raising or lowering the sights, dropping into a crouch or coming back up,
+        // breaking into a run or falling out of one. Crouching counts down the sights
+        // as much as off them -- the whole body drops half a metre either way, and a
+        // weapon held against a shoulder that has just moved is exactly what this is
+        // for.
+        //
+        // Walking and leaning are not here. Setting off is the legs' business and the
+        // arms carry on as they were; what does re-take the grip is the weapon coming
+        // out of its walking carry, which is a different moment entirely and comes in
+        // through TriggerShouldering when the item decides it. A lean moves the whole
+        // body sideways without changing how anything is held.
+        bool changed = isAiming != _wasAiming
+            || isCrouching != _wasCrouching
+            || isSprinting != _wasSprinting;
+
+        _wasCrouching = isCrouching;
+        _wasAiming = isAiming;
+        _wasSprinting = isSprinting;
+
+        if (changed)
+            TriggerShouldering();
+
+        _shoulderingPositionVelocity += (-shoulderingSpring * _shoulderingPositionOffset
+            - shoulderingDamping * _shoulderingPositionVelocity) * Time.deltaTime;
+        _shoulderingPositionOffset += _shoulderingPositionVelocity * Time.deltaTime;
+
+        _shoulderingRotationVelocity += (-shoulderingSpring * _shoulderingRotationOffset
+            - shoulderingDamping * _shoulderingRotationVelocity) * Time.deltaTime;
+        _shoulderingRotationOffset += _shoulderingRotationVelocity * Time.deltaTime;
+    }
 
     private void Awake()
     {
         _baseLocalPosition = transform.localPosition;
         _baseLocalRotation = transform.localRotation;
-
-        // Brought into the same space the offsets below are built in, once, so the
-        // marker's own parentage is irrelevant -- it can hang off the weapon, the
-        // camera or nothing at all and still name the same point.
-        _lookPivotLocalPosition = _baseLocalPosition;
-
-        if (lookPivot != null)
-        {
-            _lookPivotLocalPosition = transform.parent != null
-                ? transform.parent.InverseTransformPoint(lookPivot.position)
-                : lookPivot.position;
-        }
     }
 
     private void Update()
@@ -216,11 +379,11 @@ public class HandMotion : MonoBehaviour
             && !movement.IsMovementLocked
             && movement.MoveInput.sqrMagnitude > 0.01f;
 
-        float bobAmount = ForGait(bobIntensity);
-        float swayAmount = ForGait(swayIntensity);
-        float tiltAmountForGait = ForGait(tiltIntensity);
-        float lookSwayAmount = ForGait(lookSwayIntensity);
-        float lookTiltAmountForGait = ForGait(lookTiltIntensity);
+        float bobAmount = ForStance(bobIntensity);
+        float swayAmount = ForStance(swayIntensity);
+        float tiltStanceAmount = ForStance(tiltIntensity);
+        float lookSwayAmount = ForStance(lookSwayIntensity);
+        float lookTiltStanceAmount = ForStance(lookTiltIntensity);
 
         float bobPhase = look.BobPhase;
 
@@ -243,6 +406,25 @@ public class HandMotion : MonoBehaviour
                 Mathf.Cos(bobPhase) * bobRollAmount * bobAmount)
             : Vector3.zero;
 
+        // Gated on the same isMoving the bob is, inverted -- so the two hand over to
+        // each other on the same frame and never overlap. Vertical runs at half the
+        // horizontal, which is what makes it a breath rather than a circle: the
+        // chest rises once for every two small sways.
+        float breathPhase = look.BreathPhase;
+
+        Vector3 targetBreathOffset = isMoving
+            ? Vector3.zero
+            : new Vector3(
+                Mathf.Sin(breathPhase) * breathHorizontalAmount,
+                Mathf.Sin(breathPhase * 0.5f) * breathVerticalAmount,
+                0f);
+
+        Vector2 targetBreathRotation = isMoving
+            ? Vector2.zero
+            : new Vector2(
+                Mathf.Sin(breathPhase * 0.5f) * breathPitchAmount,
+                Mathf.Cos(breathPhase) * breathRollAmount);
+
         // Negated: the hands trail the movement rather than leading it.
         Vector3 targetSway = new Vector3(
             -movement.MoveInput.x * swayHorizontalAmount * swayAmount,
@@ -262,53 +444,72 @@ public class HandMotion : MonoBehaviour
             -Mathf.Clamp(lookRate.y / lookSwayReferenceRate, -1f, 1f) * lookSwayVerticalAmount * lookSwayAmount,
             0f);
 
-        float lookTiltRatioX = Mathf.Clamp(lookRate.x / lookTiltReferenceRate, -1f, 1f);
-        float lookTiltRatioY = Mathf.Clamp(lookRate.y / lookTiltReferenceRate, -1f, 1f);
-
-        Vector3 targetLookTilt = new Vector3(
-            -lookTiltRatioY * lookTiltPitchAmount,
-            -lookTiltRatioX * lookTiltYawAmount,
-            -lookTiltRatioX * lookTiltRollAmount) * lookTiltAmountForGait;
+        float targetLookTilt =
+            -Mathf.Clamp(lookRate.x / lookTiltReferenceRate, -1f, 1f) * lookTiltAmount * lookTiltStanceAmount;
 
         // Nothing to lean into while a ladder or a car is driving the character:
         // the input is still being read there and would roll the hands over on a
         // key the player isn't steering with.
         float targetTilt = movement.IsMovementLocked
             ? 0f
-            : -movement.MoveInput.x * tiltAmount * tiltAmountForGait;
+            : -movement.MoveInput.x * tiltAmount * tiltStanceAmount;
 
-        _currentTilt = Mathf.Lerp(_currentTilt, targetTilt, ForGait(tiltSmoothing) * Time.deltaTime);
-        _currentBobOffset = Vector3.Lerp(_currentBobOffset, targetBobOffset, ForGait(bobSmoothing) * Time.deltaTime);
-        _currentBobRotation = Vector3.Lerp(_currentBobRotation, targetBobRotation, ForGait(bobSmoothing) * Time.deltaTime);
-        _currentSway = Vector3.Lerp(_currentSway, targetSway, ForGait(swaySmoothing) * Time.deltaTime);
-        _currentLookSway = Vector3.Lerp(_currentLookSway, targetLookSway, ForGait(lookSwaySmoothing) * Time.deltaTime);
-        _currentLookTilt = Vector3.Lerp(_currentLookTilt, targetLookTilt, ForGait(lookTiltSmoothing) * Time.deltaTime);
+        _currentTilt = Mathf.Lerp(_currentTilt, targetTilt, ForStance(tiltSmoothing) * Time.deltaTime);
+        _currentBobOffset = Vector3.Lerp(_currentBobOffset, targetBobOffset, ForStance(bobSmoothing) * Time.deltaTime);
+        _currentBobRotation = Vector3.Lerp(_currentBobRotation, targetBobRotation, ForStance(bobSmoothing) * Time.deltaTime);
+        _currentSway = Vector3.Lerp(_currentSway, targetSway, ForStance(swaySmoothing) * Time.deltaTime);
+        _currentLookSway = Vector3.Lerp(_currentLookSway, targetLookSway, ForStance(lookSwaySmoothing) * Time.deltaTime);
+        _currentLookTilt = Mathf.Lerp(_currentLookTilt, targetLookTilt, ForStance(lookTiltSmoothing) * Time.deltaTime);
+        _currentBreathOffset = Vector3.Lerp(_currentBreathOffset, targetBreathOffset, breathSmoothing * Time.deltaTime);
+        _currentBreathRotation = Vector2.Lerp(_currentBreathRotation, targetBreathRotation, breathSmoothing * Time.deltaTime);
 
-        Vector3 position = _baseLocalPosition + _currentBobOffset + _currentSway + _currentLookSway;
+        UpdateShouldering();
+
+        // Leaving the ground lifts the weapon and drops its muzzle; landing does the
+        // reverse. Opposite signs on the two axes, so the pair reads as the weapon
+        // being carried rather than as one rigid piece sliding up and down.
+        if (movement.JumpedThisFrame)
+        {
+            _kickVelocity += jumpKickAmount;
+            _kickPitchVelocity -= jumpKickPitchAmount;
+            _kickRollVelocity -= jumpKickRollAmount;
+        }
+
+        if (movement.LandedThisFrame)
+        {
+            _kickVelocity -= landKickAmount;
+            _kickPitchVelocity += landKickPitchAmount;
+            _kickRollVelocity += landKickRollAmount;
+        }
+
+        _kickVelocity += (-kickSpring * _kickOffset - kickDamping * _kickVelocity) * Time.deltaTime;
+        _kickOffset += _kickVelocity * Time.deltaTime;
+
+        _kickPitchVelocity += (-kickSpring * _kickPitchOffset - kickDamping * _kickPitchVelocity) * Time.deltaTime;
+        _kickPitchOffset += _kickPitchVelocity * Time.deltaTime;
+
+        _kickRollVelocity += (-kickSpring * _kickRollOffset - kickDamping * _kickRollVelocity) * Time.deltaTime;
+        _kickRollOffset += _kickRollVelocity * Time.deltaTime;
+
+        // Straight off PeekAmount, which is already smoothed and already signed --
+        // leaning left mirrors every axis without a second set of figures for it.
+        Vector3 peek = peekRotation * look.PeekAmount;
+
+        transform.localPosition = _baseLocalPosition
+            + _currentBobOffset + _currentSway + _currentLookSway + _currentBreathOffset
+            + Vector3.up * _kickOffset + _shoulderingPositionOffset;
 
         // Every rotational layer summed into one Euler off the base rather than
         // each writing the transform in turn. The old per-weapon version read
         // localEulerAngles back and overwrote one channel of it, which meant
         // whichever component wrote last that frame won -- composing them here
         // leaves nothing to win, and adding the next layer is one more term.
-        Quaternion rotation = _baseLocalRotation * Quaternion.Euler(
-            _currentBobRotation.x,
-            _currentBobRotation.y,
-            _currentBobRotation.z + _currentTilt);
-
-        // The look tilt applied last and about the marked point rather than about
-        // this transform's own origin: swung around it, so the offset from the
-        // pivot becomes travel and not just a turn on the spot. With the pivot at
-        // the transform's own position the two are the same thing, which is why
-        // that is the fallback.
         //
-        // Nothing needs to be parented to the marker for this. Turning something
-        // about a point is arithmetic, and the hierarchy has no say in it.
-        Quaternion lookTilt = Quaternion.Euler(_currentLookTilt);
-        position = _lookPivotLocalPosition + lookTilt * (position - _lookPivotLocalPosition);
-        rotation = lookTilt * rotation;
-
-        transform.localPosition = position;
-        transform.localRotation = rotation;
+        // Both tilts land on the same Z: one is the turn, the other the sidestep,
+        // and a bank is a bank whichever asked for it.
+        transform.localRotation = _baseLocalRotation * Quaternion.Euler(
+            _currentBobRotation.x + _currentBreathRotation.x + peek.x + _kickPitchOffset + _shoulderingRotationOffset.x,
+            _currentBobRotation.y + peek.y + _shoulderingRotationOffset.y,
+            _currentBobRotation.z + _currentTilt + _currentLookTilt + _currentBreathRotation.y + peek.z + _kickRollOffset + _shoulderingRotationOffset.z);
     }
 }

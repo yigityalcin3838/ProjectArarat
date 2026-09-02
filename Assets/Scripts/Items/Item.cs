@@ -25,6 +25,15 @@ public class Item : MonoBehaviour
     // anything that needs both hands free has to wait for the second one.
     public virtual bool IsStowing => false;
 
+    // The other half: equipped, but still being brought up. Same reasoning in
+    // reverse -- the slot is filled the instant the key is pressed and the hands
+    // are not, and a swap started here would cut the draw in two.
+    public virtual bool IsDrawing => false;
+
+    // Either animation in flight. What anything asking "can this be interrupted"
+    // actually wants, so it doesn't have to know there are two of them.
+    public bool IsChangingHands => IsStowing || IsDrawing;
+
     // Reparenting is invalid while Unity tears the hierarchy down (exiting Play
     // Mode, quitting) and throws -- and OnDisable fires as part of exactly that.
     // Used by derived items, which do reparent themselves.

@@ -150,10 +150,22 @@ public class PlayerLook : MonoBehaviour
     [SerializeField] private float bobSmoothing = 8f;
 
     [Header("Camera Jump / Land Shake")]
+    // The view's alone -- none of this reaches the weapon. Leaving the ground and
+    // hitting it again are things that happen to the head; the hands are holding
+    // something braced and go on holding it. It lands on the rendered camera rather
+    // than the pivot, which is the one transform under the rig the items do not
+    // hang off, so there is nothing to take back out afterwards.
+    //
+    // Pitch is the drop and the recovery; roll is the head not landing perfectly
+    // square, and rolls the same way every time so a landing is a thing the player
+    // can recognise rather than a different jolt each time.
     [SerializeField] private float jumpShakeAmount = 2f;
     [SerializeField] private float landShakeAmount = 4f;
+    [SerializeField] private float jumpShakeRollAmount = 1f;
+    [SerializeField] private float landShakeRollAmount = 2f;
     [SerializeField] private float shakeSpring = 200f;
     [SerializeField] private float shakeDamping = 20f;
+
 
     // The rendered camera is a zero-offset child of the pivot, so this is the eye
     // point as well as the pivot -- what a weapon should trace a shot along.
@@ -217,6 +229,12 @@ public class PlayerLook : MonoBehaviour
     // still drift, and the drift is exactly the thing that reads as wrong.
     public float BobPhase => _bobPhase;
 
+    // The idle drift's phase, in radians, advancing only while the character is
+    // standing still. Exposed for the same reason the bob's is: the hands breathe
+    // off this rather than a clock of their own, so the two are one breath rather
+    // than two at nearly the same rate drifting through each other.
+    public float BreathPhase => _breathTimer;
+
     private InputAction _lookAction;
     private Vector2 _lookInput;
     private float _currentTilt;
@@ -228,9 +246,19 @@ public class PlayerLook : MonoBehaviour
     private Vector3 _currentBreathRotation;
     private float _bobTimer;
     private float _bobPhase;
+    private Quaternion _cameraBaseLocalRotation;
     private Vector3 _currentBobRotation;
     private float _shakeOffset;
     private float _shakeVelocity;
+    private float _shakeRollOffset;
+    private float _shakeRollVelocity;
+    private Vector3 _shoulderingPositionOffset;
+    private Vector3 _shoulderingPositionVelocity;
+    private Vector3 _shoulderingRotationOffset;
+    private Vector3 _shoulderingRotationVelocity;
+    private float _shoulderingSpring = 220f;
+    private float _shoulderingDamping = 22f;
+    private Vector3 _cameraBaseLocalPosition;
     private float _fireKickOffset;
     private float _fireKickVelocity;
     private float _fireKickYawOffset;
@@ -282,6 +310,23 @@ public class PlayerLook : MonoBehaviour
     // own cant, the same on every shot, so its direction comes from the sign of
     // the amount rather than a coin flip. Only the yaw is random, which is what
     // keeps a burst from walking predictably to one side.
+    // The view's share of a shouldering jolt, fired by HandMotion at the same moment
+    // as the hands' own so the two are one event rather than two that happen to
+    // coincide. Everything about it -- the impulses and the spring it settles on --
+    // is pushed in from there, because a stance change is one motion and splitting
+    // its tuning across two components is how the halves start disagreeing.
+    //
+    // Lands on the rendered camera rather than the pivot, which is what keeps it off
+    // the weapon: the hands have their own version of this and would otherwise take
+    // both.
+    public void AddShoulderingKick(Vector3 positionImpulse, Vector3 rotationImpulse, float spring, float damping)
+    {
+        _shoulderingPositionVelocity = positionImpulse;
+        _shoulderingRotationVelocity = rotationImpulse;
+        _shoulderingSpring = spring;
+        _shoulderingDamping = damping;
+    }
+
     public void AddFireKick(float kickAmount, float horizontalKickAmount, float rollShakeAmount)
     {
         _fireKickVelocity = -kickAmount;
@@ -323,7 +368,11 @@ public class PlayerLook : MonoBehaviour
         }
 
         if (cinemachineCamera != null)
+        {
             _baseFov = cinemachineCamera.Lens.FieldOfView;
+            _cameraBaseLocalPosition = cinemachineCamera.transform.localPosition;
+            _cameraBaseLocalRotation = cinemachineCamera.transform.localRotation;
+        }
     }
 
     private void OnEnable()
@@ -452,16 +501,37 @@ public class PlayerLook : MonoBehaviour
             : Vector3.zero;
         _currentBobRotation = Vector3.Lerp(_currentBobRotation, targetBobRotation, bobSmoothing * Time.deltaTime);
 
-        // Pitch-only damped spring kick on jump (up) and landing (down) -- an
-        // impulse on velocity snaps it away and settles back like a real spring,
-        // same pattern as the weapon's own jump/land kick.
+        // Damped spring kick on jump (up) and landing (down) -- an impulse on
+        // velocity snaps it away and settles back like a real spring. Pitch and roll
+        // get an offset each but share the spring, so the two settle together and a
+        // landing reads as one motion rather than two arriving at their own pace.
         if (movement != null && movement.JumpedThisFrame)
+        {
             _shakeVelocity -= jumpShakeAmount;
+            _shakeRollVelocity -= jumpShakeRollAmount;
+        }
+
         if (movement != null && movement.LandedThisFrame)
+        {
             _shakeVelocity += landShakeAmount;
+            _shakeRollVelocity += landShakeRollAmount;
+        }
 
         _shakeVelocity += (-shakeSpring * _shakeOffset - shakeDamping * _shakeVelocity) * Time.deltaTime;
         _shakeOffset += _shakeVelocity * Time.deltaTime;
+
+        _shakeRollVelocity += (-shakeSpring * _shakeRollOffset - shakeDamping * _shakeRollVelocity) * Time.deltaTime;
+        _shakeRollOffset += _shakeRollVelocity * Time.deltaTime;
+
+        // Shouldering -- impulse and spring both pushed in by HandMotion when a
+        // stance changes, so the view settles on exactly the terms the hands do.
+        _shoulderingPositionVelocity += (-_shoulderingSpring * _shoulderingPositionOffset
+            - _shoulderingDamping * _shoulderingPositionVelocity) * Time.deltaTime;
+        _shoulderingPositionOffset += _shoulderingPositionVelocity * Time.deltaTime;
+
+        _shoulderingRotationVelocity += (-_shoulderingSpring * _shoulderingRotationOffset
+            - _shoulderingDamping * _shoulderingRotationVelocity) * Time.deltaTime;
+        _shoulderingRotationOffset += _shoulderingRotationVelocity * Time.deltaTime;
 
         // Weapon-driven recoil kick -- spring/damping come from whatever item is
         // equipped (pushed via SetFireKickProfile), impulse from AddFireKick per shot.
@@ -528,10 +598,39 @@ public class PlayerLook : MonoBehaviour
             // right cock the same way instead of cancelling.
             Quaternion peekTiltRotation = Quaternion.AngleAxis(-_currentPeek * peekTilt, Vector3.forward);
 
+            // The fire kick is split between here and the camera below, along the
+            // line of what a shot actually does to a braced weapon.
+            //
+            // Pitch and yaw belong here, on the pivot, so the weapon rides them: the
+            // muzzle climbing and wandering off target is the recoil, and a weapon
+            // that stayed put through it would be a weapon with none.
+            //
+            // Its roll does not, and the jump and landing shake does not at all --
+            // both are below. What is left here is the look, the breath, the bob and
+            // the recoil the weapon should share.
             cameraPivot.localRotation = peekTiltRotation * Quaternion.Euler(
-                Pitch + _currentBreathRotation.x + _currentBobRotation.x + _shakeOffset + _fireKickOffset,
+                Pitch + _currentBreathRotation.x + _currentBobRotation.x + _fireKickOffset,
                 _climbCameraYaw + _currentBreathRotation.y + _currentBobRotation.y + _fireKickYawOffset,
-                _currentTilt + _currentBreathRotation.z + _currentBobRotation.z + _rollShakeOffset);
+                _currentTilt + _currentBreathRotation.z + _currentBobRotation.z);
+        }
+
+        if (cinemachineCamera != null)
+        {
+            // Everything the weapon should have no part in, on the rendered camera --
+            // the one thing under the pivot the items are not parented to. A shot's
+            // roll, because it rocks the head rather than spinning the weapon about
+            // its own barrel; and the whole jump and landing shake, because leaving
+            // the ground and hitting it again happen to the head while the hands go
+            // on holding what they were holding.
+            //
+            // Rebuilt from the rotation the camera was placed at rather than nudged
+            // from where it was left, so a shake that never quite settles can't walk
+            // the camera off over a magazine's worth of shots.
+            cinemachineCamera.transform.localPosition = _cameraBaseLocalPosition + _shoulderingPositionOffset;
+
+            cinemachineCamera.transform.localRotation = _cameraBaseLocalRotation
+                * Quaternion.Euler(_shakeOffset, 0f, _rollShakeOffset + _shakeRollOffset)
+                * Quaternion.Euler(_shoulderingRotationOffset);
         }
 
         if (cinemachineCamera != null)

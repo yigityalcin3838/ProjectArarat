@@ -16,6 +16,12 @@ public class PlayerItems : MonoBehaviour
     [Header("Movement Link")]
     [SerializeField] private PlayerMovement movement;
 
+    // Told when a swap is asked for, so the view registers the command. Only the
+    // camera's half: the weapon is about to be put away and another brought up by
+    // their own clips, and a spring on the hands as well would be arguing with them
+    // about where the item is.
+    [SerializeField] private HandMotion handMotion;
+
     [Header("Item Slots (1, 2, 3)")]
     [SerializeField] private GameObject[] itemSlots = new GameObject[3];
 
@@ -24,9 +30,15 @@ public class PlayerItems : MonoBehaviour
     // Both hands count as busy until the last frame of putting something away,
     // not just until the slot is cleared -- a ladder rung reached for with a
     // pistol still visibly in hand is the thing this exists to prevent.
-    public bool AreHandsBusy => HasEquippedItem || IsStowingItem;
+    public bool AreHandsBusy => HasEquippedItem || IsAnyItemChangingHands;
 
-    private bool IsStowingItem
+    // A swap in progress: either an animation is running or one is queued behind
+    // the one that is. What anything wanting to interrupt should ask about --
+    // pressing a slot key or reaching for a ladder mid-draw would leave the take
+    // half-played and the hands somewhere between two items.
+    public bool IsChangingItem => _hasPendingSlot || IsAnyItemChangingHands;
+
+    private bool IsAnyItemChangingHands
     {
         get
         {
@@ -36,7 +48,7 @@ public class PlayerItems : MonoBehaviour
                     continue;
 
                 Item item = slot.GetComponent<Item>();
-                if (item != null && item.IsStowing)
+                if (item != null && item.IsChangingHands)
                     return true;
             }
 
@@ -45,15 +57,20 @@ public class PlayerItems : MonoBehaviour
     }
 
     // For anything that needs the hands free before it can start. Safe to call
-    // with nothing equipped.
+    // with nothing equipped. Drops a queued draw as well: whatever wants the hands
+    // free wants them to stay that way, not to fill again the moment they are.
     public void StowEquippedItem()
     {
+        _hasPendingSlot = false;
+
         if (_equippedSlot >= 0)
             SetEquippedSlot(-1);
     }
 
     private readonly InputAction[] _selectItemActions = new InputAction[3];
     private int _equippedSlot = -1;
+    private int _pendingSlot = -1;
+    private bool _hasPendingSlot;
 
     private void Awake()
     {
@@ -84,10 +101,18 @@ public class PlayerItems : MonoBehaviour
         {
             // Entering a ladder or car takes both hands -- holster whatever's
             // equipped instead of leaving it stuck in the player's hand.
-            if (_equippedSlot >= 0)
-                SetEquippedSlot(-1);
+            StowEquippedItem();
             return;
         }
+
+        UpdatePendingSlot();
+
+        // Nothing new while the hands are mid-swap. A second key press here would
+        // start a take over a holster that hasn't finished, and the two animations
+        // would play across each other with the item ending up wherever the last
+        // one left it.
+        if (IsChangingItem)
+            return;
 
         for (int i = 0; i < _selectItemActions.Length; i++)
         {
@@ -99,9 +124,55 @@ public class PlayerItems : MonoBehaviour
                 continue;
 
             // Pressing the already-equipped slot's key again holsters it instead.
-            SetEquippedSlot(i == _equippedSlot ? -1 : i);
+            RequestSlot(i == _equippedSlot ? -1 : i);
             break;
         }
+    }
+
+    // A swap is two animations in sequence, not one exchange. Whatever is in hand
+    // goes away first and the new item waits its turn -- both at once is a hand
+    // holding two things and neither animation finishing on the item it belongs to.
+    private void RequestSlot(int slot)
+    {
+        if (slot == _equippedSlot)
+            return;
+
+        // On the command, not on either animation reaching anywhere. What this marks
+        // is the decision -- a stow and a draw both follow, each with its own clip,
+        // and the view acknowledging the moment the key went down is what keeps the
+        // whole sequence from starting silently.
+        handMotion?.TriggerCameraShouldering();
+
+        if (_equippedSlot >= 0)
+        {
+            SetEquippedSlot(-1);
+
+            // Only queued when there is something to draw. Holstering on its own is
+            // the whole request, not the first half of one.
+            _pendingSlot = slot;
+            _hasPendingSlot = slot >= 0;
+            return;
+        }
+
+        SetEquippedSlot(slot);
+    }
+
+    // Deliberately only from Update, never LateUpdate. Equipping after the animation
+    // update for the frame means the new item is placed in the hand and its draw
+    // trigger set, but nothing evaluates either until the next frame -- so it
+    // renders once in whatever pose the weapon animator was left in, fully raised,
+    // before the draw has started. A frame of the weapon simply appearing.
+    //
+    // The frame this costs at the other end -- the outgoing item already on the hip
+    // and the new one not yet up -- is covered instead by the item pose and the hand
+    // IK both being held across the swap, so there is nothing to see in it.
+    private void UpdatePendingSlot()
+    {
+        if (!_hasPendingSlot || IsAnyItemChangingHands)
+            return;
+
+        _hasPendingSlot = false;
+        SetEquippedSlot(_pendingSlot);
     }
 
     private void SetEquippedSlot(int slot)
