@@ -336,7 +336,11 @@ public class PlayerMovement : MonoBehaviour
         door = null;
         Vector3 origin = transform.position + Vector3.up * (_characterController.height * 0.5f);
 
-        if (Physics.Raycast(origin, transform.forward, out RaycastHit hit, doorInteractDistance) && hit.collider.CompareTag(doorTag))
+        // Masked, because this takes the nearest hit and then checks its tag -- so
+        // anything in the way is not ignored, it fails the tag check and the door
+        // stops being usable. A severed arm lying against it would be enough.
+        if (Physics.Raycast(origin, transform.forward, out RaycastHit hit, doorInteractDistance, GameLayers.Queryable)
+            && hit.collider.CompareTag(doorTag))
             door = hit.collider.GetComponentInParent<Door>();
 
         return door != null;
@@ -347,7 +351,9 @@ public class PlayerMovement : MonoBehaviour
         car = null;
         Vector3 origin = transform.position + Vector3.up * (_characterController.height * 0.5f);
 
-        if (Physics.Raycast(origin, transform.forward, out RaycastHit hit, carInteractDistance) && hit.collider.CompareTag(carDoorTag))
+        // Masked for the same reason as the door: nearest hit, then a tag check.
+        if (Physics.Raycast(origin, transform.forward, out RaycastHit hit, carInteractDistance, GameLayers.Queryable)
+            && hit.collider.CompareTag(carDoorTag))
             car = hit.collider.GetComponentInParent<Car>();
 
         return car != null;
@@ -820,7 +826,7 @@ public class PlayerMovement : MonoBehaviour
         // Triggers ignored: an interaction zone overhead isn't something you
         // can bump your head on, and letting one block standing up would trap
         // the player crouched for no visible reason.
-        return !Physics.SphereCast(origin, radius, Vector3.up, out _, castDistance, ~0, QueryTriggerInteraction.Ignore);
+        return !Physics.SphereCast(origin, radius, Vector3.up, out _, castDistance, GameLayers.Queryable, QueryTriggerInteraction.Ignore);
     }
 
     private void CheckGrounded()
@@ -831,7 +837,12 @@ public class PlayerMovement : MonoBehaviour
         // Triggers ignored: walking over a door zone or a fog volume would
         // otherwise register as standing on it, and its surface normal would
         // be fed to the slope check as if it were real ground.
-        bool hitGround = Physics.SphereCast(origin, radius, Vector3.down, out RaycastHit hit, groundCheckDistance + 0.05f, ~0, QueryTriggerInteraction.Ignore);
+        //
+        // Debris is excluded by the mask for a sharper version of the same problem.
+        // The player passes through it, but the cast would still find it and report
+        // ground appearing and vanishing underfoot -- which is landing, over and
+        // over, shake and all.
+        bool hitGround = Physics.SphereCast(origin, radius, Vector3.down, out RaycastHit hit, groundCheckDistance + 0.05f, GameLayers.Queryable, QueryTriggerInteraction.Ignore);
         IsGrounded = hitGround && Vector3.Angle(hit.normal, Vector3.up) <= maxSlopeAngle;
         _groundNormal = hitGround ? hit.normal : Vector3.up;
 

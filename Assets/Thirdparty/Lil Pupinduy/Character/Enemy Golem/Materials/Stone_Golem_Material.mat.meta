@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: b6df5dd64638cc44b976d77b64498194
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 211406
+  packageName: Enemy Golem
+  packageVersion: 1.0.0
+  assetPath: Assets/Lil Pupinduy/Character/Enemy Golem/Materials/Stone_Golem_Material.mat
+  uploadId: 858478

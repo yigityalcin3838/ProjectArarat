@@ -91,6 +91,12 @@ public class Weapon : Item
     // crosshair points, which is right for a rifle and useless for a shotgun.
     [SerializeField] private float spreadAngle = 0f;
 
+    // How hard a hit shoves the part it lands on. Per weapon rather than global,
+    // since the whole point is that a slug moves a shoulder and a light round does
+    // not -- and per pellet, so a shotgun's push is the sum of what actually
+    // connected rather than a flat figure for the trigger pull.
+    [SerializeField] private float impactForce = 800f;
+
     [Header("Hit Detection")]
     [SerializeField] private float maxRange = 100f;
 
@@ -720,16 +726,28 @@ public class Weapon : Item
         {
             Vector3 direction = ApplySpread(aimRay.direction);
 
-            // No layer mask -- hits anything solid. Triggers are skipped
-            // explicitly: Unity's Queries Hit Triggers project setting defaults to
-            // on, so without this a bullet stops dead on an invisible door
-            // interaction zone or fog volume instead of the wall behind it.
-            // Passed per-call rather than switching the project setting, because
-            // the interaction raycasts below DO want to find triggers.
-            if (Physics.Raycast(aimRay.origin, direction, out RaycastHit hit, maxRange, ~0, QueryTriggerInteraction.Ignore))
+            // Not ~0. Two things have to be skipped, and GameLayers is where the
+            // project agrees on them: a character's movement capsule, which wraps the
+            // whole body and would otherwise sit in front of every per-bone hitbox
+            // and close the gaps between limbs; and debris, which a round should pass
+            // straight through. A raycast returns only its nearest hit, so either one
+            // wins over the thing actually aimed at.
+            //
+            // Triggers are skipped as well: Unity's Queries Hit Triggers project
+            // setting defaults to on, so without this a bullet stops dead on an
+            // invisible door interaction zone or fog volume instead of the wall
+            // behind it. Passed per-call rather than switching the project setting,
+            // because the interaction raycasts elsewhere DO want to find triggers.
+            if (Physics.Raycast(aimRay.origin, direction, out RaycastHit hit, maxRange,
+                    GameLayers.Queryable, QueryTriggerInteraction.Ignore))
             {
                 SpawnImpactEffect(hit);
                 SpawnHitMarker(hit);
+
+                // Per pellet, not per shot. A shotgun that puts twelve pellets into
+                // one shoulder should shove it harder than a pistol round does, and
+                // the hitbox's own ceiling is what stops that becoming absurd.
+                hit.collider.GetComponent<EnemyHitbox>()?.ApplyImpact(direction, impactForce);
             }
         }
     }

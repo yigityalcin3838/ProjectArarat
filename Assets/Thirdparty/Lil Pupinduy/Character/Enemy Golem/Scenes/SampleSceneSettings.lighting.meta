@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 93cc0f21454c3824f851e17e12490b39
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 4890085278179872738
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 211406
+  packageName: Enemy Golem
+  packageVersion: 1.0.0
+  assetPath: Assets/Lil Pupinduy/Character/Enemy Golem/Scenes/SampleSceneSettings.lighting
+  uploadId: 858478
