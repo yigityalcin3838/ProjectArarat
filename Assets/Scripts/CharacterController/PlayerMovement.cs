@@ -93,8 +93,31 @@ public class PlayerMovement : MonoBehaviour
 
     public float WalkSpeed => walkSpeed;
     public float SprintSpeed => sprintSpeed;
-    public bool IsSprinting => IsGrounded && !IsCrouching && !IsInCar && !_sprintBlocked && _sprintAction.IsPressed() && _moveInput.sqrMagnitude > 0.01f && HasStamina;
-    public bool IsSprintingStable => IsGroundedStable && !IsCrouching && !IsInCar && !_sprintBlocked && _sprintAction.IsPressed() && _moveInput.sqrMagnitude > 0.01f && HasStamina;
+    // Everything a sprint needs except the ground check, which is the one thing the
+    // two versions below disagree about. Factored because they were the same long
+    // expression written twice, and a condition added to one and missed on the other
+    // would have the view and the hands believe different things about the same
+    // frame.
+    private bool CanSprint =>
+        !IsCrouching
+        && !IsInCar
+        && !_sprintBlocked
+        && _sprintAction.IsPressed()
+        && HasStamina
+        && _moveInput.sqrMagnitude > 0.01f
+        // No running backwards. Nobody sprints in reverse, and the animation has no
+        // idea how to: the locomotion set has one run, played forwards, so a backward
+        // sprint is a character sliding backwards at speed with its legs driving the
+        // wrong way.
+        //
+        // Zero passes, so a pure sidestep still sprints. Only a backward component
+        // stops it -- which is the rule as stated, and tightening it to demand actual
+        // forward intent is one character change away if strafing at speed reads
+        // wrong too.
+        && _moveInput.y >= 0f;
+
+    public bool IsSprinting => IsGrounded && CanSprint;
+    public bool IsSprintingStable => IsGroundedStable && CanSprint;
     public bool IsClimbingLadder => _ladderPhase != LadderPhase.None;
 
     // True whenever something other than the player is driving the character:

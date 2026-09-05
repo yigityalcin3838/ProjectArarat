@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using Knife.Effects;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -147,6 +147,45 @@ public class Weapon : Item
     [Header("Weapon Pose")]
     [SerializeField] private float fireHipHoldDuration = 0.2f;
     [SerializeField] private Transform posDeltaPivot;
+
+    [Header("Wall Avoidance")]
+    // The far end of the weapon -- the muzzle will do. Everything here is measured
+    // against how far in front of the eye this sits, so it does not need to be exact,
+    // only to be at the end that hits things first.
+    //
+    // Empty switches the whole thing off.
+    [SerializeField] private Transform muzzlePoint;
+
+    // Where the weapon ends up when there is no room for it, in the same terms as
+    // hipPosition and aimPosition -- and, like those, found per weapon rather than
+    // shared.
+    //
+    // Per weapon by necessity, not just by preference. posDeltaPivot's local axes are
+    // whatever the model's own build and parenting made them, so the same three
+    // numbers mean different things on a pistol and a rifle, and on some of them two
+    // axes will both read as roll. There is no set of angles that is right for every
+    // weapon, which is why these live on the weapon.
+    //
+    // Found by rotating the pivot in the scene until the carry looks right and
+    // reading the numbers back off it, rather than by reasoning about the axes.
+    [SerializeField] private Vector3 wallBlockPosition = new Vector3(0f, -0.05f, -0.25f);
+    [SerializeField] private Vector3 wallBlockRotation = new Vector3(-10f, -20f, 12f);
+
+    // How far the weapon has to be intruded on before it is fully in that pose.
+    // Below this it is somewhere between the two, in proportion -- which is what
+    // makes walking slowly at a wall ease the weapon in rather than snap it.
+    [SerializeField] private float wallBlockDepth = 0.35f;
+
+    // Cast as a sphere rather than a line so a doorframe caught at the edge of the
+    // barrel still counts. A line finds nothing until the very centre of the muzzle
+    // is buried, which is exactly one frame too late.
+    [SerializeField] private float wallCheckRadius = 0.08f;
+
+    // Fast in and slower out is deliberate -- arriving at a wall is a collision and
+    // should be immediate, leaving one is a decision and can afford to relax. One
+    // speed for both has the weapon either lag into the wall or snap out of it.
+    [SerializeField] private float wallPullbackInSpeed = 20f;
+    [SerializeField] private float wallPullbackOutSpeed = 8f;
     [SerializeField] private Vector3 hipPosition;
     [SerializeField] private Vector3 hipRotation;
     [SerializeField] private Vector3 walkPosition;
@@ -180,13 +219,14 @@ public class Weapon : Item
     private Quaternion _currentAdsRotation;
     private float _fireHipTimer;
     private float _reloadTimer;
-    private float _moveTimer;
     private float _weaponRollShakeOffset;
     private float _weaponRollShakeVelocity;
     private float _drawTimer;
     private bool _wasInWalkPose;
+    private bool _isInWalkPose;
     private bool _isFeedingShells;
     private bool _feedInterrupted;
+    private float _wallBlockAmount;
 
     public override bool IsDrawing => _drawTimer > 0f;
 
@@ -244,11 +284,19 @@ public class Weapon : Item
         _attackAction?.Enable();
         _reloadAction?.Enable();
 
+        // Straight into whichever carry the character is already in, because that is
+        // a fact about the character and not about this weapon. HandMotion has been
+        // counting the walk the whole time, including while another item was held,
+        // so a weapon drawn mid-stride arrives in the walking carry rather than
+        // climbing to it over a delay the outgoing weapon already served.
+        _isInWalkPose = IsCharacterInWalkPose;
+        _wasInWalkPose = _isInWalkPose;
+
         if (posDeltaPivot != null)
         {
-            _currentAdsPosition = hipPosition;
-            _currentAdsRotation = Quaternion.Euler(hipRotation);
-            posDeltaPivot.localPosition = hipPosition;
+            _currentAdsPosition = _isInWalkPose ? walkPosition : hipPosition;
+            _currentAdsRotation = Quaternion.Euler(_isInWalkPose ? walkRotation : hipRotation);
+            posDeltaPivot.localPosition = _currentAdsPosition;
             posDeltaPivot.localRotation = _currentAdsRotation;
         }
     }
@@ -261,6 +309,11 @@ public class Weapon : Item
         playerLook?.ClearFovOverride();
         postProcessEffects?.SetAiming(false);
         postProcessEffects?.SetReloading(false);
+
+        // The lens has no idea a weapon was put away, so a walk pose left set would
+        // outlive the weapon holding it and follow the player around with empty
+        // hands.
+        postProcessEffects?.SetInWalkPose(false);
         movement?.SetSprintBlocked(false);
         movement?.SetAimSpeedOverride(false);
 
@@ -477,32 +530,54 @@ public class Weapon : Item
             bool isMoving = movement != null && movement.MoveInput.sqrMagnitude > 0.01f;
             bool isRunning = movement != null && movement.IsSprintingStable;
 
-            // Only counts up while walk is actually the pose that would apply --
-            // aiming, firing, reloading or breaking into a run all take priority
-            // over walk, so any of those resets the timer too, not just stopping.
-            // That way walk pose always has to wait out the delay again after
-            // being interrupted by anything, not just resume instantly once clear.
-            bool wantsWalkPose = isMoving && !isAiming && !isFiring && !isRunning && !isReloading;
-            if (wantsWalkPose)
-                _moveTimer += Time.deltaTime;
-            else
-                _moveTimer = 0f;
+            // Entering the walking carry takes movement; staying in it does not.
+            //
+            // That asymmetry is the whole of it. Walking is what lowers the weapon,
+            // but once it is down, standing still is not a reason to bring it back
+            // up -- somebody who stops walking does not present their weapon, they
+            // just stop walking. Tying the pose to movement frame by frame meant
+            // every pause raised it and every step lowered it again, so the muzzle
+            // rose and fell over and over on the way down a corridor.
+            //
+            // What does raise it is something that needs the weapon somewhere else:
+            // a shot, a sprint, the sights, a reload. Those clear the pose outright
+            // and reset the delay with it, so it has to be walked into again
+            // afterwards rather than snapping back the instant they end.
+            bool walkPoseBlocked = isAiming || isFiring || isRunning || isReloading;
 
-            bool isMovingPastDelay = wantsWalkPose && _moveTimer >= walkPoseDelay;
+            if (walkPoseBlocked)
+            {
+                // Cleared on the character, not just here, so putting this weapon
+                // away and drawing another does not hand the replacement a carry
+                // this one had just been denied.
+                handMotion?.InterruptWalkPose();
+                _isInWalkPose = false;
+            }
+            else
+            {
+                _isInWalkPose = IsCharacterInWalkPose;
+            }
 
             // Leaving the walking carry only, never settling into it. The two are
             // not the same event despite being the same transition: the weapon
             // eases into the walk pose over walkTransitionSpeed, slowly enough that
             // there is no moment for a jolt to belong to, and comes out of it the
-            // instant anything else takes priority -- a stop, a shot, a sprint, the
-            // sights going up -- at the far quicker rate those poses use.
-            if (isMovingPastDelay != _wasInWalkPose)
+            // instant something takes priority -- a shot, a sprint, the sights going
+            // up -- at the far quicker rate those poses use.
+            if (_isInWalkPose != _wasInWalkPose)
             {
-                _wasInWalkPose = isMovingPastDelay;
+                _wasInWalkPose = _isInWalkPose;
 
-                if (!isMovingPastDelay)
+                if (!_isInWalkPose)
                     handMotion?.TriggerShouldering();
             }
+
+            // Every frame, like aiming and reloading, rather than only on the change.
+            // A swap has the outgoing weapon clear this in OnDisable and the incoming
+            // one set it on its first update, and pushing only on edges would leave a
+            // weapon drawn already in the walking carry never announcing it -- its
+            // state never changed, it just started true.
+            postProcessEffects?.SetInWalkPose(_isInWalkPose);
 
             if (isReloading)
             {
@@ -528,7 +603,7 @@ public class Weapon : Item
                 targetRotationEuler = runRotation;
                 transitionSpeed = runTransitionSpeed;
             }
-            else if (isMovingPastDelay)
+            else if (_isInWalkPose)
             {
                 targetPosition = walkPosition;
                 targetRotationEuler = walkRotation;
@@ -544,15 +619,36 @@ public class Weapon : Item
             _currentAdsPosition = Vector3.Lerp(_currentAdsPosition, targetPosition, transitionSpeed * Time.deltaTime);
             _currentAdsRotation = Quaternion.Slerp(_currentAdsRotation, Quaternion.Euler(targetRotationEuler), transitionSpeed * Time.deltaTime);
 
-            posDeltaPivot.localPosition = _currentAdsPosition;
+            UpdateWallBlock();
+
+            // Blended toward the block pose rather than offset from wherever the
+            // weapon happened to be. An offset added to the hip pose and the same
+            // offset added to the aim pose land in two different places, and only one
+            // of them can be the one that was authored; a blend arrives at the pose
+            // itself from either end.
+            posDeltaPivot.localPosition =
+                Vector3.Lerp(_currentAdsPosition, wallBlockPosition, _wallBlockAmount);
 
             // Composed on top of the pose rather than lerped into it, so the shake
             // settles on its own spring while the pose goes on easing between hip
             // and aim underneath. Blended into the target instead, the two would be
             // arguing over one value and the recoil would be dragged toward
             // whichever pose was winning.
-            posDeltaPivot.localRotation = _currentAdsRotation
-                * Quaternion.Euler(0f, 0f, _weaponRollShakeOffset);
+            // Both cants land on the same axis and about the same point: the weapon's
+            // own pivot. The shot's roll is the weapon twisting in the hands; the
+            // look tilt is the weapon leaning into a turn. HandMotion works the
+            // second one out but deliberately does not apply it -- rolling the hold
+            // point would swing the whole weapon around the grip in an arc, where
+            // rolling here turns it along its own length, which is what a lean is.
+            //
+            // The block pose is blended into the base rotation the same way the
+            // position is, and the shake and cant compose on top of the result --
+            // so a weapon shot while pressed against a wall still recoils, from
+            // wherever the wall has put it.
+            posDeltaPivot.localRotation =
+                Quaternion.Slerp(_currentAdsRotation, Quaternion.Euler(wallBlockRotation), _wallBlockAmount)
+                * Quaternion.Euler(0f, 0f,
+                    _weaponRollShakeOffset + (handMotion != null ? handMotion.LookTilt : 0f));
         }
     }
 
@@ -612,6 +708,58 @@ public class Weapon : Item
     // The distinction is the whole of what makes those reloads feel like themselves,
     // and it is worth exactly this one property.
     private bool FeedsSingleShells => fireMode == FireMode.ShotgunBoltAction;
+
+    // Pulls the weapon in when there is not enough room in front of the player to
+    // hold it out.
+    //
+    // Measured as the difference between the room the weapon WANTS -- the distance
+    // from the eye to its muzzle -- and the room there IS. The wanted length is read
+    // from the muzzle every frame rather than stored, so it already accounts for the
+    // weapon being further out at the hip than down the sights, and for whatever the
+    // pose is doing in between.
+    //
+    // Cast from the camera rather than from the weapon: the weapon is the thing being
+    // moved, so casting from it would move the measurement along with the result and
+    // the two would chase each other into an oscillation.
+    // Whether the character has been walking long enough to be in the walking carry,
+    // regardless of which item is doing the carrying.
+    //
+    // The delay stays here rather than on HandMotion because it is a property of the
+    // weapon -- a pistol and a rifle can reasonably settle at different rates -- while
+    // the walk it is measured against belongs to the character.
+    //
+    // No HandMotion means no walk pose at all, which is deliberate: the alternative
+    // is a per-weapon timer that reintroduces exactly the reset-on-swap this exists
+    // to remove.
+    private bool IsCharacterInWalkPose =>
+        handMotion != null && handMotion.WalkTime >= walkPoseDelay;
+
+    private void UpdateWallBlock()
+    {
+        float target = 0f;
+
+        if (muzzlePoint != null && wallBlockDepth > 0f
+            && playerLook != null && playerLook.CameraTransform != null)
+        {
+            Transform eye = playerLook.CameraTransform;
+            float wanted = Vector3.Distance(eye.position, muzzlePoint.position);
+
+            if (Physics.SphereCast(eye.position, wallCheckRadius, eye.forward, out RaycastHit hit,
+                    wanted, GameLayers.Queryable, QueryTriggerInteraction.Ignore))
+            {
+                // How far the wall has come inside the weapon, as a fraction of how
+                // far it takes to be fully put away.
+                target = Mathf.Clamp01((wanted - hit.distance) / wallBlockDepth);
+            }
+        }
+
+        // Asymmetric: a wall arrives, it is not approached. Getting out of the way has
+        // to keep up with a player walking into it, while coming back out is the
+        // weapon being presented again and should take its time.
+        float speed = target > _wallBlockAmount ? wallPullbackInSpeed : wallPullbackOutSpeed;
+
+        _wallBlockAmount = Mathf.Lerp(_wallBlockAmount, target, speed * Time.deltaTime);
+    }
 
     // For an animation event, and the only other way a case comes out. Reached
     // through WeaponAnimationEvents rather than directly -- see that class for why

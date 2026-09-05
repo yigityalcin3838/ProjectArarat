@@ -8749,7 +8749,7 @@ Transform:
   m_GameObject: {fileID: 169215701}
   serializedVersion: 2
   m_LocalRotation: {x: 0.0043632723, y: -0.00087259285, z: 0.000003807398, w: 0.9999901}
-  m_LocalPosition: {x: 0.003799999, y: 0.018600032, z: 0.713}
+  m_LocalPosition: {x: 0.003799999, y: 0.018600032, z: 0.8081}
   m_LocalScale: {x: 0.8250151, y: 0.8250332, z: 1.1785519}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -36775,7 +36775,7 @@ MonoBehaviour:
   jumpForce: 5
   acceleration: 15
   walkBackSpeed: 1.5
-  sprintBackSpeed: 3
+  sprintBackSpeed: 2.25
   groundCheckDistance: 0.15
   maxSlopeAngle: 45
   airborneGraceTime: 1
@@ -36893,9 +36893,9 @@ MonoBehaviour:
   crouchEyeDrop: 0.15
   peekDistance: 0.15
   peekTilt: 12
-  peekSpeed: 3
+  peekSpeed: 4
   movement: {fileID: 768611296}
-  tiltAmount: 1
+  tiltAmount: 2
   tiltSpeed: 7
   renderCamera: {fileID: 1141664082}
   cinemachineCamera: {fileID: 1325837977}
@@ -36916,10 +36916,24 @@ MonoBehaviour:
   breathSmoothing: 4
   playerAnimator: {fileID: 360032582}
   bobPhaseOffset: 0
+  bobCycleSkew: 0
   bobFallbackFrequency: 6
   bobPitchAmount: 0.5
   bobYawAmount: 0.5
-  bobRollAmount: 0.5
+  bobRollAmount: 1
+  bobIntensity:
+    crouch: 0.35
+    walk: 1
+    sprint: 2
+    aim: 0.2
+  lookTiltAmount: 4
+  lookTiltReferenceRate: 200
+  lookTiltIntensity:
+    crouch: 1
+    walk: 1
+    sprint: 2
+    aim: 2
+  lookTiltSmoothing: 4
   maxBobSpeedRatio: 2
   bobSmoothing: 8
   jumpShakeAmount: -45
@@ -36962,6 +36976,14 @@ MonoBehaviour:
   stamina: {fileID: 768611303}
   movement: {fileID: 768611296}
   volume: {fileID: 1898055909}
+  playerLook: {fileID: 768611302}
+  autofocus: 1
+  autofocusRange: 3
+  autofocusMinDistance: 0.1
+  autofocusFocalLength: 50
+  autofocusAperture: 3
+  autofocusInSpeed: 8
+  autofocusOutSpeed: 0.35
   lowStaminaThresholdRatio: 0.25
   lowStaminaVignetteIntensity: 0.1
   lowStaminaVignetteSmoothness: 0.1
@@ -36978,6 +37000,10 @@ MonoBehaviour:
   reloadDofAperture: 2.5
   reloadDofFocalLength: 15
   reloadDofSmoothSpeed: 17
+  walkDofFocusDistance: 10
+  walkDofAperture: 3
+  walkDofFocalLength: 30
+  walkDofSmoothSpeed: 5000
   effectSmoothSpeed: 4
 --- !u!143 &768611305
 CharacterController:
@@ -43514,14 +43540,21 @@ MonoBehaviour:
   weaponRollShakeDamping: 12
   fireHipHoldDuration: 0.2
   posDeltaPivot: {fileID: 901984127}
+  muzzlePoint: {fileID: 670684129}
+  wallBlockPosition: {x: 0.1, y: 0.125, z: 0}
+  wallBlockRotation: {x: -90, y: 0, z: 0}
+  wallBlockDepth: 0.35
+  wallCheckRadius: 0.005
+  wallPullbackInSpeed: 5
+  wallPullbackOutSpeed: 10
   hipPosition: {x: 0.1, y: 0.125, z: 0.525}
   hipRotation: {x: -3, y: -3, z: 6}
-  walkPosition: {x: 0.065, y: 0.075, z: 0.5}
-  walkRotation: {x: 15, y: -15, z: 24}
-  walkTransitionSpeed: 0.75
+  walkPosition: {x: 0.1215, y: 0.17, z: 0.45}
+  walkRotation: {x: -45, y: -20, z: 20}
+  walkTransitionSpeed: 2
   walkPoseDelay: 3
-  runPosition: {x: 0.075, y: 0.13, z: 0.5}
-  runRotation: {x: -45, y: 0, z: 0}
+  runPosition: {x: 0.1215, y: 0.17, z: 0.45}
+  runRotation: {x: -45, y: -20, z: 20}
   runTransitionSpeed: 2
   aimPosition: {x: 0.1, y: 0.15, z: 0.5}
   aimRotation: {x: 0, y: 0, z: 12}
@@ -58791,7 +58824,7 @@ Transform:
   m_GameObject: {fileID: 1231909080}
   serializedVersion: 2
   m_LocalRotation: {x: 0.17237954, y: 0.10227137, z: -0.6279902, w: 0.75196695}
-  m_LocalPosition: {x: -0.413, y: -0.319, z: -0.078}
+  m_LocalPosition: {x: -0.638, y: -0.319, z: -0.078}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -79079,14 +79112,21 @@ MonoBehaviour:
   weaponRollShakeDamping: 12
   fireHipHoldDuration: 0.2
   posDeltaPivot: {fileID: 1678308406}
+  muzzlePoint: {fileID: 1015725934}
+  wallBlockPosition: {x: 0.11, y: 0.1, z: 0.3}
+  wallBlockRotation: {x: -90, y: 0, z: 0}
+  wallBlockDepth: 0.35
+  wallCheckRadius: 0.005
+  wallPullbackInSpeed: 5
+  wallPullbackOutSpeed: 10
   hipPosition: {x: 0.11, y: 0.145, z: 0.52}
   hipRotation: {x: -2, y: -2, z: 6}
-  walkPosition: {x: 0.065, y: 0.075, z: 0.5}
-  walkRotation: {x: 15, y: -15, z: 24}
-  walkTransitionSpeed: 0.75
+  walkPosition: {x: 0, y: 0.1, z: 0.45}
+  walkRotation: {x: 15, y: -25, z: 15}
+  walkTransitionSpeed: 1
   walkPoseDelay: 3
-  runPosition: {x: -0.1, y: 0.05, z: 0.5}
-  runRotation: {x: 15, y: -45, z: 0}
+  runPosition: {x: 0, y: 0.1, z: 0.45}
+  runRotation: {x: 15, y: -25, z: 15}
   runTransitionSpeed: 2
   aimPosition: {x: 0.09, y: 0.155, z: 0.515}
   aimRotation: {x: -1, y: -1, z: 10}
@@ -82561,7 +82601,7 @@ Transform:
   m_GameObject: {fileID: 1751319034}
   serializedVersion: 2
   m_LocalRotation: {x: 0.17237954, y: 0.10227137, z: -0.6279902, w: 0.75196695}
-  m_LocalPosition: {x: 0.107, y: -0.26, z: -0.095}
+  m_LocalPosition: {x: 0.211, y: -0.431, z: -0.095}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -89438,7 +89478,7 @@ MonoBehaviour:
   hitMarkerDuration: 4
   movement: {fileID: 768611296}
   handMotion: {fileID: 1915127693}
-  cameraKickAmount: 180
+  cameraKickAmount: 360
   cameraKickHorizontalAmount: 60
   cameraKickSpring: 50
   cameraKickDamping: 20
@@ -89450,11 +89490,18 @@ MonoBehaviour:
   weaponRollShakeDamping: 12
   fireHipHoldDuration: 0.2
   posDeltaPivot: {fileID: 1909062649}
+  muzzlePoint: {fileID: 169215702}
+  wallBlockPosition: {x: 0.11, y: 0.15, z: 0.3}
+  wallBlockRotation: {x: -90, y: 0, z: 0}
+  wallBlockDepth: 0.35
+  wallCheckRadius: 0.005
+  wallPullbackInSpeed: 5
+  wallPullbackOutSpeed: 10
   hipPosition: {x: 0.11, y: 0.15, z: 0.485}
   hipRotation: {x: -2, y: -2, z: 6}
-  walkPosition: {x: 0.065, y: 0.075, z: 0.5}
-  walkRotation: {x: 15, y: -15, z: 24}
-  walkTransitionSpeed: 0.75
+  walkPosition: {x: 0, y: 0.1, z: 0.4}
+  walkRotation: {x: -15, y: -45, z: 21.26}
+  walkTransitionSpeed: 1
   walkPoseDelay: 3
   runPosition: {x: -0.1, y: 0.05, z: 0.5}
   runRotation: {x: -15, y: -45, z: 0}
@@ -89678,6 +89725,9 @@ MonoBehaviour:
   breathPitchAmount: 0.5
   breathRollAmount: 1
   breathSmoothing: 4
+  bobStepAsymmetry: 0.12
+  bobWander: 0.18
+  bobWanderRate: 0.4
   swayHorizontalAmount: 0.025
   swayVerticalAmount: 0
   swayForwardAmount: 0.025
@@ -89695,20 +89745,20 @@ MonoBehaviour:
   tiltIntensity:
     crouch: 0.5
     walk: 1
-    sprint: 3
+    sprint: 2
     aim: 0
   tiltSmoothing:
     crouch: 2
     walk: 2
     sprint: 2
     aim: 2
-  lookSwayHorizontalAmount: 0.05
-  lookSwayVerticalAmount: -0.05
+  lookSwayYawAmount: 15
+  lookSwayPitchAmount: 15
   lookSwayReferenceRate: 300
   lookSwayIntensity:
     crouch: 0.5
     walk: 1
-    sprint: 4
+    sprint: 2
     aim: 1
   lookSwaySmoothing:
     crouch: 4
@@ -89731,8 +89781,8 @@ MonoBehaviour:
   cameraShoulderingRotation: {x: 0, y: 0, z: 45}
   cameraShoulderingSpring: 120
   cameraShoulderingDamping: 12
-  peekRotation: {x: 0, y: 0, z: 8}
-  lookTiltAmount: 12
+  peekRotation: {x: 0, y: 0, z: -7}
+  lookTiltAmount: 45
   lookTiltReferenceRate: 300
   lookTiltIntensity:
     crouch: 1

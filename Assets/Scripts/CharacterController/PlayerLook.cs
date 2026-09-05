@@ -1,9 +1,33 @@
-using Unity.Cinemachine;
+﻿using Unity.Cinemachine;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
 public class PlayerLook : MonoBehaviour
 {
+    // One figure per stance. Deliberately the same shape as HandMotion's, because
+    // the view and the hands answer the same four situations and describing them
+    // differently in the two places would make a matched pair impossible to tune.
+    //
+    // Not shared as a type: it is a handful of floats, and the coupling a shared
+    // definition would create between the camera and the item rig costs more than
+    // the duplication saves.
+    [System.Serializable]
+    private struct StanceValues
+    {
+        public float crouch;
+        public float walk;
+        public float sprint;
+        public float aim;
+
+        public StanceValues(float crouch, float walk, float sprint, float aim)
+        {
+            this.crouch = crouch;
+            this.walk = walk;
+            this.sprint = sprint;
+            this.aim = aim;
+        }
+    }
+
     [Header("Input")]
     [SerializeField] private InputActionAsset inputActions;
 
@@ -131,14 +155,87 @@ public class PlayerLook : MonoBehaviour
     [SerializeField] private PlayerAnimator playerAnimator;
 
     // Degrees of head start, for lining the bob's low point up with the footfall.
-    // Which frame of the clip a foot lands on is the animation's business and there
-    // is no reading it from here, so it is dialled in by eye once.
-    [SerializeField] private float bobPhaseOffset;
+    //
+    // The phase arrives as the walk clip's normalised time, which says where in the
+    // clip playback is but not where in the clip a foot actually touches down --
+    // that depends entirely on how the animation was authored and there is no
+    // reading it from here. So the bob starts out landing at some arbitrary point in
+    // the stride, and this slides it until the dip and the step coincide. 360 is a
+    // whole stride, 180 swaps which foot it agrees with.
+    //
+    // Dialled in by eye once, per locomotion set. Wrong, it is worse than no bob at
+    // all: the view rocks against the footfall instead of with it.
+    //
+    // 135 is a reasoned starting point rather than a measured one. The vertical bob
+    // is sin(phase * 2), so it bottoms out a hundred and thirty-five degrees into
+    // the cycle -- and looping walk clips are conventionally authored to start on a
+    // foot contact. If this one does, that puts the dip on the step. If it does not,
+    // the offset is wrong by however far the clip's contact sits from its start, and
+    // the fix is to watch the feet and slide this until they agree. Adding or
+    // subtracting 180 swaps which foot it agrees with.
+    [SerializeField] private float bobPhaseOffset = 135f;
 
+    // How unevenly the walk cycle runs. Zero is a plain sine, where every part of a
+    // step takes the same time as every other -- correct as maths and wrong as a
+    // person, since the drop onto a foot is quicker than the push back off it.
+    //
+    // Shared by everything that reads BobPhase, so raising it makes the view, the
+    // hands and the weapon all breathe the same unevenness rather than one of them
+    // developing a limp the others do not have.
+    //
+    // 0.3 is where it is felt without being seen -- the walk stops being metronomic
+    // and does not yet look like a limp. Past about 0.6 it reads as a stagger, which
+    // is a character choice rather than a default.
+    [SerializeField, Range(0f, 0.9f)] private float bobCycleSkew = 0.3f;
+
+    // The bob's own clock, used ONLY when playerAnimator above is empty. With an
+    // animator the cadence is the walk clip's and this is never read.
+    //
+    // Radians per second, not cycles -- it accumulates straight into the phase. A
+    // stride is one full turn, so 6 is very close to one stride a second, which at
+    // two footfalls each is about the cadence of an ordinary walk. That is why it is
+    // already the right number and not a placeholder.
     [SerializeField] private float bobFallbackFrequency = 6f;
+
     [SerializeField] private float bobPitchAmount = 0.5f;
     [SerializeField] private float bobYawAmount = 0.5f;
     [SerializeField] private float bobRollAmount = 0.5f;
+
+    // Scales all three, per stance, the same way HandMotion scales the hands.
+    //
+    // It replaces the gait speed ratio the amounts used to be multiplied by. That
+    // ratio is one dial: a crouch could only ever be a scaled-down walk and a sprint
+    // the same walk scaled up. A crouch wants small and tight, a sprint wants wide
+    // and loose, and aiming wants the view close to still regardless of which of the
+    // two it is happening in -- none of which is one curve read at three points.
+    //
+    // The ratio still sets the FALLBACK CLOCK's rate above, which is a cadence rather
+    // than an amount and does belong to speed.
+    [SerializeField] private StanceValues bobIntensity = new StanceValues(0.35f, 1f, 2f, 0.2f);
+
+    [Header("Camera Look Tilt")]
+    // Degrees of roll into a turn, off how fast the view is actually turning rather
+    // than how far the mouse moved -- so it is the same at any frame rate and stops
+    // dead the moment the view reaches a yaw limit.
+    //
+    // Far smaller than the hands' version of this, and on the rendered camera rather
+    // than the pivot. The pivot carries the items, and HandMotion already leans them
+    // for the same turn: putting this there too would tilt the weapon twice for one
+    // mouse movement. Here it rolls the view past a weapon that is doing its own,
+    // lesser lean, which is the relationship the two should have.
+    [SerializeField] private float lookTiltAmount = 1.5f;
+
+    // Degrees per second that produces the full amount. A brisk flick is several
+    // hundred; past this it is clamped, so a violent turn cants the view no further
+    // than a firm one.
+    [SerializeField] private float lookTiltReferenceRate = 200f;
+
+    [SerializeField] private StanceValues lookTiltIntensity = new StanceValues(0.6f, 1f, 1.4f, 0.35f);
+
+    // Its own filter rather than the bob's: raw mouse deltas are spiky in a way a
+    // footfall never is, and the two need different amounts of smoothing to sit
+    // still.
+    [SerializeField] private float lookTiltSmoothing = 10f;
 
     // Amounts above are at a full walk; the character's actual speed scales them.
     // Not the rate any more -- the clip decides that, and a run clip is already
@@ -220,6 +317,14 @@ public class PlayerLook : MonoBehaviour
     // reads as from outside, and the only part of it a shadow can show.
     public float PeekTiltAngle => -_currentPeek * peekTilt;
 
+    // The roll a full lean is worth, without the lean. Exposed so a pose that wants
+    // the same amount of cock for its own reasons -- the head coming over the sights,
+    // say -- can take the figure rather than keep a second one that would have to be
+    // re-tuned alongside this every time.
+    //
+    // Signed as a lean to the right, which is the direction the tilt reads in.
+    public float PeekTiltMagnitude => -peekTilt;
+
     // The walk cycle's phase, in radians, offset to wherever the footfall sits.
     // Normally the locomotion clip's own, so the view, the hands and the legs are
     // three readings of one number rather than three approximations of each other.
@@ -238,6 +343,7 @@ public class PlayerLook : MonoBehaviour
     private InputAction _lookAction;
     private Vector2 _lookInput;
     private float _currentTilt;
+    private float _currentLookTilt;
     private float _baseFov;
     private float _climbCameraYaw;
     private bool _wasClimbing;
@@ -395,6 +501,24 @@ public class PlayerLook : MonoBehaviour
         ApplyLook();
     }
 
+    // Which of the four is in force, by the same rule HandMotion uses -- aiming wins
+    // outright, then crouch, then sprint. Kept identical on purpose: the view and the
+    // hands disagreeing about what stance the player is in would be a class of bug
+    // with no visible cause.
+    //
+    // Falls back to the walk figure with no movement component, rather than to zero,
+    // so a missing reference leaves the bob working rather than silently absent.
+    private float ForStance(StanceValues values)
+    {
+        if (movement == null)
+            return values.walk;
+
+        return movement.IsAiming ? values.aim
+            : movement.IsCrouching ? values.crouch
+            : movement.IsSprintingStable ? values.sprint
+            : values.walk;
+    }
+
     private void ApplyLook()
     {
         bool isClimbing = movement != null && movement.IsClimbingLadder;
@@ -489,15 +613,50 @@ public class PlayerLook : MonoBehaviour
         if (playerAnimator == null && isMoving)
             _bobTimer += Time.deltaTime * bobFallbackFrequency * bobSpeedRatio;
 
-        _bobPhase = playerAnimator != null
+        float rawBobPhase = playerAnimator != null
             ? playerAnimator.LocomotionPhase + bobPhaseOffset * Mathf.Deg2Rad
             : _bobTimer;
 
+        // The cycle is warped rather than advanced evenly, which is what stops the
+        // bob reading as a machine. A plain sine spends exactly as long dropping into
+        // a footfall as it does rising out of one; a person does not -- weight comes
+        // down quickly and is pushed back up slowly, so the two halves of a step take
+        // different lengths of time.
+        //
+        // Adding sin(x) to the phase is that unevenness: it runs the cycle fast
+        // through one half and slow through the other while still taking exactly one
+        // stride, so nothing drifts. It stays monotonic -- the phase never runs
+        // backwards -- for any skew below 1.
+        //
+        // Done here rather than in HandMotion because this is timing, and timing is
+        // shared. The view, the hands and the legs all read this one number, and
+        // warping it anywhere downstream would put them back out of step.
+        _bobPhase = rawBobPhase + Mathf.Sin(rawBobPhase) * bobCycleSkew;
+
+        // Stance rather than the gait ratio, so a crouch and a sprint are described
+        // rather than derived from one another. The ratio above still paces the
+        // fallback clock, which is a cadence and not an amount.
+        float bobAmount = ForStance(bobIntensity);
+
+        // A rate, not a per-frame amount: LookDelta is degrees this frame, which
+        // doubles if the frame does. Dividing it back out is what keeps the same turn
+        // canting the view the same way at any frame rate.
+        //
+        // Negated so the view banks INTO the turn. LookDelta is already the applied
+        // yaw rather than the requested one, so this goes still at a yaw limit
+        // instead of holding a lean against a wall the player cannot turn past.
+        float lookRate = Time.deltaTime > 0f ? LookDelta.x / Time.deltaTime : 0f;
+
+        float targetLookTilt = -Mathf.Clamp(lookRate / lookTiltReferenceRate, -1f, 1f)
+            * lookTiltAmount * ForStance(lookTiltIntensity);
+
+        _currentLookTilt = Mathf.Lerp(_currentLookTilt, targetLookTilt, lookTiltSmoothing * Time.deltaTime);
+
         Vector3 targetBobRotation = isMoving
             ? new Vector3(
-                Mathf.Sin(_bobPhase * 2f) * bobPitchAmount * bobSpeedRatio,
-                Mathf.Sin(_bobPhase) * bobYawAmount * bobSpeedRatio,
-                Mathf.Cos(_bobPhase) * bobRollAmount * bobSpeedRatio)
+                Mathf.Sin(_bobPhase * 2f) * bobPitchAmount * bobAmount,
+                Mathf.Sin(_bobPhase) * bobYawAmount * bobAmount,
+                Mathf.Cos(_bobPhase) * bobRollAmount * bobAmount)
             : Vector3.zero;
         _currentBobRotation = Vector3.Lerp(_currentBobRotation, targetBobRotation, bobSmoothing * Time.deltaTime);
 
@@ -629,7 +788,7 @@ public class PlayerLook : MonoBehaviour
             cinemachineCamera.transform.localPosition = _cameraBaseLocalPosition + _shoulderingPositionOffset;
 
             cinemachineCamera.transform.localRotation = _cameraBaseLocalRotation
-                * Quaternion.Euler(_shakeOffset, 0f, _rollShakeOffset + _shakeRollOffset)
+                * Quaternion.Euler(_shakeOffset, 0f, _rollShakeOffset + _shakeRollOffset + _currentLookTilt)
                 * Quaternion.Euler(_shoulderingRotationOffset);
         }
 

@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 
 // Bob and sway for the hands, applied once to whatever transform every item's
 // grips hang off rather than per-item. It used to live on the weapon, which meant
@@ -90,6 +90,37 @@ public class HandMotion : MonoBehaviour
     [SerializeField] private float breathRollAmount = 0.6f;
     [SerializeField] private float breathSmoothing = 4f;
 
+    [Header("Bob Character")]
+    // How much stronger one step is than the other. A real walk is not symmetric --
+    // one leg leads, and the difference is small but constant.
+    //
+    // The sign picks which foot. It multiplies sin(bobPhase), which runs once per
+    // stride against the footfall's twice, so it is positive through one step and
+    // negative through the other -- and flipping it swaps which of them is the heavy
+    // one. There is no way to read from here which foot the clip has down at that
+    // moment, so choosing is a matter of looking at it and negating if it landed on
+    // the wrong side.
+    //
+    // Worth knowing what it looks like: at 0.4 one step is 1.4x and the other 0.6x,
+    // so the weapon rises more than twice as far on one foot as the other. That is a
+    // limp, and deliberate, but it is easily mistaken for the bob being tied to one
+    // leg. Around 0.1 it reads as a person rather than as an injury.
+    //
+    // Amplitude only, which is why it lives here rather than with the phase skew in
+    // PlayerLook: how far the hands move is theirs to decide, while when they move is
+    // shared with the camera and the legs.
+    [SerializeField, Range(-0.5f, 0.5f)] private float bobStepAsymmetry = 0.4f;
+
+    // A slow drift over the whole bob, so no two strides are quite the same size.
+    // Small: this should be felt rather than seen, and past about 0.3 it stops
+    // reading as a person walking and starts reading as one losing their footing.
+    [SerializeField, Range(0f, 0.5f)] private float bobWander = 0.45f;
+
+    // How quickly that drift moves, in noise samples per second. Well below a
+    // stride, so it varies across several steps rather than within one -- at walking
+    // pace it would just be a second bob.
+    [SerializeField] private float bobWanderRate = 0.8f;
+
     [Header("Strafe Sway")]
     // The movement half of the lag, against the look half further down. Horizontal
     // and forward come from intent rather than velocity: the hands trail the
@@ -129,12 +160,17 @@ public class HandMotion : MonoBehaviour
     // moved, so it is the same at any frame rate and stops dead the moment the
     // view hits a pitch or yaw limit.
     //
-    // Travel only. The turning half of the same lag is the tilt below, and it keeps
-    // its own rate and filter -- a slide and a cant answer the same mouse but not
-    // on the same terms, and sharing the figures would mean tuning one of them by
-    // ruining the other.
-    [SerializeField] private float lookSwayHorizontalAmount = 0.06f;
-    [SerializeField] private float lookSwayVerticalAmount = 0.045f;
+    // Degrees, and a rotation rather than a slide. A weapon left behind by a turn
+    // pivots in the hands -- the muzzle trails furthest and the stock barely moves --
+    // where translating the whole thing sideways keeps it pointing where it always
+    // did and reads as the weapon being on rails. The difference is most of what
+    // separates a heavy weapon from a light one.
+    //
+    // Yaw answers horizontal mouse and pitch answers vertical; roll is the look tilt
+    // below, which keeps its own rate and filter because a cant wants a lower ceiling
+    // and a slower settle than a swing.
+    [SerializeField] private float lookSwayYawAmount = 4f;
+    [SerializeField] private float lookSwayPitchAmount = 3f;
 
     // Degrees per second that produces the full amount above. A brisk flick is
     // several hundred; anything past this is clamped, so a violent turn displaces
@@ -226,7 +262,16 @@ public class HandMotion : MonoBehaviour
     // turning right and stepping right cant the hands the same way rather than
     // cancelling when both happen at once.
     //
-    // Travel on the other axes is the look sway's, which is what it is for.
+    // Roll only, because yaw and pitch are the look sway's -- the three together are
+    // one lag split across three axes, kept apart so each can be tuned without the
+    // others.
+    //
+    // Not applied to this transform. Every other layer here rotates the whole hold
+    // point, which swings whatever is held about the hands; a cant is the one thing
+    // that should happen about the weapon's OWN axis instead, so a rifle rolls along
+    // its barrel rather than describing an arc around the grip. The held item reads
+    // this and applies it at its own pivot -- see Weapon.posDeltaPivot -- which means
+    // nothing tilts at all with empty hands, which is correct.
     [SerializeField] private float lookTiltAmount = 5f;
 
     // The tilt's own rate and filter, deliberately not the sway's. A cant tends to
@@ -257,7 +302,7 @@ public class HandMotion : MonoBehaviour
     private Vector3 _currentBobOffset;
     private Vector3 _currentBobRotation;
     private Vector3 _currentSway;
-    private Vector3 _currentLookSway;
+    private Vector2 _currentLookSway;
     private float _currentTilt;
 
     // Which of the four is in force. Aiming wins outright -- someone lining up a
@@ -281,6 +326,35 @@ public class HandMotion : MonoBehaviour
     // succession read as the second replacing the first instead of stacking into a
     // throw neither asked for -- which matters here, since crouching while already
     // moving fires two of these a frame apart.
+    // Seconds the character has been walking without anything taking the hands away
+    // from it.
+    //
+    // Here rather than on the weapon because it describes the character, not what it
+    // happens to be holding. Kept on the weapon it reset on every swap, so an item
+    // drawn mid-stride had to earn the walking carry again from nothing -- arriving
+    // high and sinking into a pose the item it replaced was already in. Counted here,
+    // a swap does not touch it and the new item simply reads how long the walk has
+    // been going.
+    //
+    // Not reset by standing still, which is what makes the carry stick: somebody who
+    // stops walking does not present their weapon. Only InterruptWalkPose clears it,
+    // and only the held item knows when that applies.
+    public float WalkTime { get; private set; }
+
+    // Called by whatever is held when something needs the hands elsewhere -- a shot,
+    // the sights, a reload. Clearing it means the walking carry has to be walked into
+    // again afterwards rather than snapping back the moment the interruption ends.
+    public void InterruptWalkPose() => WalkTime = 0f;
+
+    // Degrees of cant from the look, for whatever is currently held to apply at its
+    // own pivot. Computed here because the figures, the stance table and the filter
+    // all belong with the rest of the hand motion -- only the point it turns about
+    // belongs to the item.
+    //
+    // Read rather than pushed, so an item that has no opinion about canting simply
+    // never asks, and nothing here has to know which items those are.
+    public float LookTilt => _currentLookTilt;
+
     public void AddKick(Vector3 positionImpulse, Vector3 rotationImpulse)
     {
         _shoulderingPositionVelocity = positionImpulse;
@@ -385,7 +459,36 @@ public class HandMotion : MonoBehaviour
         float lookSwayAmount = ForStance(lookSwayIntensity);
         float lookTiltStanceAmount = ForStance(lookTiltIntensity);
 
+        // Sprinting is not walking, so it stops the count rather than adding to it --
+        // and the interruption is left to the held item, which is the only thing that
+        // knows about firing and reloading.
+        if (isMoving && !movement.IsSprintingStable)
+            WalkTime += Time.deltaTime;
+
         float bobPhase = look.BobPhase;
+
+        // Two things stop every stride being a copy of the last one.
+        //
+        // The first is that left and right are not the same step. sin(bobPhase) runs
+        // once per stride while the footfall runs twice, so it is positive through
+        // one step and negative through the other -- which makes it exactly the
+        // signal for telling the two apart, at no cost.
+        float stepBias = 1f + Mathf.Sin(bobPhase) * bobStepAsymmetry;
+
+        // The second is a slow wander with no period at all. Noise rather than
+        // another sine, because a sine would only be a longer pattern -- audible as
+        // soon as it came round again -- where this never repeats. Read against the
+        // clock rather than the phase so it keeps drifting while standing still and
+        // the walk resumes somewhere new.
+        float wander = 1f + (Mathf.PerlinNoise(Time.time * bobWanderRate, 0.37f) - 0.5f) * 2f * bobWander;
+
+        bobAmount *= stepBias * wander;
+
+        // Scaled by the same figure the bob itself is, which is what ties the jolt to
+        // the step that produced it: the heavier foot of a limp lands harder, a
+        // sprint stamps, a crouch barely touches down, and the wander keeps
+        // consecutive steps from thumping identically. All of that comes free from
+        // multiplying by a number that already carries it.
 
         // Vertical runs at twice the horizontal: one dip per footfall against one
         // side-to-side swing per full stride. Pitch follows the vertical phase;
@@ -437,12 +540,16 @@ public class HandMotion : MonoBehaviour
         Vector2 lookRate = Time.deltaTime > 0f ? look.LookDelta / Time.deltaTime : Vector2.zero;
 
         // Normalised against each layer's own reference rate, so the two can be
-        // told apart: the flick that has already shoved the slide as far as it goes
+        // told apart: the flick that has already swung the weapon as far as it goes
         // can still have room left to lean.
-        Vector3 targetLookSway = new Vector3(
-            -Mathf.Clamp(lookRate.x / lookSwayReferenceRate, -1f, 1f) * lookSwayHorizontalAmount * lookSwayAmount,
-            -Mathf.Clamp(lookRate.y / lookSwayReferenceRate, -1f, 1f) * lookSwayVerticalAmount * lookSwayAmount,
-            0f);
+        //
+        // X is pitch and Y is yaw, matching the order they are summed into the
+        // rotation below. Negated, so the weapon is left behind by the turn instead
+        // of leading it -- which is the whole point, and the sign to flip if it ever
+        // looks like the hands are steering.
+        Vector2 targetLookSway = new Vector2(
+            -Mathf.Clamp(lookRate.y / lookSwayReferenceRate, -1f, 1f) * lookSwayPitchAmount * lookSwayAmount,
+            -Mathf.Clamp(lookRate.x / lookSwayReferenceRate, -1f, 1f) * lookSwayYawAmount * lookSwayAmount);
 
         float targetLookTilt =
             -Mathf.Clamp(lookRate.x / lookTiltReferenceRate, -1f, 1f) * lookTiltAmount * lookTiltStanceAmount;
@@ -458,7 +565,7 @@ public class HandMotion : MonoBehaviour
         _currentBobOffset = Vector3.Lerp(_currentBobOffset, targetBobOffset, ForStance(bobSmoothing) * Time.deltaTime);
         _currentBobRotation = Vector3.Lerp(_currentBobRotation, targetBobRotation, ForStance(bobSmoothing) * Time.deltaTime);
         _currentSway = Vector3.Lerp(_currentSway, targetSway, ForStance(swaySmoothing) * Time.deltaTime);
-        _currentLookSway = Vector3.Lerp(_currentLookSway, targetLookSway, ForStance(lookSwaySmoothing) * Time.deltaTime);
+        _currentLookSway = Vector2.Lerp(_currentLookSway, targetLookSway, ForStance(lookSwaySmoothing) * Time.deltaTime);
         _currentLookTilt = Mathf.Lerp(_currentLookTilt, targetLookTilt, ForStance(lookTiltSmoothing) * Time.deltaTime);
         _currentBreathOffset = Vector3.Lerp(_currentBreathOffset, targetBreathOffset, breathSmoothing * Time.deltaTime);
         _currentBreathRotation = Vector2.Lerp(_currentBreathRotation, targetBreathRotation, breathSmoothing * Time.deltaTime);
@@ -496,7 +603,7 @@ public class HandMotion : MonoBehaviour
         Vector3 peek = peekRotation * look.PeekAmount;
 
         transform.localPosition = _baseLocalPosition
-            + _currentBobOffset + _currentSway + _currentLookSway + _currentBreathOffset
+            + _currentBobOffset + _currentSway + _currentBreathOffset
             + Vector3.up * _kickOffset + _shoulderingPositionOffset;
 
         // Every rotational layer summed into one Euler off the base rather than
@@ -508,8 +615,8 @@ public class HandMotion : MonoBehaviour
         // Both tilts land on the same Z: one is the turn, the other the sidestep,
         // and a bank is a bank whichever asked for it.
         transform.localRotation = _baseLocalRotation * Quaternion.Euler(
-            _currentBobRotation.x + _currentBreathRotation.x + peek.x + _kickPitchOffset + _shoulderingRotationOffset.x,
-            _currentBobRotation.y + peek.y + _shoulderingRotationOffset.y,
-            _currentBobRotation.z + _currentTilt + _currentLookTilt + _currentBreathRotation.y + peek.z + _kickRollOffset + _shoulderingRotationOffset.z);
+            _currentBobRotation.x + _currentLookSway.x + _currentBreathRotation.x + peek.x + _kickPitchOffset + _shoulderingRotationOffset.x,
+            _currentBobRotation.y + _currentLookSway.y + peek.y + _shoulderingRotationOffset.y,
+            _currentBobRotation.z + _currentTilt + _currentBreathRotation.y + peek.z + _kickRollOffset + _shoulderingRotationOffset.z);
     }
 }

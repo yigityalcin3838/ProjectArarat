@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.Animations.Rigging;
 
 [RequireComponent(typeof(Animator))]
@@ -41,6 +41,23 @@ public class PlayerAnimator : MonoBehaviour
     // is for the shadow's sake, where the head reads small and a little more cock
     // than the view took can be what makes the pose legible from outside.
     [SerializeField] private float peekHeadTiltMultiplier = 1f;
+
+    // The same cock of the head, held while the sights are up.
+    //
+    // Somebody aiming brings their head over the weapon rather than keeping it
+    // level, and from outside that is the whole difference between a character
+    // pointing a gun and one holding it up. It reuses the peek roll's figure because
+    // it is the same motion for a different reason -- a second number would be the
+    // same angle written twice and re-tuned separately.
+    //
+    // Always to one side, unlike the peek: a lean has a direction the player chose,
+    // where this one is decided by which shoulder the weapon is on and does not
+    // change. Negative sends it the other way, for a left-handed hold.
+    [SerializeField] private float aimHeadTiltMultiplier = 1f;
+
+    // Eased rather than snapped, because the sights come up over a moment and the
+    // head should arrive with them instead of before them.
+    [SerializeField] private float aimHeadTiltSpeed = 8f;
 
     [Header("Hand IK")]
     [SerializeField] private float handIKTransitionDuration = 0.08f;
@@ -648,6 +665,8 @@ public class PlayerAnimator : MonoBehaviour
 
     private bool _isRestoringAimRigWeight;
 
+    private float _currentAimHeadTilt;
+
     private void UpdateAimRigWeightOverride()
     {
         // Held exactly where the outgoing item left them for the length of a swap.
@@ -731,10 +750,25 @@ public class PlayerAnimator : MonoBehaviour
         if (look == null)
             return;
 
+        // Worked out before the lean is checked, because aiming rolls the head with
+        // no lean at all. The two are separate reasons for the same rotation and are
+        // summed rather than ranked -- leaning while aiming should cock the head by
+        // both, not by whichever was asked for last.
+        float aimTilt = movement != null && movement.IsAiming
+            ? look.PeekTiltMagnitude * aimHeadTiltMultiplier
+            : 0f;
+
+        _currentAimHeadTilt = Mathf.Lerp(_currentAimHeadTilt, aimTilt, aimHeadTiltSpeed * Time.deltaTime);
+
+        float headTilt = look.PeekTiltAngle * peekHeadTiltMultiplier + _currentAimHeadTilt;
+
         // Gated on the lean itself rather than on the slide, so a setup that rolls
         // without sliding -- or the other way round -- still gets its half.
         if (Mathf.Approximately(look.PeekAmount, 0f))
+        {
+            ApplyHeadTilt(headTilt);
             return;
+        }
 
         // A third each, applied in order up the chain. Moving a bone takes its
         // children with it, so the chest's own share lands on top of the spine's
@@ -751,16 +785,20 @@ public class PlayerAnimator : MonoBehaviour
         if (peekUpperChestBone != null)
             peekUpperChestBone.position += step;
 
-        // About the body's forward, the same axis and the same angle the pivot
-        // rolled by, so the head and the view cock together. Applied last: it hangs
-        // off the chain above, and rolling it before those had moved would only
-        // have it carried again.
-        if (peekHeadBone != null)
-        {
-            Quaternion tilt = Quaternion.AngleAxis(
-                look.PeekTiltAngle * peekHeadTiltMultiplier, transform.root.forward);
-            peekHeadBone.rotation = tilt * peekHeadBone.rotation;
-        }
+        // Applied last: the head hangs off the chain above, and rolling it before
+        // those had moved would only have it carried again.
+        ApplyHeadTilt(headTilt);
+    }
+
+    // About the body's forward, the same axis the pivot rolls the view by, so the
+    // head and the camera cock together.
+    private void ApplyHeadTilt(float degrees)
+    {
+        if (peekHeadBone == null || Mathf.Abs(degrees) < 0.01f)
+            return;
+
+        Quaternion tilt = Quaternion.AngleAxis(degrees, transform.root.forward);
+        peekHeadBone.rotation = tilt * peekHeadBone.rotation;
     }
 
     private void OnAnimatorIK(int layerIndex)
