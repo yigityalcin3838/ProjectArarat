@@ -17012,6 +17012,29 @@ MonoBehaviour:
   - m_Rig: {fileID: 1089867383}
     m_Active: 1
   m_Effectors: []
+--- !u!114 &360032585
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 360032580}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c62733d92eca4a84ba3050bebd894b83, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::FootIK
+  positionWeight: 1
+  rotationWeight: 1
+  traceStartHeight: 0.5
+  traceDistance: 1
+  traceRadius: 0.01
+  soleOffset: 0.12
+  maxLift: 0
+  maxDrop: 0
+  maxSurfaceAngle: 50
+  footSmoothTime: 0.01
+  pelvisSmoothTime: 0.05
 --- !u!1 &360660740
 GameObject:
   m_ObjectHideFlags: 0
@@ -92673,6 +92696,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 1deb9001781cf0b4ba09addac4498400, type: 3}
       insertIndex: -1
       addedObject: {fileID: 360032582}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 1deb9001781cf0b4ba09addac4498400, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 360032585}
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 1deb9001781cf0b4ba09addac4498400, type: 3}
       insertIndex: -1
       addedObject: {fileID: 360032583}
