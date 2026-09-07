@@ -44,7 +44,36 @@ public class PlayerLook : MonoBehaviour
     // Cutting the camera off the skeleton is what breaks that loop.
     [SerializeField] private Transform cameraPivot;
     [SerializeField] private float mouseSensitivity = 0.1f;
-    [SerializeField] private float maxLookAngle = 85f;
+
+    // How far the view can pitch on foot, in degrees, split four ways: up and down
+    // are separate because they are not the same movement -- a neck extends further
+    // looking down at your own feet than back over your own brow -- and standing and
+    // crouched are separate because a crouch has already spent part of that range
+    // getting the head down there.
+    //
+    // Only on foot. A ladder and a car have their own limits below, for reasons that
+    // have nothing to do with what a neck can do: one is a body facing a wall, the
+    // other a head inside a cabin.
+    [SerializeField] private float standingPitchUpLimit = 85f;
+    [SerializeField] private float standingPitchDownLimit = 85f;
+    [SerializeField] private float crouchPitchUpLimit = 85f;
+    [SerializeField] private float crouchPitchDownLimit = 85f;
+
+    // And with nothing in the hands, which replaces the pair above rather than
+    // scaling it -- empty hands are their own case, not a discount on a stance.
+    //
+    // The reason to separate them is that the limits above are really the weapon's.
+    // What stops the view going further is that the arms and the barrel have to come
+    // with it and there is nowhere left for them to go; drop the weapon and that
+    // reason is gone, so the head is free to crane much further than a rifle would
+    // let it. This is also the case the head mount is on for, which is the other half
+    // of the same thought: empty hands are when the camera is most nearly a head.
+    //
+    // One pair rather than a standing and a crouched one: with nothing held there is
+    // far less to separate them, and a second pair would be two more numbers to tune
+    // for a difference nobody looks for.
+    [SerializeField] private float noItemPitchUpLimit = 85f;
+    [SerializeField] private float noItemPitchDownLimit = 85f;
 
     [Header("Head Follow")]
     // The socket on the head bone. The view follows where the animation puts it,
@@ -67,10 +96,9 @@ public class PlayerLook : MonoBehaviour
     // usual answer for a walk cycle with more shoulder in it than the view wants.
     [SerializeField, Range(0f, 1f)] private float headFollowAmount = 1f;
 
-    // Roughly how long the view takes to catch up, in seconds -- for the follow
-    // above and the crouch drop below alike. This is the whole filter: too short
-    // and the stride comes through, too long and a crouch turns into a slow sink.
-    // A few tenths is the usual band.
+    // Roughly how long the view takes to catch up with the head, in seconds. This is
+    // the whole filter: too short and the stride comes through, too long and the
+    // skeleton stops reaching the view at all. A few tenths is the usual band.
     [SerializeField] private float headFollowSmoothTime = 0.35f;
 
     // An extra drop while crouched, on top of whatever the crouch clip already
@@ -79,6 +107,39 @@ public class PlayerLook : MonoBehaviour
     // two are separate systems and turning one off should not take the other with
     // it. Leave at 0 if the clip's own drop is enough.
     [SerializeField] private float crouchEyeDrop = 0.2f;
+
+    // How long that drop takes, in seconds. Its own figure rather than the follow's,
+    // which it used to borrow -- they are filtering different things and want
+    // different answers. The follow is a low-pass on stride jitter and is tuned by
+    // how much of the walk cycle it lets through; this is a deliberate movement with
+    // a start and an end, and is tuned by how quickly a crouch should feel like it
+    // has happened. Sharing one number meant a view steady enough to walk with could
+    // only sink into a crouch, and a crouch that snapped brought the stride with it.
+    [SerializeField] private float crouchDropTime = 0.15f;
+
+    // Empty hands, a ladder, a car: three states with nothing to hold steady, and in
+    // all three the view sits ON the head socket instead of following it.
+    //
+    // The follow above exists for the weapon. Filtering the skeleton is what keeps a
+    // stride out of a held barrel, and the price of it is that the view is never
+    // quite where the head is -- which is invisible while something is in frame to
+    // anchor it, and is exactly the thing that makes empty hands feel like a floating
+    // camera. On a ladder or in a car the animation is the whole performance and the
+    // view has no business smoothing it.
+    //
+    // The items themselves are unaffected either way: they hang off the pivot and are
+    // carried wherever it goes, and by definition there is nothing there to carry in
+    // any of the three states this covers.
+    [SerializeField] private bool headMountWhenHandsAreFree = true;
+
+    // How long the changeover takes, in seconds. It cannot be instant: the mount and
+    // the follow are the authored eye offset apart -- the very gap the reference
+    // measures -- so drawing a weapon would snap the view by that much.
+    [SerializeField] private float headMountBlendTime = 0.25f;
+
+    // Whose hands they are. Only read to ask whether they are empty; left unassigned
+    // the mount falls back to the ladder and the car, which need no help to answer.
+    [SerializeField] private PlayerItems items;
 
     [Header("Peek")]
     // A sideways slide, in metres. Nothing bends and nothing rolls: the view and
@@ -105,6 +166,21 @@ public class PlayerLook : MonoBehaviour
     // same time either way, which is what makes it something a player can count on
     // under fire.
     [SerializeField] private float peekSpeed = 5f;
+
+    // How much of the lean survives at the pitch limit, as a fraction: 1 leaves it
+    // untouched at any angle, 0 closes it completely looking straight up or down.
+    // Scaled linearly from level, the same shape the car uses to trade neck twist
+    // against neck tilt.
+    //
+    // The reason is the same too. A lean is a body weight shift, and the further the
+    // head is already committed -- craned back, or looking at its own boots -- the
+    // less of one is left. Held out sideways AND pitched to the limit is a pose
+    // nothing can hold, and on screen it reads as the camera having come loose from
+    // the character rather than as a person peeking.
+    //
+    // Applied to the lean itself rather than to any one thing that reads it, so the
+    // slide, the roll, the hands and the torso bend all give way together.
+    [SerializeField, Range(0f, 1f)] private float peekAtMaxPitchRatio = 0.35f;
 
     [Header("Strafe Tilt")]
     [SerializeField] private PlayerMovement movement;
@@ -213,6 +289,52 @@ public class PlayerLook : MonoBehaviour
     // than an amount and does belong to speed.
     [SerializeField] private StanceValues bobIntensity = new StanceValues(0.35f, 1f, 2f, 0.2f);
 
+    [Header("Free Aim")]
+    // Whether the window is in use at all. Toggled in play by the FreeAimToggle
+    // action (U), and this is the value it starts from.
+    //
+    // Switched off it closes the way aiming closes it -- handing what it holds to the
+    // camera rather than swinging the weapon back to the middle -- so the crosshair
+    // stays on whatever it was on across the toggle. A switch that moved the aim
+    // would be a switch nobody could use in a fight.
+    [SerializeField] private bool freeAimEnabled = true;
+
+    // A window the weapon swings in, on top of a view that turns normally.
+    //
+    // The two move at once: the mouse turns the camera by its full amount, exactly as
+    // it would with none of this, and the weapon swings ahead of centre in the same
+    // direction and settles back once the mouse stops. Nothing is taken from the
+    // view -- an earlier version had the window absorb input before the camera saw
+    // it, which did make the weapon move first, but it also meant the mouse did
+    // nothing at all until the window filled. That is a deadzone, and it reads as the
+    // camera being slow.
+    //
+    // It lives here rather than with the hands because the offset is measured against
+    // what the view actually turned by, and this is where that is known.
+    //
+    // Degrees either side of centre. Small: past ten or so the weapon spends its time
+    // visibly off the middle of the screen and the player stops being able to guess
+    // where a shot will go.
+    [SerializeField] private float freeAimYawLimit = 6f;
+    [SerializeField] private float freeAimPitchLimit = 4f;
+
+    // How far the weapon swings per degree the view turns. 1 is a degree for a
+    // degree; below that the weapon only creeps toward the edge of its window and
+    // takes a long turn to get there, above it the window fills almost at once.
+    //
+    // The limits above decide how far it can go; this decides how quickly a turn
+    // takes it there, which is a separate question and the one that actually decides
+    // whether the weapon feels heavy or loose.
+    [SerializeField] private float freeAimAmount = 1f;
+
+    // How quickly the weapon returns to centre when the window closes.
+    //
+    // Only for that -- there is no idle drift back. Left alone the weapon stays
+    // wherever the last turn put it inside the window, which is the point: an offset
+    // that quietly recentred itself would be moving the muzzle without the player
+    // asking, and turning the other way is what brings it back.
+    [SerializeField] private float freeAimCentreSpeed = 14f;
+
     [Header("Camera Look Tilt")]
     // Degrees of roll into a turn, off how fast the view is actually turning rather
     // than how far the mouse moved -- so it is the same at any frame rate and stops
@@ -264,13 +386,20 @@ public class PlayerLook : MonoBehaviour
     [SerializeField] private float shakeDamping = 20f;
 
 
-    // The rendered camera is a zero-offset child of the pivot, so this is the eye
-    // point as well as the pivot -- what a weapon should trace a shot along.
+    // The rig's root, and near enough the eye point to hang things off. Not exactly
+    // it: the rendered camera is a child and may carry an offset of its own, which is
+    // why anything that has to be right about where the picture is taken from asks
+    // RenderCamera or AimRay instead of this.
     public Transform CameraTransform => cameraPivot;
 
+    // The camera that draws the frame. Anything projecting a world point back onto
+    // the screen -- the crosshair -- has to agree with that one, not merely with some
+    // camera.
+    public Camera RenderCamera => renderCamera != null ? renderCamera : Camera.main;
+
     // Dead centre of the rendered image, as a world ray. Asked of the camera's own
-    // projection rather than built from some transform's forward, so it is the
-    // crosshair by definition -- under any field of view, aspect, lens shift or
+    // projection rather than built from some transform's forward, so it is the middle
+    // of the picture by definition -- under any field of view, aspect, lens shift or
     // Cinemachine arrangement, and whether or not the vcam sits on the pivot.
     //
     // Every transform in the chain is a guess at where the picture is pointing.
@@ -279,11 +408,49 @@ public class PlayerLook : MonoBehaviour
     {
         get
         {
-            Camera camera = renderCamera != null ? renderCamera : Camera.main;
+            Camera camera = RenderCamera;
 
             return camera != null
                 ? camera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f))
                 : new Ray(cameraPivot.position, cameraPivot.forward);
+        }
+    }
+
+    // Where the player is pointing. Not where the camera is pointing, and not where
+    // any particular item is pointing -- this belongs to the character, exists with
+    // empty hands, and outlives every item that gets picked up and put down.
+    //
+    // The one authority. Rounds leave along it, the crosshair is drawn on it, doors
+    // and cars are reached through it, autofocus pulls to whatever it lands on. Every
+    // one of those used to ask a slightly different question and could therefore
+    // disagree -- a reticle in one place and a bullet in another is the class of bug
+    // that costs an evening to find, and it is only avoidable by construction.
+    //
+    // It is the eye ray turned by the free-aim angles, because free aim is a decision
+    // the player made about where to point. Bob and sway are deliberately absent:
+    // those are a walking animation on the model, not an instruction about where to
+    // shoot, and firing down them wanders several degrees at walking pace. Recoil
+    // needs no special handling and still climbs, since the fire kick is applied to
+    // the camera pivot and so moves the eye ray itself.
+    public Ray InteractionRay
+    {
+        get
+        {
+            Ray eyeRay = AimRay;
+
+            if (_freeAim == Vector2.zero)
+                return eyeRay;
+
+            Camera camera = RenderCamera;
+            Transform eye = camera != null ? camera.transform : cameraPivot;
+
+            // Yaw about up, then pitch about right -- the order Unity's Euler uses,
+            // so this reproduces the angles HandMotion feeds the item rather than a
+            // mirror of them.
+            return new Ray(eyeRay.origin,
+                Quaternion.AngleAxis(_freeAim.y, eye.up)
+                * Quaternion.AngleAxis(_freeAim.x, eye.right)
+                * eyeRay.direction);
         }
     }
     public float Pitch { get; private set; }
@@ -302,20 +469,25 @@ public class PlayerLook : MonoBehaviour
     // -- the weapon, the aim target -- lean as one rigid piece, so this exists for
     // the one part that can't: the torso, which has to be bent by the Animator or
     // the rig to match. Read it, don't drive it.
-    public float PeekAmount => _currentPeek;
+    public float PeekAmount => EffectivePeek;
+
+    // The lean actually in force: what the player asked for, less whatever the pitch
+    // has taken back. Everything that reads a peek reads this, so nothing can end up
+    // leaning by a different amount than everything else.
+    private float EffectivePeek => _currentPeek * _peekPitchScale;
 
     // The same lean in metres rather than as a fraction: how far sideways the view
     // has actually stepped. The body slides by this too, so it is read rather than
     // restated -- a second copy of the distance is a second thing to keep in step,
     // and the two drifting apart is the weapon going one way and the shoulders
     // another.
-    public float PeekOffset => _currentPeek * peekDistance;
+    public float PeekOffset => EffectivePeek * peekDistance;
 
     // And the roll, in degrees, signed as the pivot actually applies it. The head
     // bone is turned by this so the silhouette cocks with the view instead of
     // staying square while the camera leans -- which is the whole of what a lean
     // reads as from outside, and the only part of it a shadow can show.
-    public float PeekTiltAngle => -_currentPeek * peekTilt;
+    public float PeekTiltAngle => -EffectivePeek * peekTilt;
 
     // The roll a full lean is worth, without the lean. Exposed so a pose that wants
     // the same amount of cock for its own reasons -- the head coming over the sights,
@@ -324,6 +496,23 @@ public class PlayerLook : MonoBehaviour
     //
     // Signed as a lean to the right, which is the direction the tilt reads in.
     public float PeekTiltMagnitude => -peekTilt;
+
+    // Where the weapon is pointing relative to the view: x is pitch, y is yaw, both
+    // in degrees. Read by HandMotion and applied to the item hold -- the offset is
+    // decided here because it is subtracted from the view's input, and only the thing
+    // receiving that input can withhold it.
+    public Vector2 FreeAim => _freeAim;
+
+    // Whether the window is actually in use this frame -- switched on and not shut by
+    // aiming. The toggle alone is not the answer: down the sights free aim is off
+    // whatever the setting says, and anything tuning itself against the window has to
+    // agree with what the window is doing rather than with what was asked for.
+    //
+    // Read by the hands to decide how much lag and cant to add. With the window open
+    // the weapon already swings a long way behind a turn; without it the same turn
+    // leaves the weapon dead still, and the sway is the only thing left to say the
+    // thing has mass.
+    public bool IsFreeAimActive => _isFreeAimActive;
 
     // The walk cycle's phase, in radians, offset to wherever the footfall sits.
     // Normally the locomotion clip's own, so the view, the hands and the legs are
@@ -344,6 +533,7 @@ public class PlayerLook : MonoBehaviour
     private Vector2 _lookInput;
     private float _currentTilt;
     private float _currentLookTilt;
+    private Vector2 _freeAim;
     private float _baseFov;
     private float _climbCameraYaw;
     private bool _wasClimbing;
@@ -358,12 +548,6 @@ public class PlayerLook : MonoBehaviour
     private float _shakeVelocity;
     private float _shakeRollOffset;
     private float _shakeRollVelocity;
-    private Vector3 _shoulderingPositionOffset;
-    private Vector3 _shoulderingPositionVelocity;
-    private Vector3 _shoulderingRotationOffset;
-    private Vector3 _shoulderingRotationVelocity;
-    private float _shoulderingSpring = 220f;
-    private float _shoulderingDamping = 22f;
     private Vector3 _cameraBaseLocalPosition;
     private float _fireKickOffset;
     private float _fireKickVelocity;
@@ -371,18 +555,25 @@ public class PlayerLook : MonoBehaviour
     private float _fireKickYawVelocity;
     private float _fireKickSpring = 200f;
     private float _fireKickDamping = 20f;
-    private float _rollShakeOffset;
-    private float _rollShakeVelocity;
-    private float _rollShakeSpring = 200f;
-    private float _rollShakeDamping = 20f;
     private Vector3 _basePivotLocalPosition;
-    private Vector3 _pivotOffsetFromHead;
+    private Vector3 _headReference;
+    private bool _hasHeadReference;
     private Vector3 _followedLocalPosition;
     private Vector3 _followVelocity;
     private float _crouchDrop;
     private float _crouchDropVelocity;
+    private float _headMountBlend;
+    private float _headMountBlendVelocity;
+    private float _handsFreeBlend;
+    private float _handsFreeBlendVelocity;
     private InputAction _peekAction;
+    private InputAction _freeAimToggleAction;
+    private bool _isFreeAimActive;
     private float _currentPeek;
+
+    // Starts at 1 so the lean is whole before the first ApplyLook has worked out what
+    // the pitch is costing it.
+    private float _peekPitchScale = 1f;
 
     // Lets an equipped item (e.g. Weapon) override FOV while it's active,
     // without PlayerLook needing to know anything about items -- same
@@ -391,53 +582,32 @@ public class PlayerLook : MonoBehaviour
     public void ClearFovOverride() => _fovOverride = null;
 
     // Weapon-driven recoil kick on the camera itself -- the weapon owns the
-    // amount/spring/damping (its recoil "feel") and just pushes them in,
-    // same push-values-in pattern as the FOV override above.
+    // amount/spring/damping (its recoil "feel") and just pushes them in, the same
+    // push-values-in pattern as the FOV override above.
     public void SetFireKickProfile(float spring, float damping)
     {
         _fireKickSpring = spring;
         _fireKickDamping = damping;
     }
 
-    // Roll shake has its own spring/damping, independent from the pitch/yaw
-    // kick above -- a cosmetic rattle on top of the deterministic punch.
-    public void SetRollShakeProfile(float spring, float damping)
-    {
-        _rollShakeSpring = spring;
-        _rollShakeDamping = damping;
-    }
-
-    // Modern CoD-style recoil kick: a deterministic upward pitch punch plus a
-    // random left/right yaw punch per shot, plus a roll shake with its own
-    // spring/damping -- all settle back independently. Velocities are set, not
-    // added, so rapid fire can't stack shots into a runaway kick.
+    // A shot's punch on the view: an upward pitch kick plus a random left/right yaw
+    // kick, both settling back on their own. Velocities are set, not added, so rapid
+    // fire cannot stack shots into a runaway kick.
     //
-    // The roll is the one part that doesn't get scattered: it is the weapon's
-    // own cant, the same on every shot, so its direction comes from the sign of
-    // the amount rather than a coin flip. Only the yaw is random, which is what
-    // keeps a burst from walking predictably to one side.
-    // The view's share of a shouldering jolt, fired by HandMotion at the same moment
-    // as the hands' own so the two are one event rather than two that happen to
-    // coincide. Everything about it -- the impulses and the spring it settles on --
-    // is pushed in from there, because a stance change is one motion and splitting
-    // its tuning across two components is how the halves start disagreeing.
-    //
-    // Lands on the rendered camera rather than the pivot, which is what keeps it off
-    // the weapon: the hands have their own version of this and would otherwise take
-    // both.
-    public void AddShoulderingKick(Vector3 positionImpulse, Vector3 rotationImpulse, float spring, float damping)
+    // This is the whole of a shot's recoil now. It lands on the camera pivot, which
+    // both the view and InteractionRay are taken from, so it throws the aim off and
+    // has to be brought back -- it is the recoil rather than a picture of one.
+    public void AddFireKick(float kickAmount, float horizontalKickAmount)
     {
-        _shoulderingPositionVelocity = positionImpulse;
-        _shoulderingRotationVelocity = rotationImpulse;
-        _shoulderingSpring = spring;
-        _shoulderingDamping = damping;
-    }
-
-    public void AddFireKick(float kickAmount, float horizontalKickAmount, float rollShakeAmount)
-    {
+        // Pitch is the one with a direction of its own: a muzzle climbs, it does not
+        // sometimes climb and sometimes dip.
         _fireKickVelocity = -kickAmount;
+
+        // Yaw is signed at random. A weapon wanders off the line it was on rather
+        // than off a particular side of it, and a shot that rocked the view the same
+        // way every time read as a tic rather than a recoil -- most visible on the
+        // first shot of a burst, which always started identically.
         _fireKickYawVelocity = Random.Range(-1f, 1f) * horizontalKickAmount;
-        _rollShakeVelocity = rollShakeAmount;
     }
 
     // The head socket in whatever space the pivot's localPosition is written in.
@@ -459,18 +629,13 @@ public class PlayerLook : MonoBehaviour
         _lookAction = playerMap.FindAction("Look");
         _peekAction = playerMap.FindAction("Peek");
 
+        // Not throwIfNotFound: a project without the binding should lose the toggle,
+        // not the camera.
+        _freeAimToggleAction = playerMap.FindAction("FreeAimToggle");
         if (cameraPivot != null)
         {
             _basePivotLocalPosition = cameraPivot.localPosition;
             _followedLocalPosition = _basePivotLocalPosition;
-
-            // Measured rather than typed: the pivot is dragged into place against
-            // the head in the viewport, and the gap between the two right then is
-            // what it keeps. Read before the Animator has posed anything, so this
-            // is the bind pose -- a fraction off the idle pose, which the damping
-            // below absorbs over the first moments of play.
-            if (headAnchor != null)
-                _pivotOffsetFromHead = _basePivotLocalPosition - HeadLocalPosition;
         }
 
         if (cinemachineCamera != null)
@@ -485,18 +650,40 @@ public class PlayerLook : MonoBehaviour
     {
         _lookAction.Enable();
         _peekAction?.Enable();
+        _freeAimToggleAction?.Enable();
         Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = false;
+    }
+
+    // The one job here: catch where the head starts, once.
+    //
+    // It has to be here rather than in Awake because the Animator poses the skeleton
+    // between Update and LateUpdate, so this is the first moment the bone is where
+    // the animation actually puts it. Taken in Awake the reference would be the bind
+    // pose, and the gap between that and the idle pose would be read as movement the
+    // head had already made -- which is exactly what used to drag the view off the
+    // position it was placed at, over the first fraction of a second of play.
+    private void LateUpdate()
+    {
+        if (!_hasHeadReference && headAnchor != null && cameraPivot != null)
+        {
+            _headReference = HeadLocalPosition;
+            _hasHeadReference = true;
+        }
     }
 
     private void OnDisable()
     {
         _lookAction.Disable();
         _peekAction?.Disable();
+        _freeAimToggleAction?.Disable();
     }
 
     private void Update()
     {
+        if (_freeAimToggleAction != null && _freeAimToggleAction.WasPressedThisFrame())
+            freeAimEnabled = !freeAimEnabled;
+
         _lookInput = _lookAction.ReadValue<Vector2>();
         ApplyLook();
     }
@@ -533,9 +720,7 @@ public class PlayerLook : MonoBehaviour
         _wasClimbing = lockBodyYaw;
 
         float yaw = _lookInput.x * mouseSensitivity;
-
         float appliedYaw;
-
         if (lockBodyYaw)
         {
             float yawLimitLeft = isInCar ? carLookYawLimitLeft : climbLookYawLimit;
@@ -556,8 +741,32 @@ public class PlayerLook : MonoBehaviour
             appliedYaw = yaw;
         }
 
-        float pitchUpLimit = isInCar ? carLookPitchUpLimit : (isClimbing ? climbLookPitchUpLimit : maxLookAngle);
-        float pitchDownLimit = isInCar ? carLookPitchDownLimit : (isClimbing ? climbLookPitchDownLimit : maxLookAngle);
+        // Eased between the two stances on CrouchAmount rather than switched on
+        // IsCrouching, so the limit travels with the body it belongs to. Switched, a
+        // tighter crouched limit would snap the view down the instant the key went
+        // in, while the character was still visibly standing -- the range would
+        // arrive before the crouch did.
+        float crouchBlend = movement != null ? movement.CrouchAmount : 0f;
+        float footPitchUpLimit = Mathf.Lerp(standingPitchUpLimit, crouchPitchUpLimit, crouchBlend);
+        float footPitchDownLimit = Mathf.Lerp(standingPitchDownLimit, crouchPitchDownLimit, crouchBlend);
+
+        // Worked out once here and used twice -- for the limits below and for the head
+        // mount further down -- because it is one fact about the character and both
+        // are answers to it.
+        //
+        // Eased rather than switched, and this is the half that has to be. Drawing a
+        // weapon while craned right back would otherwise clamp the pitch to the
+        // tighter limit on the frame the key went in, snapping the view down by the
+        // difference. The limit has to close at the speed the arms come up.
+        bool handsFree = items != null && !items.AreHandsBusy;
+        _handsFreeBlend = Mathf.SmoothDamp(
+            _handsFreeBlend, handsFree ? 1f : 0f, ref _handsFreeBlendVelocity, headMountBlendTime);
+
+        footPitchUpLimit = Mathf.Lerp(footPitchUpLimit, noItemPitchUpLimit, _handsFreeBlend);
+        footPitchDownLimit = Mathf.Lerp(footPitchDownLimit, noItemPitchDownLimit, _handsFreeBlend);
+
+        float pitchUpLimit = isInCar ? carLookPitchUpLimit : (isClimbing ? climbLookPitchUpLimit : footPitchUpLimit);
+        float pitchDownLimit = isInCar ? carLookPitchDownLimit : (isClimbing ? climbLookPitchDownLimit : footPitchDownLimit);
 
         // The further the camera has turned toward its yaw limit in the car, the less
         // pitch freedom it has left -- mirrors how far you can actually tilt your head
@@ -570,11 +779,105 @@ public class PlayerLook : MonoBehaviour
             pitchUpLimit *= pitchScale;
             pitchDownLimit *= pitchScale;
         }
-
         float previousPitch = Pitch;
         Pitch = Mathf.Clamp(Pitch - _lookInput.y * mouseSensitivity, -pitchUpLimit, pitchDownLimit);
 
         LookDelta = new Vector2(appliedYaw, Pitch - previousPitch);
+
+        // Measured against whichever limit the view is actually heading for, not a
+        // Worked out AFTER the view has turned, and from what it actually turned by.
+        //
+        // That ordering is the point. Taking the input first and handing back the
+        // remainder let the weapon move before the view, but it also meant the mouse
+        // did nothing at all until the window filled -- a deadzone, and it read as
+        // the camera being slow. Nothing is withheld now: the view turns by the full
+        // amount and the weapon swings on top of it, so the two move together and
+        // only the weapon has a window.
+        //
+        // Added rather than subtracted, so the weapon leads the turn: it swings ahead
+        // of centre in the direction being turned and settles back to the middle once
+        // the mouse stops. The clamp is what stops it running off the screen.
+        //
+        // Closed down the sights only. That is the one case where it is genuinely
+        // wrong -- the whole point of aiming is that the muzzle is on the line, and a
+        // window wandering off it defeats the act.
+        //
+        // Everything else keeps it, including sprinting, the walking carry, and empty
+        // hands. This is no longer just where the weapon points: it is where the
+        // player is pointing, the direction the crosshair marks and interaction
+        // reaches through (see InteractionRay), and that has to exist continuously.
+        // Cutting it out during a sprint or a carry would drag the reticle back to
+        // centre for reasons that have nothing to do with where the player is
+        // looking.
+        bool freeAimBlocked = !freeAimEnabled || movement == null || movement.IsAiming;
+        _isFreeAimActive = !freeAimBlocked;
+
+        if (freeAimBlocked)
+        {
+            Vector2 previousFreeAim = _freeAim;
+            _freeAim = Vector2.Lerp(_freeAim, Vector2.zero, freeAimCentreSpeed * Time.deltaTime);
+
+            // The view goes to the weapon, not the weapon to the view.
+            //
+            // Every degree the window gives up is handed straight to the camera, so
+            // the barrel's world direction does not move at all while the offset
+            // closes -- the crosshair stays on what it was on and the picture swings
+            // under it until the two are the same line.
+            //
+            // Which is the only version of this that respects what the player did.
+            // They put the reticle on something; raising the sights is a request to
+            // shoot THAT, and swinging the weapon back to the middle of the screen
+            // instead answers by taking the aim off it. The offset has to be spent,
+            // but which end gives way is a choice, and only one of them keeps the
+            // player's decision.
+            //
+            // Signs fall out for free: the window accumulates LookDelta, so its two
+            // axes are already in the same units and the same direction as the pitch
+            // and the yaw. What it gives up is exactly what they take on.
+            Vector2 released = previousFreeAim - _freeAim;
+
+            Pitch = Mathf.Clamp(Pitch + released.x, -pitchUpLimit, pitchDownLimit);
+
+            if (lockBodyYaw)
+            {
+                float yawLimitLeft = isInCar ? carLookYawLimitLeft : climbLookYawLimit;
+                float yawLimitRight = isInCar ? carLookYawLimitRight : climbLookYawLimit;
+                _climbCameraYaw = Mathf.Clamp(_climbCameraYaw + released.y, -yawLimitLeft, yawLimitRight);
+            }
+            else
+            {
+                // Reported as body yaw, because it is: the capsule really turned, and
+                // PlayerAnimator tracks how far the view leads the body off this. Left
+                // out, the model would be turned without the animator being told and
+                // the feet would drift by the width of the window.
+                transform.Rotate(Vector3.up * released.y);
+                YawDelta += released.y;
+            }
+        }
+        else
+        {
+            // No decay: what the window holds is where the last turn left the weapon,
+            // and it stays there until another turn moves it.
+            _freeAim.x = Mathf.Clamp(
+                _freeAim.x + LookDelta.y * freeAimAmount, -freeAimPitchLimit, freeAimPitchLimit);
+            _freeAim.y = Mathf.Clamp(
+                _freeAim.y + LookDelta.x * freeAimAmount, -freeAimYawLimit, freeAimYawLimit);
+        }
+
+        // Left until here so it reads the pitch the frame actually ends on, including
+        // whatever the closing free-aim window just handed it.
+        //
+        // Measured against whichever limit the view is heading for rather than a
+        // fixed angle -- so the lean gives way in proportion to how much of the neck
+        // is spent, and a stance with a tighter range spends it sooner. Crouched with
+        // a shorter down limit, looking at the floor costs the same fraction of the
+        // lean as it does standing, which is the honest reading of it.
+        float pitchLimitForRatio = Pitch >= 0f ? pitchDownLimit : pitchUpLimit;
+        float pitchRatio = pitchLimitForRatio > 0f
+            ? Mathf.Clamp01(Mathf.Abs(Pitch) / pitchLimitForRatio)
+            : 0f;
+
+        _peekPitchScale = Mathf.Lerp(1f, peekAtMaxPitchRatio, pitchRatio);
 
         float targetTilt = movement != null && !movement.IsMovementLocked
             ? -movement.MoveInput.x * tiltAmount
@@ -682,16 +985,6 @@ public class PlayerLook : MonoBehaviour
         _shakeRollVelocity += (-shakeSpring * _shakeRollOffset - shakeDamping * _shakeRollVelocity) * Time.deltaTime;
         _shakeRollOffset += _shakeRollVelocity * Time.deltaTime;
 
-        // Shouldering -- impulse and spring both pushed in by HandMotion when a
-        // stance changes, so the view settles on exactly the terms the hands do.
-        _shoulderingPositionVelocity += (-_shoulderingSpring * _shoulderingPositionOffset
-            - _shoulderingDamping * _shoulderingPositionVelocity) * Time.deltaTime;
-        _shoulderingPositionOffset += _shoulderingPositionVelocity * Time.deltaTime;
-
-        _shoulderingRotationVelocity += (-_shoulderingSpring * _shoulderingRotationOffset
-            - _shoulderingDamping * _shoulderingRotationVelocity) * Time.deltaTime;
-        _shoulderingRotationOffset += _shoulderingRotationVelocity * Time.deltaTime;
-
         // Weapon-driven recoil kick -- spring/damping come from whatever item is
         // equipped (pushed via SetFireKickProfile), impulse from AddFireKick per shot.
         _fireKickVelocity += (-_fireKickSpring * _fireKickOffset - _fireKickDamping * _fireKickVelocity) * Time.deltaTime;
@@ -700,17 +993,19 @@ public class PlayerLook : MonoBehaviour
         _fireKickYawVelocity += (-_fireKickSpring * _fireKickYawOffset - _fireKickDamping * _fireKickYawVelocity) * Time.deltaTime;
         _fireKickYawOffset += _fireKickYawVelocity * Time.deltaTime;
 
-        _rollShakeVelocity += (-_rollShakeSpring * _rollShakeOffset - _rollShakeDamping * _rollShakeVelocity) * Time.deltaTime;
-        _rollShakeOffset += _rollShakeVelocity * Time.deltaTime;
-
         if (cameraPivot != null)
         {
             // Critically damped rather than lerped: a spring that never overshoots,
             // so a crouch settles onto its new height instead of dipping past it
             // and coming back. smoothTime is then an honest "how long to catch up"
             // rather than a rate whose meaning changes with the distance.
-            Vector3 followTarget = headAnchor != null
-                ? HeadLocalPosition + _pivotOffsetFromHead
+            // The scene's position plus however far the head has MOVED since play
+            // began -- not the head's position with an offset bolted on. The two are
+            // the same arithmetic and a completely different result: where the pivot
+            // was dragged to is kept exactly, and the skeleton only ever contributes
+            // change. Nothing pulls the view off the pose that was authored.
+            Vector3 followTarget = _hasHeadReference
+                ? _basePivotLocalPosition + (HeadLocalPosition - _headReference)
                 : _basePivotLocalPosition;
 
             _followedLocalPosition = Vector3.SmoothDamp(
@@ -723,15 +1018,39 @@ public class PlayerLook : MonoBehaviour
             // in below, where no amount of it can shift the eye point.
             float targetCrouchDrop = movement != null && movement.IsCrouching ? crouchEyeDrop : 0f;
             _crouchDrop = Mathf.SmoothDamp(
-                _crouchDrop, targetCrouchDrop, ref _crouchDropVelocity, headFollowSmoothTime);
+                _crouchDrop, targetCrouchDrop, ref _crouchDropVelocity, crouchDropTime);
 
             // Subtracted after the follow blend rather than folded into its target,
             // so it applies in full even at a headFollowAmount of 0 -- the two are
             // separate systems and turning one off should not take the other with
             // it.
-            Vector3 pivotPosition = Vector3.Lerp(
+            Vector3 followedPosition = Vector3.Lerp(
                 _basePivotLocalPosition, _followedLocalPosition, headFollowAmount)
                 - Vector3.up * _crouchDrop;
+
+            // The socket itself, unfiltered and with no authored offset of its own --
+            // the view IS the head rather than something trailing it.
+            //
+            // The crouch drop is left out on purpose. It exists to add a dip the clip
+            // does not have; mounted on the bone, the clip's own dip is already the
+            // whole of it, and adding more would be describing the same crouch twice.
+            // handsFree already answers no when the items reference is unassigned,
+            // which is the safe way round: read the other way, a missing reference
+            // would mount a weapon straight onto an unfiltered head bone and put the
+            // stride back in the barrel -- the exact thing the follow exists to keep
+            // out. A ladder and a car need no help either way; neither has hands to
+            // ask about.
+            bool headMounted = headMountWhenHandsAreFree
+                && headAnchor != null
+                && (lockBodyYaw || handsFree);
+
+            _headMountBlend = Mathf.SmoothDamp(
+                _headMountBlend, headMounted ? 1f : 0f,
+                ref _headMountBlendVelocity, headMountBlendTime);
+
+            Vector3 pivotPosition = _headMountBlend > 0.0001f && headAnchor != null
+                ? Vector3.Lerp(followedPosition, HeadLocalPosition, _headMountBlend)
+                : followedPosition;
 
             // Nowhere to step out to while a ladder or a car has the character: the
             // axis is still being read there and would slide the view off a body
@@ -744,7 +1063,7 @@ public class PlayerLook : MonoBehaviour
             // Sideways in the capsule's own frame, so the slide follows the body
             // rather than the pitch -- stepping out while looking up should still
             // step out sideways, not up and over.
-            pivotPosition += Vector3.right * (_currentPeek * peekDistance);
+            pivotPosition += Vector3.right * (EffectivePeek * peekDistance);
 
             cameraPivot.localPosition = pivotPosition;
 
@@ -755,18 +1074,18 @@ public class PlayerLook : MonoBehaviour
             //
             // Same sign as the strafe tilt below, so stepping right and leaning
             // right cock the same way instead of cancelling.
-            Quaternion peekTiltRotation = Quaternion.AngleAxis(-_currentPeek * peekTilt, Vector3.forward);
+            Quaternion peekTiltRotation = Quaternion.AngleAxis(PeekTiltAngle, Vector3.forward);
 
-            // The fire kick is split between here and the camera below, along the
-            // line of what a shot actually does to a braced weapon.
+            // The look, the breath, the bob, and a shot's pitch and yaw kick.
             //
-            // Pitch and yaw belong here, on the pivot, so the weapon rides them: the
-            // muzzle climbing and wandering off target is the recoil, and a weapon
-            // that stayed put through it would be a weapon with none.
+            // The kick belongs here rather than on the rendered camera because this
+            // is the transform the aim is taken from: the muzzle climbing and
+            // wandering off target IS the recoil, and putting it one level down would
+            // make it a picture of a recoil that the shots themselves ignored.
             //
-            // Its roll does not, and the jump and landing shake does not at all --
-            // both are below. What is left here is the look, the breath, the bob and
-            // the recoil the weapon should share.
+            // The jump and landing shake is not here for the mirror-image reason --
+            // it goes on the rendered camera below, because leaving the ground and
+            // hitting it again happen to the head and should not move the aim.
             cameraPivot.localRotation = peekTiltRotation * Quaternion.Euler(
                 Pitch + _currentBreathRotation.x + _currentBobRotation.x + _fireKickOffset,
                 _climbCameraYaw + _currentBreathRotation.y + _currentBobRotation.y + _fireKickYawOffset,
@@ -776,20 +1095,28 @@ public class PlayerLook : MonoBehaviour
         if (cinemachineCamera != null)
         {
             // Everything the weapon should have no part in, on the rendered camera --
-            // the one thing under the pivot the items are not parented to. A shot's
-            // roll, because it rocks the head rather than spinning the weapon about
-            // its own barrel; and the whole jump and landing shake, because leaving
-            // the ground and hitting it again happen to the head while the hands go
-            // on holding what they were holding.
+            // the one thing under the pivot the items are not parented to. The jump
+            // and landing shake, because leaving the ground and hitting it again
+            // happen to the head while the hands go on holding what they were
+            // holding; and the look tilt, because HandMotion already leans the weapon
+            // for the same turn.
             //
             // Rebuilt from the rotation the camera was placed at rather than nudged
             // from where it was left, so a shake that never quite settles can't walk
-            // the camera off over a magazine's worth of shots.
-            cinemachineCamera.transform.localPosition = _cameraBaseLocalPosition + _shoulderingPositionOffset;
-
+            // the camera off over a landing or two.
+            // Collapsed onto the pivot as the mount takes hold, because the mount puts
+            // the PIVOT on the socket and the camera is what has to end up there.
+            //
+            // This rig's camera sits some way up and forward of the pivot, so without
+            // this the view lands that far off the head and the mount looks like it
+            // did nothing. Zeroing the offset rather than compensating for it also
+            // fixes the second half of the same problem: an eye point held out in
+            // front of the pivot swings through an arc every time the view pitches,
+            // and a head that orbits twenty centimetres when it nods is not a head.
+            cinemachineCamera.transform.localPosition =
+                Vector3.Lerp(_cameraBaseLocalPosition, Vector3.zero, _headMountBlend);
             cinemachineCamera.transform.localRotation = _cameraBaseLocalRotation
-                * Quaternion.Euler(_shakeOffset, 0f, _rollShakeOffset + _shakeRollOffset + _currentLookTilt)
-                * Quaternion.Euler(_shoulderingRotationOffset);
+                * Quaternion.Euler(_shakeOffset, 0f, _shakeRollOffset + _currentLookTilt);
         }
 
         if (cinemachineCamera != null)

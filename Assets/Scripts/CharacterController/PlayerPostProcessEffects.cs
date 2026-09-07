@@ -361,7 +361,7 @@ public class PlayerPostProcessEffects : MonoBehaviour
 
         // The range doubles as the ray's length, so anything past it is not measured
         // rather than measured and then discarded.
-        if (!Physics.Raycast(playerLook.AimRay, out RaycastHit info, autofocusRange,
+        if (!Physics.Raycast(playerLook.InteractionRay, out RaycastHit info, autofocusRange,
                 GameLayers.Queryable, QueryTriggerInteraction.Ignore))
             return false;
 

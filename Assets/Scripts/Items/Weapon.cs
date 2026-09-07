@@ -123,26 +123,15 @@ public class Weapon : Item
     [SerializeField] private HandMotion handMotion;
 
     [Header("Fire Camera Kick")]
+    // A shot's whole recoil. It lands on the camera pivot, which is where the aim is
+    // taken from, so it throws the shot off target and has to be brought back --
+    // the weapon's own transform is deliberately left out of it.
+    //
+    // Pitch has a direction, yaw is scattered either side per shot.
     [SerializeField] private float cameraKickAmount = 1.5f;
     [SerializeField] private float cameraKickHorizontalAmount = 1f;
     [SerializeField] private float cameraKickSpring = 200f;
     [SerializeField] private float cameraKickDamping = 20f;
-    [SerializeField] private float cameraRollShakeAmount = 1f;
-    [SerializeField] private float cameraRollShakeSpring = 200f;
-    [SerializeField] private float cameraRollShakeDamping = 20f;
-
-    [Header("Fire Weapon Roll Shake")]
-    // The weapon's own cant on firing, on its own spring. Separate from the camera
-    // roll above because the two are no longer the same motion seen twice: the kick
-    // lands on the rendered camera alone now, so the weapon riding it is not an
-    // option and its recoil has to be stated here or it has none.
-    //
-    // Which is the better arrangement anyway. A weapon and a head do not recoil
-    // alike -- one is braced against a shoulder and the other is watching -- and
-    // this is where that difference gets to be said.
-    [SerializeField] private float weaponRollShakeAmount = 6f;
-    [SerializeField] private float weaponRollShakeSpring = 300f;
-    [SerializeField] private float weaponRollShakeDamping = 18f;
 
     [Header("Weapon Pose")]
     [SerializeField] private float fireHipHoldDuration = 0.2f;
@@ -199,6 +188,26 @@ public class Weapon : Item
     [SerializeField] private Vector3 aimRotation;
     [SerializeField] private float aimTransitionSpeed = 8f;
 
+    // Where this weapon goes at a full lean, in metres, on top of the slide the
+    // camera already gives it by carrying it.
+    //
+    // The same either way, not mirrored: leaning is signed, but what the weapon does
+    // about it is not. Pulling a barrel in to clear a corner is the same movement to
+    // the left as to the right -- mirroring it would send the weapon out into the
+    // wall on one of the two sides, which is the opposite of the point.
+    //
+    // Per weapon rather than shared with the hands, for the same reason the wall
+    // block pose is: this pivot's local axes are whatever the model's build and
+    // parenting made them, and there is no set of three numbers that means the same
+    // thing on a pistol and on a rifle. It is also the honest place for it -- a long
+    // gun has to be pulled in much harder to clear a corner than a handgun does, and
+    // one figure for both can only ever be wrong for one of them.
+    //
+    // Composed on top of the pose rather than blended into it, like the leans: it is
+    // a thing happening TO whatever the weapon is doing, not another pose competing
+    // with it.
+    [SerializeField] private Vector3 peekOffset;
+
     [Header("Hand IK")]
     [SerializeField] private PlayerAnimator playerAnimator;
     [SerializeField] private Transform rightGripPoint;
@@ -219,8 +228,6 @@ public class Weapon : Item
     private Quaternion _currentAdsRotation;
     private float _fireHipTimer;
     private float _reloadTimer;
-    private float _weaponRollShakeOffset;
-    private float _weaponRollShakeVelocity;
     private float _drawTimer;
     private bool _wasInWalkPose;
     private bool _isInWalkPose;
@@ -374,19 +381,9 @@ public class Weapon : Item
         playerAnimator?.SetAimRigWeightOverride(spineAimWeight, chestAimWeight, upperChestAimWeight, neckAimWeight);
 
         playerLook?.SetFireKickProfile(cameraKickSpring, cameraKickDamping);
-        playerLook?.SetRollShakeProfile(cameraRollShakeSpring, cameraRollShakeDamping);
 
         if (_drawTimer > 0f)
-        {
             _drawTimer -= Time.deltaTime;
-
-            // The view's half at the end of the draw, for the same reason as the
-            // reload's: the take clip has been moving the weapon the whole way up
-            // and is only now finished with it, so the hands have nothing left to
-            // settle from -- but the weapon arriving is a thing worth registering.
-            if (_drawTimer <= 0f)
-                handMotion?.TriggerCameraShouldering();
-        }
 
         if (_fireHipTimer > 0f)
             _fireHipTimer -= Time.deltaTime;
@@ -397,18 +394,8 @@ public class Weapon : Item
         {
             _reloadTimer -= Time.deltaTime;
 
-            // On the way out, not on the way in: the hand comes back to the weapon
-            // once the round is seated, and jolting at the start would land on the
-            // one part of a reload where the grip is still where it was.
-            //
-            // The view's half only. The reload clip is already moving the weapon
-            // through this exact moment, and a spring on the hands as well would be
-            // two things saying where it is.
             if (_reloadTimer <= 0f)
-            {
                 CompleteReloadStep();
-                handMotion?.TriggerCameraShouldering();
-            }
         }
 
         // Held for full auto, pressed for everything else. That one difference is
@@ -507,19 +494,10 @@ public class Weapon : Item
 
             FireHitscan();
 
-            playerLook?.AddFireKick(cameraKickAmount, cameraKickHorizontalAmount, cameraRollShakeAmount);
-
-            // Set, not added, so holding the trigger can't stack shots into a
-            // runaway cant -- the same rule the camera kick follows.
-            _weaponRollShakeVelocity = weaponRollShakeAmount;
+            // After the trace, not before: the round leaves along the aim the shot
+            // was taken with, and the kick is what that shot does to the next one.
+            playerLook?.AddFireKick(cameraKickAmount, cameraKickHorizontalAmount);
         }
-
-        // Damped spring pulling the cant back to nothing. An impulse on the velocity
-        // snaps it away and lets it settle back, which a lerp toward zero can't do:
-        // a lerp only ever approaches, and recoil overshoots.
-        _weaponRollShakeVelocity += (-weaponRollShakeSpring * _weaponRollShakeOffset
-            - weaponRollShakeDamping * _weaponRollShakeVelocity) * Time.deltaTime;
-        _weaponRollShakeOffset += _weaponRollShakeVelocity * Time.deltaTime;
 
         if (posDeltaPivot != null)
         {
@@ -556,20 +534,6 @@ public class Weapon : Item
             else
             {
                 _isInWalkPose = IsCharacterInWalkPose;
-            }
-
-            // Leaving the walking carry only, never settling into it. The two are
-            // not the same event despite being the same transition: the weapon
-            // eases into the walk pose over walkTransitionSpeed, slowly enough that
-            // there is no moment for a jolt to belong to, and comes out of it the
-            // instant something takes priority -- a shot, a sprint, the sights going
-            // up -- at the far quicker rate those poses use.
-            if (_isInWalkPose != _wasInWalkPose)
-            {
-                _wasInWalkPose = _isInWalkPose;
-
-                if (!_isInWalkPose)
-                    handMotion?.TriggerShouldering();
             }
 
             // Every frame, like aiming and reloading, rather than only on the change.
@@ -626,29 +590,38 @@ public class Weapon : Item
             // offset added to the aim pose land in two different places, and only one
             // of them can be the one that was authored; a blend arrives at the pose
             // itself from either end.
-            posDeltaPivot.localPosition =
-                Vector3.Lerp(_currentAdsPosition, wallBlockPosition, _wallBlockAmount);
-
-            // Composed on top of the pose rather than lerped into it, so the shake
-            // settles on its own spring while the pose goes on easing between hip
-            // and aim underneath. Blended into the target instead, the two would be
-            // arguing over one value and the recoil would be dragged toward
-            // whichever pose was winning.
-            // Both cants land on the same axis and about the same point: the weapon's
-            // own pivot. The shot's roll is the weapon twisting in the hands; the
-            // look tilt is the weapon leaning into a turn. HandMotion works the
-            // second one out but deliberately does not apply it -- rolling the hold
-            // point would swing the whole weapon around the grip in an arc, where
-            // rolling here turns it along its own length, which is what a lean is.
+            // Magnitude, not the signed lean: which side is being leaned to decides
+            // nothing here, only how far.
             //
-            // The block pose is blended into the base rotation the same way the
-            // position is, and the shake and cant compose on top of the result --
-            // so a weapon shot while pressed against a wall still recoils, from
-            // wherever the wall has put it.
+            // PeekAmount rather than a figure of its own: the lean is already eased
+            // over peekSpeed and already scaled back by how far the view is pitched,
+            // so this follows a curve that has been shaped twice already rather than
+            // filtering a filter.
+            float peekAmount = playerLook != null ? Mathf.Abs(playerLook.PeekAmount) : 0f;
+
+            posDeltaPivot.localPosition =
+                Vector3.Lerp(_currentAdsPosition, wallBlockPosition, _wallBlockAmount)
+                + peekOffset * peekAmount;
+
+            // The two leans -- into a turn, and out past a corner -- composed on top
+            // of the pose rather than lerped into it. Blended into the target
+            // instead, they would be arguing with it over one value and the lean
+            // would be dragged toward whichever pose was winning.
+            //
+            // HandMotion works both out but deliberately applies neither: rolling the
+            // hold point would swing the whole weapon around the grip in an arc,
+            // where rolling here turns it in place, which is what a lean is. Their
+            // rolls simply add on Z -- a lean is a lean whichever asked for it.
+            Vector3 leanRotation = Vector3.zero;
+            if (handMotion != null)
+            {
+                leanRotation = handMotion.PeekRotation;
+                leanRotation.z += handMotion.LookTilt;
+            }
+
             posDeltaPivot.localRotation =
                 Quaternion.Slerp(_currentAdsRotation, Quaternion.Euler(wallBlockRotation), _wallBlockAmount)
-                * Quaternion.Euler(0f, 0f,
-                    _weaponRollShakeOffset + (handMotion != null ? handMotion.LookTilt : 0f));
+                * Quaternion.Euler(leanRotation);
         }
     }
 
@@ -860,10 +833,28 @@ public class Weapon : Item
         if (playerLook == null || playerLook.CameraTransform == null)
             return;
 
-        // Straight down the middle of the rendered image -- see PlayerLook.AimRay.
-        // Where the crosshair is, is where the round goes, whatever the camera rig
-        // is doing to put the crosshair there.
-        Ray aimRay = playerLook.AimRay;
+        // Out of the barrel, along the aim. The two halves come from different places
+        // on purpose, because they answer different questions.
+        //
+        // WHERE it leaves is the muzzle, which is a fact about the weapon: a barrel
+        // past the edge of a corner has a shot the eye behind the wall does not, and
+        // a barrel buried in a doorframe does not have one the eye can see. Firing
+        // from the eye gets both of those wrong.
+        //
+        // WHICH WAY it goes is the player's aim, not the muzzle's forward. That
+        // transform carries the bob and the sway as well, and firing down them
+        // wanders degrees at walking pace -- which reads as the weapon being broken
+        // rather than alive. See PlayerLook.InteractionRay.
+        //
+        // The consequence is a real one and worth knowing: the line the round travels
+        // is parallel to the crosshair's, offset by however far the muzzle sits from
+        // the eye. Far off that gap closes to nothing; a couple of metres out it does
+        // not, and a shot into a wall at arm's length will land beside the reticle
+        // rather than under it. That is what firing from a barrel means.
+        Ray aimRay = playerLook.InteractionRay;
+
+        if (muzzlePoint != null)
+            aimRay = new Ray(muzzlePoint.position, aimRay.direction);
 
         // One trace per projectile, all from the same origin. A shell is one round
         // that carries several, so the ammo has already been spent once by the time

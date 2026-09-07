@@ -116,6 +116,7 @@ public class PlayerAnimator : MonoBehaviour
 
     private static readonly int ForwardAmountHash = Animator.StringToHash("ForwardAmount");
     private static readonly int IsCrouchingHash = Animator.StringToHash("IsCrouching");
+    private static readonly int CrouchAmountHash = Animator.StringToHash("CrouchAmount");
     private static readonly int TurnLeftHash = Animator.StringToHash("TurnLeft");
     private static readonly int TurnRightHash = Animator.StringToHash("TurnRight");
     private static readonly int IsMovingHash = Animator.StringToHash("IsMoving");
@@ -242,6 +243,7 @@ public class PlayerAnimator : MonoBehaviour
             _animator.SetFloat(ForwardAmountHash, entryForwardAmount);
             _animator.SetBool(IsMovingHash, entryForwardAmount > MoveThreshold);
             _animator.SetBool(IsCrouchingHash, false);
+            _animator.SetFloat(CrouchAmountHash, 0f);
             return;
         }
 
@@ -330,6 +332,12 @@ public class PlayerAnimator : MonoBehaviour
         _animator.SetFloat(ForwardAmountHash, SpeedToForwardAmount(signedSpeed));
         _animator.SetBool(IsCrouchingHash, movement.IsCrouching);
         _animator.SetBool(IsMovingHash, isMoving);
+
+        // Already eased, by PlayerMovement, over the same figure the capsule uses.
+        // Nothing is smoothed here -- a filter on top of a filter is two answers to
+        // one question, and the point of taking it from there is that the collider
+        // and the pose cannot disagree about how far into the crouch the body is.
+        _animator.SetFloat(CrouchAmountHash, movement.CrouchAmount);
     }
 
     // Metres per second along the model's facing onto the blend tree's own axis,

@@ -41,6 +41,20 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] private float standingHeight = 1.8f;
     [SerializeField] private float crouchHeight = 1f;
 
+    // Roughly how long the capsule takes to change height, in seconds. 0 snaps, which
+    // is what this used to do unconditionally.
+    //
+    // The stance itself still flips the instant the key is read -- speed, the animator
+    // and everything reading IsCrouching change at once. This is only the collider
+    // catching up, so a crouch cannot pop the player through a low opening a frame
+    // before the body is visibly down there, nor leave them standing in one for a
+    // frame on the way back up.
+    //
+    // It also drives the pose, through CrouchAmount below -- so with the animator
+    // blending on that parameter rather than on a state transition, this one figure
+    // is the crouch's whole speed: collider, body and shadow together.
+    [SerializeField] private float crouchTransitionTime = 0.15f;
+
     [Header("Animator Link")]
     [SerializeField] private PlayerAnimator playerAnimator;
     [SerializeField] private PlayerStamina stamina;
@@ -54,6 +68,13 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] private float ladderInteractDistance = 1.5f;
     [SerializeField] private float ladderClimbSpeed = 3f;
     [SerializeField] private float ladderJumpOffForce = 4f;
+
+    [Header("Interaction")]
+    // Doors and cars are reached along the same ray the crosshair is drawn on, so
+    // what the reticle is sitting on is what gets used. Left empty they fall back to
+    // the body's facing from chest height, which is where they started -- usable, but
+    // it means aiming at a door handle and reaching a different door.
+    [SerializeField] private PlayerLook playerLook;
 
     [Header("Door")]
     [SerializeField] private string doorTag = "Door";
@@ -159,10 +180,23 @@ public class PlayerMovement : MonoBehaviour
     // to know which item put it there.
     public bool IsAiming => _aimSpeedOverride;
 
+    // How far into the crouch the body is, 0 standing to 1 fully down.
+    //
+    // Read off the capsule rather than kept alongside it, so there is exactly one
+    // thing easing between the two stances and everything that wants to move with a
+    // crouch -- the collider, the animated pose, the view -- is reading the same
+    // number. Two smoothers with the same duration still drift; one cannot.
+    //
+    // IsCrouching is still the stance itself and still flips on the frame the key is
+    // read. This is the body getting there, which is a different question.
+    public float CrouchAmount => Mathf.InverseLerp(standingHeight, crouchHeight, _currentHeight);
+
     private bool HasStamina => stamina == null || stamina.CurrentStamina > 0f;
     private bool CanJump => stamina == null || stamina.HasEnoughForJump;
 
     private CharacterController _characterController;
+    private float _currentHeight;
+    private float _heightVelocity;
     private Vector3 _velocity;
     private bool _aimSpeedOverride;
     private InputAction _moveAction;
@@ -228,6 +262,10 @@ public class PlayerMovement : MonoBehaviour
     {
         _characterController = GetComponent<CharacterController>();
         _characterController.slopeLimit = maxSlopeAngle;
+
+        // Started standing rather than at whatever the collider was authored with, so
+        // the first frame does not smooth in from an unrelated height.
+        _currentHeight = standingHeight;
 
         var playerMap = inputActions.FindActionMap("Player", throwIfNotFound: true);
         _moveAction = playerMap.FindAction("Move");
@@ -354,15 +392,22 @@ public class PlayerMovement : MonoBehaviour
         return false;
     }
 
+    // Where the player is reaching. The same ray the crosshair is drawn on, so
+    // whatever the reticle is sitting on is what gets reached -- the alternative is
+    // the body's facing, which can differ from the view by most of a doorway.
+    private Ray InteractionRay => playerLook != null
+        ? playerLook.InteractionRay
+        : new Ray(transform.position + Vector3.up * (_characterController.height * 0.5f),
+            transform.forward);
+
     private bool TryFindDoor(out Door door)
     {
         door = null;
-        Vector3 origin = transform.position + Vector3.up * (_characterController.height * 0.5f);
 
         // Masked, because this takes the nearest hit and then checks its tag -- so
         // anything in the way is not ignored, it fails the tag check and the door
         // stops being usable. A severed arm lying against it would be enough.
-        if (Physics.Raycast(origin, transform.forward, out RaycastHit hit, doorInteractDistance, GameLayers.Queryable)
+        if (Physics.Raycast(InteractionRay, out RaycastHit hit, doorInteractDistance, GameLayers.Queryable)
             && hit.collider.CompareTag(doorTag))
             door = hit.collider.GetComponentInParent<Door>();
 
@@ -372,10 +417,9 @@ public class PlayerMovement : MonoBehaviour
     private bool TryFindCarDoor(out Car car)
     {
         car = null;
-        Vector3 origin = transform.position + Vector3.up * (_characterController.height * 0.5f);
 
         // Masked for the same reason as the door: nearest hit, then a tag check.
-        if (Physics.Raycast(origin, transform.forward, out RaycastHit hit, carInteractDistance, GameLayers.Queryable)
+        if (Physics.Raycast(InteractionRay, out RaycastHit hit, carInteractDistance, GameLayers.Queryable)
             && hit.collider.CompareTag(carDoorTag))
             car = hit.collider.GetComponentInParent<Car>();
 
@@ -826,7 +870,16 @@ public class PlayerMovement : MonoBehaviour
 
         IsCrouching = IsGroundedStable && (wantsCrouch || blockedFromStanding);
 
-        _characterController.height = IsCrouching ? crouchHeight : standingHeight;
+        // Critically damped rather than lerped, so the capsule settles onto its new
+        // height instead of easing forever toward it -- and so crouchTransitionTime
+        // is an honest "how long to get there" rather than a rate whose meaning
+        // changes with how far it has to go.
+        float targetHeight = IsCrouching ? crouchHeight : standingHeight;
+        _currentHeight = crouchTransitionTime > 0f
+            ? Mathf.SmoothDamp(_currentHeight, targetHeight, ref _heightVelocity, crouchTransitionTime)
+            : targetHeight;
+
+        _characterController.height = _currentHeight;
 
         // Raised by the skin width, not just half the height. A CharacterController
         // never lets its capsule touch a surface -- it always keeps that much

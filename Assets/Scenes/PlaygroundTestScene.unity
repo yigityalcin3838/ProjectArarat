@@ -20,11 +20,11 @@ RenderSettings:
   m_FogDensity: 0.008
   m_LinearFogStart: 100.6
   m_LinearFogEnd: 299.9
-  m_AmbientSkyColor: {r: 0.212, g: 0.227, b: 0.259, a: 1}
+  m_AmbientSkyColor: {r: 0.6320754, g: 0.6320754, b: 0.6320754, a: 1}
   m_AmbientEquatorColor: {r: 0.114, g: 0.125, b: 0.133, a: 1}
   m_AmbientGroundColor: {r: 0.047, g: 0.043, b: 0.035, a: 1}
-  m_AmbientIntensity: 1
-  m_AmbientMode: 0
+  m_AmbientIntensity: 2.21
+  m_AmbientMode: 3
   m_SubtractiveShadowColor: {r: 0.42, g: 0.478, b: 0.627, a: 1}
   m_SkyboxMaterial: {fileID: 2100000, guid: ef2cfa370fdb3eb459396880178d591e, type: 2}
   m_HaloStrength: 0.5
@@ -16970,6 +16970,8 @@ MonoBehaviour:
   peekUpperChestBone: {fileID: 385866199}
   peekHeadBone: {fileID: 2040744468}
   peekHeadTiltMultiplier: 3
+  aimHeadTiltMultiplier: 1
+  aimHeadTiltSpeed: 8
   handIKTransitionDuration: 0.175
   layerWeightTransitionSpeed: 7
 --- !u!95 &360032583
@@ -28783,7 +28785,7 @@ GameObject:
   - component: {fileID: 597031279}
   - component: {fileID: 597031278}
   m_Layer: 5
-  m_Name: RawImage
+  m_Name: Weapon Crosshair
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -32672,7 +32674,7 @@ Transform:
   m_GameObject: {fileID: 678758960}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: -0, y: 0.008, z: 0.161}
+  m_LocalPosition: {x: 0, y: 0.032, z: 0.161}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -33005,8 +33007,8 @@ Transform:
   m_GameObject: {fileID: 686630785}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 0.75}
+  m_LocalPosition: {x: 0, y: 0.017, z: 0.007}
+  m_LocalScale: {x: 1.0085399, y: 1.0085399, z: 0.62906164}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 197326411}
@@ -36749,6 +36751,7 @@ GameObject:
   - component: {fileID: 768611303}
   - component: {fileID: 768611304}
   - component: {fileID: 768611305}
+  - component: {fileID: 768611307}
   m_Layer: 6
   m_Name: Player
   m_TagString: Untagged
@@ -36783,6 +36786,7 @@ MonoBehaviour:
   crouchBackSpeed: 1.25
   standingHeight: 2
   crouchHeight: 1.35
+  crouchTransitionTime: 0.15
   playerAnimator: {fileID: 360032582}
   stamina: {fileID: 768611303}
   items: {fileID: 768611306}
@@ -36791,6 +36795,7 @@ MonoBehaviour:
   ladderInteractDistance: 1
   ladderClimbSpeed: 2
   ladderJumpOffForce: 2
+  playerLook: {fileID: 768611302}
   doorTag: Door
   doorInteractDistance: 2
   carDoorTag: CarDoorLeft
@@ -36885,15 +36890,25 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PlayerLook
   inputActions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   cameraPivot: {fileID: 1072553370}
-  mouseSensitivity: 0.1
-  maxLookAngle: 75
+  mouseSensitivity: 0.05
+  standingPitchUpLimit: 60
+  standingPitchDownLimit: 65
+  crouchPitchUpLimit: 55
+  crouchPitchDownLimit: 55
+  noItemPitchUpLimit: 75
+  noItemPitchDownLimit: 75
   headAnchor: {fileID: 678758961}
   headFollowAmount: 0.5
-  headFollowSmoothTime: 0.025
-  crouchEyeDrop: 0.15
+  headFollowSmoothTime: 0.001
+  crouchEyeDrop: 0.3
+  crouchDropTime: 0.1
+  headMountWhenHandsAreFree: 1
+  headMountBlendTime: 0.25
+  items: {fileID: 768611306}
   peekDistance: 0.15
-  peekTilt: 12
+  peekTilt: 10
   peekSpeed: 4
+  peekAtMaxPitchRatio: 0.15
   movement: {fileID: 768611296}
   tiltAmount: 2
   tiltSpeed: 7
@@ -36926,6 +36941,11 @@ MonoBehaviour:
     walk: 1
     sprint: 2
     aim: 0.2
+  freeAimEnabled: 1
+  freeAimYawLimit: 5
+  freeAimPitchLimit: 5
+  freeAimAmount: 0.25
+  freeAimCentreSpeed: 7
   lookTiltAmount: 4
   lookTiltReferenceRate: 200
   lookTiltIntensity:
@@ -37044,11 +37064,30 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PlayerItems
   inputActions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   movement: {fileID: 768611296}
-  handMotion: {fileID: 1915127693}
   itemSlots:
   - {fileID: 901984125}
   - {fileID: 1678308404}
   - {fileID: 1909062647}
+--- !u!114 &768611307
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 768611295}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5da4139c4646eb440b359c86ecbc6bdc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerCrosshair
+  crosshair: {fileID: 597031278}
+  playerLook: {fileID: 768611302}
+  movement: {fileID: 768611296}
+  hideWhileAiming: 0
+  maxDistance: 200
+  fallbackDistance: 60
+  distanceSmoothSpeed: 12
+  minDistance: 0.5
 --- !u!1 &768796603
 GameObject:
   m_ObjectHideFlags: 0
@@ -43528,16 +43567,10 @@ MonoBehaviour:
   hitMarkerDuration: 4
   movement: {fileID: 768611296}
   handMotion: {fileID: 1915127693}
-  cameraKickAmount: 45
-  cameraKickHorizontalAmount: 17.5
-  cameraKickSpring: 50
-  cameraKickDamping: 20
-  cameraRollShakeAmount: 150
-  cameraRollShakeSpring: 500
-  cameraRollShakeDamping: 10
-  weaponRollShakeAmount: 250
-  weaponRollShakeSpring: 300
-  weaponRollShakeDamping: 12
+  cameraKickAmount: 50
+  cameraKickHorizontalAmount: 25
+  cameraKickSpring: 75
+  cameraKickDamping: 12
   fireHipHoldDuration: 0.2
   posDeltaPivot: {fileID: 901984127}
   muzzlePoint: {fileID: 670684129}
@@ -43548,7 +43581,7 @@ MonoBehaviour:
   wallPullbackInSpeed: 5
   wallPullbackOutSpeed: 10
   hipPosition: {x: 0.1, y: 0.125, z: 0.525}
-  hipRotation: {x: -3, y: -3, z: 6}
+  hipRotation: {x: 0, y: 0, z: 6}
   walkPosition: {x: 0.1215, y: 0.17, z: 0.45}
   walkRotation: {x: -45, y: -20, z: 20}
   walkTransitionSpeed: 2
@@ -43559,6 +43592,7 @@ MonoBehaviour:
   aimPosition: {x: 0.1, y: 0.15, z: 0.5}
   aimRotation: {x: 0, y: 0, z: 12}
   aimTransitionSpeed: 15
+  peekOffset: {x: 0, y: 0, z: -0.05}
   playerAnimator: {fileID: 360032582}
   rightGripPoint: {fileID: 1243831821}
   leftGripPoint: {fileID: 78354762}
@@ -46287,7 +46321,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 6e282638c37323f4bbf55ff148a7fb6a, type: 3}
       propertyPath: m_LocalScale.z
-      value: 0.85
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 6e282638c37323f4bbf55ff148a7fb6a, type: 3}
       propertyPath: m_LocalPosition.x
@@ -58824,7 +58858,7 @@ Transform:
   m_GameObject: {fileID: 1231909080}
   serializedVersion: 2
   m_LocalRotation: {x: 0.17237954, y: 0.10227137, z: -0.6279902, w: 0.75196695}
-  m_LocalPosition: {x: -0.638, y: -0.319, z: -0.078}
+  m_LocalPosition: {x: -0.638, y: -0.198, z: -0.078}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -71832,13 +71866,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1527675124}
   serializedVersion: 2
-  m_LocalRotation: {x: -0.17078415, y: 0.14182337, z: -0.88976586, w: -0.3987927}
-  m_LocalPosition: {x: -0.0452, y: -0.0308, z: 0.007}
+  m_LocalRotation: {x: -0.16220023, y: 0.12272608, z: -0.89260036, w: -0.40236062}
+  m_LocalPosition: {x: -0.0452, y: -0.030799985, z: 0.051}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 686630786}
-  m_LocalEulerAnglesHint: {x: 22.867, y: 11.951, z: 134.142}
+  m_LocalEulerAnglesHint: {x: 20.464, y: 11.751, z: 133.599}
 --- !u!1 &1527951780
 GameObject:
   m_ObjectHideFlags: 0
@@ -79100,16 +79134,10 @@ MonoBehaviour:
   hitMarkerDuration: 4
   movement: {fileID: 768611296}
   handMotion: {fileID: 1915127693}
-  cameraKickAmount: 90
-  cameraKickHorizontalAmount: 17.5
+  cameraKickAmount: 150
+  cameraKickHorizontalAmount: 75
   cameraKickSpring: 50
   cameraKickDamping: 20
-  cameraRollShakeAmount: 150
-  cameraRollShakeSpring: 500
-  cameraRollShakeDamping: 10
-  weaponRollShakeAmount: 250
-  weaponRollShakeSpring: 300
-  weaponRollShakeDamping: 12
   fireHipHoldDuration: 0.2
   posDeltaPivot: {fileID: 1678308406}
   muzzlePoint: {fileID: 1015725934}
@@ -79119,8 +79147,8 @@ MonoBehaviour:
   wallCheckRadius: 0.005
   wallPullbackInSpeed: 5
   wallPullbackOutSpeed: 10
-  hipPosition: {x: 0.11, y: 0.145, z: 0.52}
-  hipRotation: {x: -2, y: -2, z: 6}
+  hipPosition: {x: 0.11, y: 0.145, z: 0.5}
+  hipRotation: {x: 0, y: 0, z: 6}
   walkPosition: {x: 0, y: 0.1, z: 0.45}
   walkRotation: {x: 15, y: -25, z: 15}
   walkTransitionSpeed: 1
@@ -79131,13 +79159,14 @@ MonoBehaviour:
   aimPosition: {x: 0.09, y: 0.155, z: 0.515}
   aimRotation: {x: -1, y: -1, z: 10}
   aimTransitionSpeed: 15
+  peekOffset: {x: 0, y: 0, z: -0.05}
   playerAnimator: {fileID: 360032582}
   rightGripPoint: {fileID: 257542597}
   leftGripPoint: {fileID: 2011063186}
   rightElbowHint: {fileID: 14032143}
   leftElbowHint: {fileID: 1334874229}
   spineAimWeight: 0.75
-  chestAimWeight: 0.25
+  chestAimWeight: 0.75
   upperChestAimWeight: 0.5
   neckAimWeight: 1
 --- !u!4 &1678308406
@@ -82601,7 +82630,7 @@ Transform:
   m_GameObject: {fileID: 1751319034}
   serializedVersion: 2
   m_LocalRotation: {x: 0.17237954, y: 0.10227137, z: -0.6279902, w: 0.75196695}
-  m_LocalPosition: {x: 0.211, y: -0.431, z: -0.095}
+  m_LocalPosition: {x: 0.325, y: -0.407, z: -0.113}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -89479,15 +89508,9 @@ MonoBehaviour:
   movement: {fileID: 768611296}
   handMotion: {fileID: 1915127693}
   cameraKickAmount: 360
-  cameraKickHorizontalAmount: 60
+  cameraKickHorizontalAmount: 100
   cameraKickSpring: 50
   cameraKickDamping: 20
-  cameraRollShakeAmount: 150
-  cameraRollShakeSpring: 500
-  cameraRollShakeDamping: 10
-  weaponRollShakeAmount: 500
-  weaponRollShakeSpring: 250
-  weaponRollShakeDamping: 12
   fireHipHoldDuration: 0.2
   posDeltaPivot: {fileID: 1909062649}
   muzzlePoint: {fileID: 169215702}
@@ -89497,8 +89520,8 @@ MonoBehaviour:
   wallCheckRadius: 0.005
   wallPullbackInSpeed: 5
   wallPullbackOutSpeed: 10
-  hipPosition: {x: 0.11, y: 0.15, z: 0.485}
-  hipRotation: {x: -2, y: -2, z: 6}
+  hipPosition: {x: 0.11, y: 0.15, z: 0.47}
+  hipRotation: {x: 0, y: 0, z: 6}
   walkPosition: {x: 0, y: 0.1, z: 0.4}
   walkRotation: {x: -15, y: -45, z: 21.26}
   walkTransitionSpeed: 1
@@ -89509,13 +89532,14 @@ MonoBehaviour:
   aimPosition: {x: 0.1, y: 0.175, z: 0.5}
   aimRotation: {x: -1, y: -1, z: 8}
   aimTransitionSpeed: 15
+  peekOffset: {x: 0, y: 0, z: -0.05}
   playerAnimator: {fileID: 360032582}
   rightGripPoint: {fileID: 446602556}
   leftGripPoint: {fileID: 1527675125}
   rightElbowHint: {fileID: 1751319035}
   leftElbowHint: {fileID: 1231909081}
   spineAimWeight: 0.75
-  chestAimWeight: 0.25
+  chestAimWeight: 0.75
   upperChestAimWeight: 0.5
   neckAimWeight: 1
 --- !u!4 &1909062649
@@ -89705,6 +89729,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::HandMotion
   movement: {fileID: 768611296}
   look: {fileID: 768611302}
+  chestAnchor: {fileID: 385866199}
+  chestFollowAmount: 0.25
+  chestFollowSmoothTime: 0.25
   bobHorizontalAmount: 0.005
   bobVerticalAmount: 0.01
   bobPitchAmount: 2
@@ -89756,32 +89783,18 @@ MonoBehaviour:
   lookSwayPitchAmount: 15
   lookSwayReferenceRate: 300
   lookSwayIntensity:
-    crouch: 0.5
+    crouch: 1
     walk: 1
     sprint: 2
-    aim: 1
+    aim: 0.5
+  lookSwayFreeAimOnMultiplier: 0.25
+  lookSwayFreeAimOffMultiplier: 1
   lookSwaySmoothing:
     crouch: 4
     walk: 4
     sprint: 6
     aim: 4
-  jumpKickAmount: -1
-  landKickAmount: -0.5
-  jumpKickPitchAmount: -60
-  landKickPitchAmount: -60
-  jumpKickRollAmount: -180
-  landKickRollAmount: -180
-  kickSpring: 75
-  kickDamping: 17
-  shoulderingPosition: {x: 0, y: 0.1, z: 0.75}
-  shoulderingRotation: {x: -5, y: 0, z: 0}
-  shoulderingSpring: 180
-  shoulderingDamping: 10
-  cameraShoulderingPosition: {x: 0, y: 0, z: 0}
-  cameraShoulderingRotation: {x: 0, y: 0, z: 45}
-  cameraShoulderingSpring: 120
-  cameraShoulderingDamping: 12
-  peekRotation: {x: 0, y: 0, z: -7}
+  peekRotation: {x: 0, y: 0, z: -20}
   lookTiltAmount: 45
   lookTiltReferenceRate: 300
   lookTiltIntensity:
@@ -89794,6 +89807,8 @@ MonoBehaviour:
     walk: 2
     sprint: 4
     aim: 2
+  lookTiltFreeAimOnMultiplier: 1
+  lookTiltFreeAimOffMultiplier: 1
 --- !u!1 &1915236489
 GameObject:
   m_ObjectHideFlags: 0
@@ -94469,7 +94484,7 @@ Transform:
   m_GameObject: {fileID: 2011063185}
   serializedVersion: 2
   m_LocalRotation: {x: -0.18947929, y: 0.10836784, z: -0.86759114, w: -0.4468105}
-  m_LocalPosition: {x: -0.0381, y: -0.0155, z: -0.0142}
+  m_LocalPosition: {x: -0.0381, y: -0.0155, z: 0.033}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []

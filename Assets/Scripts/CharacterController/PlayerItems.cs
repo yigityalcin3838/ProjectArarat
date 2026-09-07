@@ -16,11 +16,6 @@ public class PlayerItems : MonoBehaviour
     [Header("Movement Link")]
     [SerializeField] private PlayerMovement movement;
 
-    // Told when a swap is asked for, so the view registers the command. Only the
-    // camera's half: the weapon is about to be put away and another brought up by
-    // their own clips, and a spring on the hands as well would be arguing with them
-    // about where the item is.
-    [SerializeField] private HandMotion handMotion;
 
     [Header("Item Slots (1, 2, 3)")]
     [SerializeField] private GameObject[] itemSlots = new GameObject[3];
@@ -166,12 +161,6 @@ public class PlayerItems : MonoBehaviour
     {
         if (slot == _equippedSlot)
             return;
-
-        // On the command, not on either animation reaching anywhere. What this marks
-        // is the decision -- a stow and a draw both follow, each with its own clip,
-        // and the view acknowledging the moment the key went down is what keeps the
-        // whole sequence from starting silently.
-        handMotion?.TriggerCameraShouldering();
 
         if (_equippedSlot >= 0)
         {

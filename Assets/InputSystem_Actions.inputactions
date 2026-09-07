@@ -107,6 +107,16 @@
                     "priority": 0
                 },
                 {
+                    "name": "FreeAimToggle",
+                    "type": "Button",
+                    "id": "5c8e2a41-7b3d-4f16-9e04-c2a7d1b6f830",
+                    "expectedControlType": "Button",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false,
+                    "priority": 0
+                },
+                {
                     "name": "SelectItem1",
                     "type": "Button",
                     "id": "9b1d5e3a-4c7f-4a2b-8e6d-1f3a5c7b9d2e",
@@ -540,6 +550,17 @@
                     "processors": "",
                     "groups": "Keyboard&Mouse",
                     "action": "Crouch",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "7d1f6b93-e480-4c2a-b5f7-9034ae6218cd",
+                    "path": "<Keyboard>/u",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "Keyboard&Mouse",
+                    "action": "FreeAimToggle",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
