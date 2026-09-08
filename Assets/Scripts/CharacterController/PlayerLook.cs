@@ -198,6 +198,7 @@ public class PlayerLook : MonoBehaviour
     [SerializeField] private float maxFovBoost = 10f;
     [SerializeField] private float fovSpeed = 8f;
 
+
     [Header("Ladder Look")]
     [SerializeField] private float climbLookYawLimit = 100f;
     [SerializeField] private float climbLookPitchUpLimit = 60f;
@@ -538,6 +539,13 @@ public class PlayerLook : MonoBehaviour
     private float _climbCameraYaw;
     private bool _wasClimbing;
     private float? _fovOverride;
+
+    // The base is not stored here on purpose -- it is authored on the renderer asset
+    // and read back through SettingsFOV. A copy on the player would be a second place
+    // the same number lives, and the weapon settling to a different FOV than the one
+    // the artist set is exactly the bug that follows from that.
+    private float? _viewModelFovOverride;
+    private float _viewModelFov = -1f;
     private float _breathTimer;
     private Vector3 _currentBreathRotation;
     private float _bobTimer;
@@ -558,6 +566,7 @@ public class PlayerLook : MonoBehaviour
     private Vector3 _basePivotLocalPosition;
     private Vector3 _headReference;
     private bool _hasHeadReference;
+    private bool _warnedAboutHeadAnchor;
     private Vector3 _followedLocalPosition;
     private Vector3 _followVelocity;
     private float _crouchDrop;
@@ -580,6 +589,16 @@ public class PlayerLook : MonoBehaviour
     // push-values-in pattern as PlayerAnimator's hand IK targets.
     public void SetFovOverride(float fov) => _fovOverride = fov;
     public void ClearFovOverride() => _fovOverride = null;
+
+    // The same pattern for the view-model pass, which draws held items over the world
+    // through a projection of its own (see ViewmodelOverlayFeature).
+    //
+    // Separate from the one above because the two answer different questions: the
+    // world FOV decides how much can be seen, the view-model FOV decides how a weapon
+    // is shaped. Down the sights both usually move, and rarely by the same amount.
+    public void SetViewModelFovOverride(float fov) => _viewModelFovOverride = fov;
+    public void ClearViewModelFovOverride() => _viewModelFovOverride = null;
+
 
     // Weapon-driven recoil kick on the camera itself -- the weapon owns the
     // amount/spring/damping (its recoil "feel") and just pushes them in, the same
@@ -620,6 +639,44 @@ public class PlayerLook : MonoBehaviour
         {
             Transform pivotSpace = cameraPivot.parent != null ? cameraPivot.parent : transform;
             return pivotSpace.InverseTransformPoint(headAnchor.position);
+        }
+    }
+
+    // Whether the anchor is a bone of THIS character rather than something left over
+    // somewhere else in the scene.
+    //
+    // The follow survives a wrong anchor because it only ever reads change, and a
+    // stationary object contributes none. The mount does not: it puts the view where
+    // the anchor is, full stop, so an anchor orphaned by a model swap drops the
+    // camera to wherever that object was left -- usually the scene origin, which
+    // reads as the view falling to the character's feet the moment its hands are
+    // empty, since that is the only time the mount is on.
+    //
+    // Cheap to check and it fails loudly, which is the whole point: the symptom on
+    // its own points at the camera code, and the cause is a reference in the
+    // Inspector that nothing else in the game would ever complain about.
+    private bool HeadAnchorIsValid
+    {
+        get
+        {
+            if (headAnchor == null)
+                return false;
+
+            if (headAnchor.IsChildOf(transform))
+                return true;
+
+            if (!_warnedAboutHeadAnchor)
+            {
+                _warnedAboutHeadAnchor = true;
+                Debug.LogWarning(
+                    $"PlayerLook's Head Anchor ('{headAnchor.name}') is not under {name}, so it is " +
+                    "not a bone of this character -- most likely it was orphaned by a model swap. " +
+                    "The head mount is off until it is re-parented to the new skeleton's head, " +
+                    "because mounting the view on it would put the camera wherever that object " +
+                    "has been left.", this);
+            }
+
+            return false;
         }
     }
 
@@ -665,7 +722,7 @@ public class PlayerLook : MonoBehaviour
     // position it was placed at, over the first fraction of a second of play.
     private void LateUpdate()
     {
-        if (!_hasHeadReference && headAnchor != null && cameraPivot != null)
+        if (!_hasHeadReference && cameraPivot != null && HeadAnchorIsValid)
         {
             _headReference = HeadLocalPosition;
             _hasHeadReference = true;
@@ -677,6 +734,12 @@ public class PlayerLook : MonoBehaviour
         _lookAction.Disable();
         _peekAction?.Disable();
         _freeAimToggleAction?.Disable();
+
+        // Handed back to the renderer asset's own figure. -1 is the feature's "nobody
+        // is driving this" value, and without it exiting play would leave the last
+        // frame's aim FOV baked into the static for the rest of the session.
+        ViewmodelOverlayFeature.runtimeViewmodelFOV = -1f;
+        _viewModelFov = -1f;
     }
 
     private void Update()
@@ -1041,14 +1104,14 @@ public class PlayerLook : MonoBehaviour
             // out. A ladder and a car need no help either way; neither has hands to
             // ask about.
             bool headMounted = headMountWhenHandsAreFree
-                && headAnchor != null
+                && HeadAnchorIsValid
                 && (lockBodyYaw || handsFree);
 
             _headMountBlend = Mathf.SmoothDamp(
                 _headMountBlend, headMounted ? 1f : 0f,
                 ref _headMountBlendVelocity, headMountBlendTime);
 
-            Vector3 pivotPosition = _headMountBlend > 0.0001f && headAnchor != null
+            Vector3 pivotPosition = _headMountBlend > 0.0001f && HeadAnchorIsValid
                 ? Vector3.Lerp(followedPosition, HeadLocalPosition, _headMountBlend)
                 : followedPosition;
 
@@ -1135,5 +1198,23 @@ public class PlayerLook : MonoBehaviour
             lens.FieldOfView = Mathf.Lerp(lens.FieldOfView, targetFov, fovSpeed * Time.deltaTime);
             cinemachineCamera.Lens = lens;
         }
+
+        // Eased on the same rate as the world's, because they are one movement drawn
+        // in two passes: raising the sights narrows what can be seen and brings the
+        // weapon up, and the two arriving at different times reads as a weapon sliding
+        // into a picture that has already finished moving.
+        //
+        // Pushed to a static because the renderer feature is not a scene object and
+        // has nothing to be wired to. Which also means it outlives this component --
+        // hence the reset in OnDisable, or a stopped player would leave the last aim
+        // FOV pinned on for good.
+        float targetViewModelFov = _viewModelFovOverride ?? ViewmodelOverlayFeature.SettingsFOV;
+
+        // First frame lands outright rather than easing up from nothing.
+        _viewModelFov = _viewModelFov > 0f
+            ? Mathf.Lerp(_viewModelFov, targetViewModelFov, fovSpeed * Time.deltaTime)
+            : targetViewModelFov;
+
+        ViewmodelOverlayFeature.runtimeViewmodelFOV = _viewModelFov;
     }
 }

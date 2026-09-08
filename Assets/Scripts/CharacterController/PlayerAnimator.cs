@@ -1,5 +1,4 @@
 ﻿using UnityEngine;
-using UnityEngine.Animations.Rigging;
 
 [RequireComponent(typeof(Animator))]
 [DefaultExecutionOrder(50)]
@@ -11,11 +10,49 @@ public class PlayerAnimator : MonoBehaviour
     [SerializeField] private float turnSpeed = 720f;
     [SerializeField] private float turnInPlaceToleranceAngle = 90f;
 
-    [Header("Aim Rig")]
-    [SerializeField] private MultiAimConstraint spineAim;
-    [SerializeField] private MultiAimConstraint chestAim;
-    [SerializeField] private MultiAimConstraint upperChestAim;
-    [SerializeField] private MultiAimConstraint neckAim;
+    [Header("Aim Offset")]
+    // How far the upper body may be turned and tipped away from the legs, in degrees.
+    //
+    // Has to cover the widest the legs ever get: a pure sideways strafe turns them a
+    // quarter turn, and a backwards-diagonal more, so anything under 90 leaves part of
+    // the strafe uncancelled and the shoulders come round with the feet. The
+    // turn-in-place fires at turnInPlaceToleranceAngle and brings the legs back, so
+    // this only has to reach as far as that does.
+    [SerializeField] private float aimOffsetMaxYaw = 100f;
+    [SerializeField] private float aimOffsetMaxPitch = 55f;
+
+    // Seconds for the torso to catch up. Small on purpose: the legs already turn at
+    // turnSpeed, so this is the shoulders trailing the hips by a moment rather than a
+    // filter of its own. 0 welds them together.
+    [SerializeField] private float aimOffsetSmoothTime = 0.06f;
+
+    // Degrees of leg turn the torso lets pass before it starts countering.
+    //
+    // Defaults to none, because the legs turning at all is the thing being cancelled
+    // -- any deadzone here is that much of a strafe left in the shoulders. It is here
+    // for the other case: standing still and turning the view, where the legs hold
+    // their heading and a little give in the waist reads better than a torso welded to
+    // the mouse.
+    [SerializeField] private float aimOffsetYawDeadzone = 0f;
+
+    // How much of the angle each bone applies, with nothing in the hands. A held item
+    // pushes its own four and those win.
+    //
+    // 1 is all of it, 0 is none, and the numbers are used exactly as written.
+    //
+    // They are a chain, and that is the whole of how to read them: a bone applies its
+    // share and everything above it is carried along. Spine 1 with the rest 0 turns
+    // the waist and takes the entire torso round rigid -- chest, shoulders, head and
+    // weapon keeping their shape -- which is a body turning at the waist. Spreading
+    // the same total across all four instead leaves each joint part of the way back
+    // and the shoulders half-turned, which is a body being wrung out.
+    //
+    // Because they compound, they are not shares of a budget: 1 and 1 is two turns,
+    // not one split in half.
+    [SerializeField] private float defaultSpineAimWeight = 1f;
+    [SerializeField] private float defaultChestAimWeight = 0f;
+    [SerializeField] private float defaultUpperChestAimWeight = 0f;
+    [SerializeField] private float defaultNeckAimWeight = 0f;
 
     [Header("Peek Slide")]
     // The body's share of the lean. PlayerLook steps the view sideways; these three
@@ -135,6 +172,11 @@ public class PlayerAnimator : MonoBehaviour
     private static readonly int CarEnterCompleteHash = Animator.StringToHash("CarEnterComplete");
     private static readonly int IsAimingHash = Animator.StringToHash("IsAiming");
 
+    private float _aimOffsetYaw;
+    private float _aimOffsetYawVelocity;
+    private float _aimOffsetPitch;
+    private float _aimOffsetPitchVelocity;
+
     private Animator _animator;
     private int _itemLayerIndex;
     private int _ladderCarLayerIndex;
@@ -148,15 +190,10 @@ public class PlayerAnimator : MonoBehaviour
     private float _entryStartFacingOffset;
     private bool _isItemPoseHeld;
     private bool _hasAimRigWeightOverride;
-    private bool _wasAimRigWeightOverrideActive;
     private float _spineAimWeightOverride;
     private float _chestAimWeightOverride;
     private float _upperChestAimWeightOverride;
     private float _neckAimWeightOverride;
-    private float _spineAimPreOverrideWeight;
-    private float _chestAimPreOverrideWeight;
-    private float _upperChestAimPreOverrideWeight;
-    private float _neckAimPreOverrideWeight;
     private Transform _leftHandIKTarget;
     private Transform _rightHandIKTarget;
     private Transform _leftHandIKHint;
@@ -213,7 +250,8 @@ public class PlayerAnimator : MonoBehaviour
             _animator.SetLayerWeight(_ladderCarLayerIndex, _ladderCarLayerWeight);
         }
 
-        UpdateAimRigWeightOverride();
+
+
 
         if (movement.IsClimbingLadder || movement.IsInCar)
         {
@@ -530,6 +568,7 @@ public class PlayerAnimator : MonoBehaviour
 
     public void ClearAimRigWeightOverride() => _hasAimRigWeightOverride = false;
 
+
     // Lets an item keep the character in the item pose after it has already been
     // unequipped -- for the length of its own put-away animation, so the body
     // stays on the weapon until it's actually away rather than switching on the
@@ -669,78 +708,9 @@ public class PlayerAnimator : MonoBehaviour
     // live in Play Mode) whenever no item is overriding it. Both the apply and
     // restore are lerped (not snapped) so entering/leaving an override -- e.g. a
     // take/holster animation finishing -- doesn't pop the pose in a single frame.
-    private const float AimRigWeightSettleThreshold = 0.001f;
 
-    private bool _isRestoringAimRigWeight;
 
     private float _currentAimHeadTilt;
-
-    private void UpdateAimRigWeightOverride()
-    {
-        // Held exactly where the outgoing item left them for the length of a swap.
-        // An item clears its override the instant it is unequipped, so between one
-        // going away and the next coming up nobody is pushing weights and the
-        // constraints unwind toward their resting values -- measured at 0.50 mid-
-        // swap against the 0.85 the pistol asks for. The torso untwists and twists
-        // back over the better part of a second, which is the whole of what is left
-        // of the swap glitch now that the layer weight and the hand IK hold.
-        //
-        // Returning outright rather than skipping the restore, so the bookkeeping
-        // below is untouched too: the pre-override weights stay the ones from before
-        // the first item, and the next item's push lerps on from here instead of
-        // caching a value that is itself an override.
-        if (!_hasAimRigWeightOverride && items != null && items.IsChangingItem)
-            return;
-
-        float t = layerWeightTransitionSpeed * Time.deltaTime;
-
-        if (_hasAimRigWeightOverride)
-        {
-            if (!_wasAimRigWeightOverrideActive)
-            {
-                if (spineAim != null) _spineAimPreOverrideWeight = spineAim.weight;
-                if (chestAim != null) _chestAimPreOverrideWeight = chestAim.weight;
-                if (upperChestAim != null) _upperChestAimPreOverrideWeight = upperChestAim.weight;
-                if (neckAim != null) _neckAimPreOverrideWeight = neckAim.weight;
-            }
-
-            if (spineAim != null) spineAim.weight = Mathf.Lerp(spineAim.weight, _spineAimWeightOverride, t);
-            if (chestAim != null) chestAim.weight = Mathf.Lerp(chestAim.weight, _chestAimWeightOverride, t);
-            if (upperChestAim != null) upperChestAim.weight = Mathf.Lerp(upperChestAim.weight, _upperChestAimWeightOverride, t);
-            if (neckAim != null) neckAim.weight = Mathf.Lerp(neckAim.weight, _neckAimWeightOverride, t);
-
-            _isRestoringAimRigWeight = false;
-        }
-        else if (_wasAimRigWeightOverrideActive || _isRestoringAimRigWeight)
-        {
-            bool stillRestoring = false;
-
-            if (spineAim != null)
-            {
-                spineAim.weight = Mathf.Lerp(spineAim.weight, _spineAimPreOverrideWeight, t);
-                stillRestoring |= Mathf.Abs(spineAim.weight - _spineAimPreOverrideWeight) > AimRigWeightSettleThreshold;
-            }
-            if (chestAim != null)
-            {
-                chestAim.weight = Mathf.Lerp(chestAim.weight, _chestAimPreOverrideWeight, t);
-                stillRestoring |= Mathf.Abs(chestAim.weight - _chestAimPreOverrideWeight) > AimRigWeightSettleThreshold;
-            }
-            if (upperChestAim != null)
-            {
-                upperChestAim.weight = Mathf.Lerp(upperChestAim.weight, _upperChestAimPreOverrideWeight, t);
-                stillRestoring |= Mathf.Abs(upperChestAim.weight - _upperChestAimPreOverrideWeight) > AimRigWeightSettleThreshold;
-            }
-            if (neckAim != null)
-            {
-                neckAim.weight = Mathf.Lerp(neckAim.weight, _neckAimPreOverrideWeight, t);
-                stillRestoring |= Mathf.Abs(neckAim.weight - _neckAimPreOverrideWeight) > AimRigWeightSettleThreshold;
-            }
-
-            _isRestoringAimRigWeight = stillRestoring;
-        }
-
-        _wasAimRigWeightOverrideActive = _hasAimRigWeightOverride;
-    }
 
 
     // In LateUpdate because it is the only place a plain bone write survives: the
@@ -818,8 +788,137 @@ public class PlayerAnimator : MonoBehaviour
         if (layerIndex != 0 && layerIndex != _ladderCarLayerIndex)
             return;
 
+        // Base layer only, unlike the hand IK below.
+        //
+        // OnAnimatorIK is called once per layer with IK Pass ticked, and this rig has
+        // it on two -- so anything written here unguarded is written twice a frame.
+        // The hands survive that because setting a goal twice to the same place is the
+        // same place. A bone rotation does not: the offset is composed onto the bone's
+        // CURRENT rotation, so a second pass composes it onto a bone that has already
+        // been turned once and the body ends up rotated twice as far as the view.
+        //
+        // Before the hands, and that ordering is not optional either: this turns the
+        // spine, which carries the shoulders, which carry the arms. Afterwards the
+        // hands would already be solved onto the grips against a torso that then moved
+        // out from under them, and the weapon would slide out of the hands.
+        if (layerIndex == 0)
+            ApplyAimOffset();
+
         ApplyBothHandIK();
     }
+
+    // Turns the upper body toward where the player is looking, by ADDING to whatever
+    // the animation already put there.
+    //
+    // This is what a MultiAim constraint cannot do, and the reason we are not using
+    // one. A constraint computes an absolute rotation that points a bone at a target
+    // and writes it -- it does not blend with the animated pose, it discards it. So an
+    // authored aim pose leaning the character forward with the chest turned survived
+    // exactly as long as it took the rig to run, and never reached the screen.
+    private void ApplyAimOffset()
+    {
+        if (look == null)
+            return;
+
+        float spineWeight = _hasAimRigWeightOverride ? _spineAimWeightOverride : defaultSpineAimWeight;
+        float chestWeight = _hasAimRigWeightOverride ? _chestAimWeightOverride : defaultChestAimWeight;
+        float upperChestWeight = _hasAimRigWeightOverride ? _upperChestAimWeightOverride : defaultUpperChestAimWeight;
+        float neckWeight = _hasAimRigWeightOverride ? _neckAimWeightOverride : defaultNeckAimWeight;
+
+        // Taken as written, not normalised. 1 on a bone means that bone applies the
+        // whole angle; 0 means it applies none.
+        //
+        // Which makes them readable one at a time -- spine 1 and the rest 0 is "the
+        // waist does all of it", and that is exactly what it does -- at the cost of
+        // being able to overshoot: the bones are a chain, so a share given to one is
+        // carried by everything above it, and spine 1 with chest 1 turns the chest
+        // twice over. Whatever is set here is applied literally.
+        if (spineWeight <= 0f && chestWeight <= 0f && upperChestWeight <= 0f && neckWeight <= 0f)
+            return;
+
+        Vector3 up = transform.up;
+
+        // Undo the model's own turn, exactly.
+        //
+        // The legs are what face the direction of travel: strafing right turns this
+        // transform ninety degrees so a forward walk cycle carries the character
+        // sideways (see the _facingOffset write in ApplyMovementAnimation). Left
+        // alone, the whole character turns with it -- shoulders, weapon and all --
+        // which is the thing that reads as wrong. It is the LEGS that should have
+        // turned.
+        //
+        // So the upper body is given the opposite of that angle. The hips stay where
+        // the walk needs them, the chest comes back round to the view, and the
+        // character strafes with the weapon still pointed where the player is looking.
+        //
+        // Taken from _facingOffset rather than measured between the hip bone's forward
+        // and the aim ray, which is what this used to do. That measurement was the
+        // same number the long way round, and picked up the clip's own hip animation
+        // on the way -- so a walk cycle that swings the pelvis had the torso
+        // counter-swinging against it every step.
+        float rawYaw = -_facingOffset;
+
+        // Pulled toward zero rather than cut at the threshold, so the body does not
+        // jump the width of the deadzone the moment it starts following.
+        float deadzonedYaw = Mathf.Sign(rawYaw) * Mathf.Max(0f, Mathf.Abs(rawYaw) - aimOffsetYawDeadzone);
+
+        float targetYaw = Mathf.Clamp(deadzonedYaw, -aimOffsetMaxYaw, aimOffsetMaxYaw);
+        float targetPitch = Mathf.Clamp(look.Pitch, -aimOffsetMaxPitch, aimOffsetMaxPitch);
+
+        // Smoothed once, here, rather than per bone -- the bones are shares of one
+        // angle, and easing each separately would have them arrive at different times
+        // and bend the spine into a shape no single pose has.
+        if (aimOffsetSmoothTime > 0f)
+        {
+            _aimOffsetYaw = Mathf.SmoothDamp(_aimOffsetYaw, targetYaw, ref _aimOffsetYawVelocity, aimOffsetSmoothTime);
+            _aimOffsetPitch = Mathf.SmoothDamp(_aimOffsetPitch, targetPitch, ref _aimOffsetPitchVelocity, aimOffsetSmoothTime);
+        }
+        else
+        {
+            _aimOffsetYaw = targetYaw;
+            _aimOffsetPitch = targetPitch;
+        }
+
+        ApplyAimOffsetToBone(HumanBodyBones.Spine, spineWeight, _aimOffsetYaw, _aimOffsetPitch, up);
+        ApplyAimOffsetToBone(HumanBodyBones.Chest, chestWeight, _aimOffsetYaw, _aimOffsetPitch, up);
+        ApplyAimOffsetToBone(HumanBodyBones.UpperChest, upperChestWeight, _aimOffsetYaw, _aimOffsetPitch, up);
+        ApplyAimOffsetToBone(HumanBodyBones.Neck, neckWeight, _aimOffsetYaw, _aimOffsetPitch, up);
+    }
+
+    private void ApplyAimOffsetToBone(HumanBodyBones bone, float weight, float yaw, float pitch, Vector3 up)
+    {
+        if (weight <= 0f)
+            return;
+
+        // UpperChest is absent on plenty of rigs, and a missing bone should cost its
+        // share rather than throw.
+        Transform t = _animator.GetBoneTransform(bone);
+        if (t == null || t.parent == null)
+            return;
+
+        // The character's right, not the bone's. A spine bone points UP its chain, so
+        // its local right is whatever the rig author left it as -- on a Mixamo
+        // skeleton nothing like the character's right, and pitching about it bends the
+        // body sideways. The yaw is already taken about the character's up; both axes
+        // have to come from the same frame or they do not describe one motion.
+        Quaternion yawRotation = Quaternion.AngleAxis(yaw * weight, up);
+        Vector3 right = yawRotation * transform.right;
+        Quaternion worldOffset = Quaternion.AngleAxis(pitch * weight, right) * yawRotation;
+
+        // Through SetBoneLocalRotation, not by assigning t.rotation. Assigning the
+        // transform writes past the animation stream, and the stream has the last word
+        // -- the animator writes it out after this returns, so a bone set that way is
+        // reverted before anything is drawn. This goes INTO the stream, so it survives
+        // and the built-in IK solve that follows runs against the torso it produces.
+        //
+        // Conjugated into the parent's space because the offset was reasoned about in
+        // world terms and the stream wants a local rotation.
+        Quaternion parentRotation = t.parent.rotation;
+        Quaternion localOffset = Quaternion.Inverse(parentRotation) * worldOffset * parentRotation;
+
+        _animator.SetBoneLocalRotation(bone, localOffset * t.localRotation);
+    }
+
 
     // How far the arm is about to be carried sideways, after this solve has already
     // finished. The slide lands in LateUpdate -- it has to, or the aim constraints

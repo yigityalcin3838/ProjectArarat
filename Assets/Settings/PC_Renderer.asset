@@ -56,21 +56,21 @@ MonoBehaviour:
   - {fileID: 7833122117494664109}
   - {fileID: -1612994808194565416}
   - {fileID: -5579033308405158290}
-  - {fileID: 3414922772153304852}
   - {fileID: 7741396499818015282}
-  m_RendererFeatureMap: ad6b866f10d7b46cd87a0399c47d9de94e46b2cbec439bd16e2e70d6c34a93b2140797112b3e642f32ea1ad519f76e6b
+  - {fileID: 1500905025259706728}
+  m_RendererFeatureMap: ad6b866f10d7b46cd87a0399c47d9de96e2e70d6c34a93b232ea1ad519f76e6b681934182b49d414
   xrSystemData: {fileID: 0}
   postProcessData: {fileID: 11400000, guid: 41439944d30ece34e96484bdb6645b55, type: 2}
   m_AssetVersion: 3
   m_PrepassLayerMask:
     serializedVersion: 2
-    m_Bits: 4294967295
+    m_Bits: 503
   m_OpaqueLayerMask:
     serializedVersion: 2
-    m_Bits: 4294967295
+    m_Bits: 503
   m_TransparentLayerMask:
     serializedVersion: 2
-    m_Bits: 4294967295
+    m_Bits: 503
   m_DefaultStencilState:
     overrideStencilState: 0
     stencilReference: 1
@@ -87,6 +87,34 @@ MonoBehaviour:
   m_AccurateGbufferNormals: 0
   m_IntermediateTextureMode: 0
   m_TileOnlyMode: 0
+--- !u!114 &1500905025259706728
+MonoBehaviour:
+  m_ObjectHideFlags: 1
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 573f6f75f6172e44da0bf376223202f9, type: 3}
+  m_Name: ViewmodelOverlayFeature
+  m_EditorClassIdentifier: Assembly-CSharp::ViewmodelOverlayFeature
+  m_Active: 1
+  settings:
+    viewmodelLayers:
+      serializedVersion: 2
+      m_Bits: 512
+    overrideFOV: 1
+    viewmodelFOV: 35
+    enableAO: 1
+    aoRadius: 20
+    aoIntensity: 5
+    aoBias: 0.1
+    enableOutline: 1
+    outlineColor: {r: 0, g: 0, b: 0, a: 1}
+    outlineRadius: 17
+    outlineIntensity: 0.35
+    outlineFalloff: 1.66
 --- !u!114 &3414922772153304852
 MonoBehaviour:
   m_ObjectHideFlags: 1
@@ -135,12 +163,12 @@ MonoBehaviour:
   m_Settings:
     AOMethod: 1
     Downsample: 0
-    AfterOpaque: 0
+    AfterOpaque: 1
     Source: 1
     NormalSamples: 1
-    Intensity: 0.75
+    Intensity: 1
     DirectLightingStrength: 0.25
-    Radius: 0.175
+    Radius: 0.35
     Samples: 1
     BlurQuality: 0
     Falloff: 100

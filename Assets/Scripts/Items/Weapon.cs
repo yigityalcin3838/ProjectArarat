@@ -43,6 +43,19 @@ public class Weapon : Item
     [Header("Look")]
     [SerializeField] private InputActionAsset inputActions;
     [SerializeField] private float aimFov = 40f;
+
+    // What the view-model pass narrows to down the sights.
+    //
+    // Its own figure rather than aimFov, because the two do different jobs. The world
+    // FOV is the zoom -- how much closer the target gets. This one is the weapon's
+    // shape, and how far it should change when the sights come up depends on how the
+    // sight is modelled: an optic wants a much tighter number than irons, and neither
+    // follows from the zoom.
+    //
+    // 0 or less means leave it alone: the view model keeps the FOV authored on the
+    // renderer asset and only the world zooms.
+    [SerializeField] private float viewModelAimFov = 0f;
+
     [SerializeField] private PlayerPostProcessEffects postProcessEffects;
 
     [Header("Fire")]
@@ -242,8 +255,13 @@ public class Weapon : Item
     // put the weapon away with the loading half done.
     public override bool IsReloading => _reloadTimer > 0f || _isFeedingShells;
 
-    private void Awake()
+    protected override void Awake()
     {
+        // Caches the hierarchy and the layers it was authored with, which the equip
+        // and holster below hand back and forth. Nothing on screen changes here: a
+        // weapon starts on the hip, and on the hip it is an object in the world.
+        base.Awake();
+
         _originalWorldScale = transform.lossyScale;
         SnapTo(holster);
 
@@ -275,6 +293,11 @@ public class Weapon : Item
 
         SnapTo(itemHold);
         SetTriggerIfPresent(takeTrigger);
+
+        // Into the hand, so onto the view-model pass. From here it is drawn over the
+        // world at the pass's own field of view instead of standing in the world at
+        // the world's.
+        SetViewModelLayer(true);
 
         // Timed off the clip rather than watched on the animator, because the state
         // isn't reached until the crossfade into it has finished and the draw is
@@ -313,14 +336,17 @@ public class Weapon : Item
         _aimAction?.Disable();
         _attackAction?.Disable();
         _reloadAction?.Disable();
-        playerLook?.ClearFovOverride();
-        postProcessEffects?.SetAiming(false);
-        postProcessEffects?.SetReloading(false);
 
-        // The lens has no idea a weapon was put away, so a walk pose left set would
-        // outlive the weapon holding it and follow the player around with empty
-        // hands.
-        postProcessEffects?.SetInWalkPose(false);
+        playerLook?.ClearFovOverride();
+        playerLook?.ClearViewModelFovOverride();
+
+        // Back to the world. On the hip this is scenery -- it belongs behind whatever
+        // is in front of it, at the same field of view as everything else that is
+        // really there.
+        SetViewModelLayer(false);
+
+        postProcessEffects?.SetAiming(false);
+
         movement?.SetSprintBlocked(false);
         movement?.SetAimSpeedOverride(false);
 
@@ -447,7 +473,6 @@ public class Weapon : Item
         bool isAiming = _aimAction != null && _aimAction.IsPressed() && !isReloading;
 
         postProcessEffects?.SetAiming(isAiming);
-        postProcessEffects?.SetReloading(isReloading);
 
         if (playerLook != null)
         {
@@ -455,6 +480,11 @@ public class Weapon : Item
                 playerLook.SetFovOverride(aimFov);
             else
                 playerLook.ClearFovOverride();
+
+            if (isAiming && viewModelAimFov > 0f)
+                playerLook.SetViewModelFovOverride(viewModelAimFov);
+            else
+                playerLook.ClearViewModelFovOverride();
         }
 
         // Can't sprint while aiming down sights, right after firing, or
@@ -536,12 +566,6 @@ public class Weapon : Item
                 _isInWalkPose = IsCharacterInWalkPose;
             }
 
-            // Every frame, like aiming and reloading, rather than only on the change.
-            // A swap has the outgoing weapon clear this in OnDisable and the incoming
-            // one set it on its first update, and pushing only on edges would leave a
-            // weapon drawn already in the walking carry never announcing it -- its
-            // state never changed, it just started true.
-            postProcessEffects?.SetInWalkPose(_isInWalkPose);
 
             if (isReloading)
             {

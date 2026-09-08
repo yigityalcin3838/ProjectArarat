@@ -80,63 +80,6 @@ public class PlayerPostProcessEffects : MonoBehaviour
     [SerializeField] private float aimVignetteIntensity = 0.15f;
     [SerializeField] private float aimVignetteSmoothness = 0.3f;
 
-    // Bokeh's own three fields, so the volume's Depth Of Field has to be in Bokeh
-    // mode -- Gaussian ignores all of them.
-    //
-    // Focus distance is metres to the sharp plane; aperture is an f-stop, where
-    // smaller is a shallower field and more blur; focal length is millimetres, where
-    // longer is also more blur and a tighter-looking frame. Between them, pulling the
-    // focus in to about where the weapon is and opening the aperture is what leaves
-    // the world soft behind sharp hands.
-    // Aiming: sharp only at the sights, soft on both sides of them. The focus sits
-    // out at roughly where the front sight is, and the field is made as shallow as
-    // it goes -- widest aperture, longest lens -- so the back of the weapon falls
-    // out of focus in front of that plane and the world falls out behind it.
-    //
-    // That both ends blur is the point. A deep field would keep the rear of the
-    // weapon sharp too, and the eye would have no reason to settle anywhere.
-    [Header("Aim Depth Of Field")]
-    [SerializeField] private float aimDofFocusDistance = 0.55f;
-    [SerializeField] private float aimDofAperture = 1.8f;
-    [SerializeField] private float aimDofFocalLength = 60f;
-    [SerializeField] private float aimDofSmoothSpeed = 6f;
-
-    // Kept apart from aiming rather than shared, because the two are looking at
-    // different things: down the sights the eye is out at the target, mid-reload it
-    // is down at the hands. Aiming is also the longer-held of the two and wants the
-    // gentler settle.
-    //
-    // They cannot both apply -- a reload refuses aiming outright -- so there is no
-    // blend between them to worry about, only which one is running.
-    // Reloading: the whole of the near work sharp, everything past it soft. Focus
-    // sits behind the weapon rather than on it and the field is deliberately deeper
-    // -- a narrower aperture, a shorter lens -- so the weapon and both hands sit
-    // inside the sharp zone together while the world a couple of metres out goes.
-    //
-    // The opposite trade to aiming, and for the opposite reason: there the eye is
-    // meant to pick one plane, here it is meant to take in a whole action.
-    [Header("Reload Depth Of Field")]
-    [SerializeField] private float reloadDofFocusDistance = 0.9f;
-    [SerializeField] private float reloadDofAperture = 4f;
-    [SerializeField] private float reloadDofFocalLength = 45f;
-    [SerializeField] private float reloadDofSmoothSpeed = 8f;
-
-    // The walking carry's own lens, ranked last of the four -- below the sights, a
-    // reload, and autofocus.
-    //
-    // Below autofocus deliberately. Walking is most of what the player ever does, so
-    // ranking it higher would switch autofocus off almost permanently; down here it
-    // is what the walk looks like when there is nothing close enough to focus on,
-    // which is exactly the case the volume's own settings would otherwise cover.
-    //
-    // So it is the neutral look with a walk-specific version, not a replacement for
-    // looking at things.
-    [Header("Walk Depth Of Field")]
-    [SerializeField] private float walkDofFocusDistance = 3f;
-    [SerializeField] private float walkDofAperture = 4f;
-    [SerializeField] private float walkDofFocalLength = 40f;
-    [SerializeField] private float walkDofSmoothSpeed = 4f;
-
     [Header("Smoothing")]
     [SerializeField] private float effectSmoothSpeed = 4f;
 
@@ -145,27 +88,18 @@ public class PlayerPostProcessEffects : MonoBehaviour
     private DepthOfField _depthOfField;
     private float _baseVignetteIntensity;
     private float _baseVignetteSmoothness;
-    private float _baseDofAperture;
-    private float _baseDofFocalLength;
 
-    private float _baseDofFocusDistance;
     private bool _isAiming;
-    private bool _isReloading;
-    private bool _isInWalkPose;
-    private bool _isDrivingDof;
 
     // Focal length is in millimetres and the other two are far smaller numbers, so
     // this is loose enough for the largest of them and still invisible on it.
-    private const float DofSettleThreshold = 0.01f;
 
     // Lets an equipped item (e.g. Weapon) drive the aim vignette while it's
     // active, without this script needing to know anything about items -- same
     // push-values-in pattern as PlayerLook's FOV override.
     public void SetAiming(bool isAiming) => _isAiming = isAiming;
 
-    public void SetReloading(bool isReloading) => _isReloading = isReloading;
 
-    public void SetInWalkPose(bool isInWalkPose) => _isInWalkPose = isInWalkPose;
 
     private void Awake()
     {
@@ -183,14 +117,6 @@ public class PlayerPostProcessEffects : MonoBehaviour
         }
 
         // Read from the profile rather than written into it, so whatever the volume
-        // was authored with is what everything returns to -- focus included, now that
-        // it is only claimed while something is close enough to claim it.
-        if (_depthOfField != null)
-        {
-            _baseDofFocusDistance = _depthOfField.focusDistance.value;
-            _baseDofAperture = _depthOfField.aperture.value;
-            _baseDofFocalLength = _depthOfField.focalLength.value;
-        }
     }
 
     private void Update()
@@ -250,99 +176,42 @@ public class PlayerPostProcessEffects : MonoBehaviour
         float measured = 0f;
         bool hasSubject = autofocus && TryMeasureLookDistance(out measured);
 
-        bool autofocusEngaged = hasSubject && !_isReloading && !_isAiming;
-        bool wantsOverride = _isReloading || _isAiming || autofocusEngaged || _isInWalkPose;
+        // Aiming no longer claims the lens -- autofocus keeps it.
+        //
+        // Which is the better answer for the same moment. A fixed aim lens focuses at
+        // a distance decided in the Inspector, so down the sights the sharp plane sat
+        // wherever it had been typed regardless of what was being aimed at: correct
+        // for a target at that range and wrong at every other. Autofocus focuses on
+        // what the crosshair is actually on -- the same ray the round travels -- which
+        // is the one thing that is right at any range.
+        // One lens, always driving.
+        //
+        // What used to be here was a priority list -- the sights, then a reload, then
+        // autofocus, then the walking carry, then handing the volume its lens back --
+        // and every entry on it was a weapon telling the camera how to see. That is
+        // backwards: what the lens should be focused on is what is being looked at,
+        // and that is true whatever the hands are doing. So the states are gone and
+        // the measurement is the whole system.
+        //
+        // Always on, too. The range gate used to hand focus back to the volume when
+        // nothing was close, which meant the effect switched off exactly when the view
+        // opened up -- and the handover was itself a change the eye could catch. Out
+        // past the range there is simply nothing near enough to blur, so leaving it
+        // running costs nothing and never snaps.
+        float targetFocusDistance = hasSubject ? measured : autofocusRange;
 
-        if (wantsOverride)
-            _isDrivingDof = true;
-
-        if (!_isDrivingDof)
-        {
-            _baseDofFocusDistance = _depthOfField.focusDistance.value;
-            _baseDofAperture = _depthOfField.aperture.value;
-            _baseDofFocalLength = _depthOfField.focalLength.value;
-            return;
-        }
-
-        // The rate travels with the target rather than being fixed, so each state
-        // arrives at its own pace; going back to neutral uses the shared speed every
-        // other effect here relaxes on.
-        float targetFocusDistance;
-        float targetAperture;
-        float targetFocalLength;
-        float dofSpeed;
-
-        if (_isReloading)
-        {
-            targetFocusDistance = reloadDofFocusDistance;
-            targetAperture = reloadDofAperture;
-            targetFocalLength = reloadDofFocalLength;
-            dofSpeed = reloadDofSmoothSpeed;
-        }
-        else if (_isAiming)
-        {
-            targetFocusDistance = aimDofFocusDistance;
-            targetAperture = aimDofAperture;
-            targetFocalLength = aimDofFocalLength;
-            dofSpeed = aimDofSmoothSpeed;
-        }
-        else if (autofocusEngaged)
-        {
-            targetFocusDistance = measured;
-            targetAperture = autofocusAperture;
-            targetFocalLength = autofocusFocalLength;
-
-            // Which way focus is travelling, not whether autofocus has just taken
-            // over. Almost everything indoors is inside the range, so autofocus is
-            // engaged nearly all the time and the handover hardly ever happens --
-            // pulling in and letting out are the two things that actually do.
-            dofSpeed = targetFocusDistance < _depthOfField.focusDistance.value
-                ? autofocusInSpeed
-                : autofocusOutSpeed;
-        }
-        else if (_isInWalkPose)
-        {
-            targetFocusDistance = walkDofFocusDistance;
-            targetAperture = walkDofAperture;
-            targetFocalLength = walkDofFocalLength;
-            dofSpeed = walkDofSmoothSpeed;
-        }
-        else
-        {
-            // Nothing in range: the volume's own lens, arrived at on the out speed.
-            //
-            // Which is the figure to reach for if looking up at a horizon snaps sharp
-            // rather than easing in. All three values travel together at this rate,
-            // and it is the whole of that transition -- the lens flattening back out
-            // and focus running to the authored distance are one movement, and a
-            // quick one has them both over before anything can be watched happening.
-            targetFocusDistance = _baseDofFocusDistance;
-            targetAperture = _baseDofAperture;
-            targetFocalLength = _baseDofFocalLength;
-            dofSpeed = autofocusOutSpeed;
-        }
+        // Which way focus is travelling. Pulling in onto something close is decisive;
+        // letting out to something further off is not, and the two want different
+        // speeds -- see autofocusInSpeed and autofocusOutSpeed.
+        float dofSpeed = targetFocusDistance < _depthOfField.focusDistance.value
+            ? autofocusInSpeed
+            : autofocusOutSpeed;
 
         float t = dofSpeed * Time.deltaTime;
 
         _depthOfField.focusDistance.value = Mathf.Lerp(_depthOfField.focusDistance.value, targetFocusDistance, t);
-        _depthOfField.aperture.value = Mathf.Lerp(_depthOfField.aperture.value, targetAperture, t);
-        _depthOfField.focalLength.value = Mathf.Lerp(_depthOfField.focalLength.value, targetFocalLength, t);
-
-        // Snapped and handed back once the return has effectively finished. A lerp
-        // only ever approaches, so without this it would go on writing fractionally
-        // different values forever and the volume would never get its lens back.
-        if (wantsOverride)
-            return;
-
-        if (Mathf.Abs(_depthOfField.focusDistance.value - targetFocusDistance) < DofSettleThreshold
-            && Mathf.Abs(_depthOfField.aperture.value - targetAperture) < DofSettleThreshold
-            && Mathf.Abs(_depthOfField.focalLength.value - targetFocalLength) < DofSettleThreshold)
-        {
-            _depthOfField.focusDistance.value = targetFocusDistance;
-            _depthOfField.aperture.value = targetAperture;
-            _depthOfField.focalLength.value = targetFocalLength;
-            _isDrivingDof = false;
-        }
+        _depthOfField.aperture.value = Mathf.Lerp(_depthOfField.aperture.value, autofocusAperture, t);
+        _depthOfField.focalLength.value = Mathf.Lerp(_depthOfField.focalLength.value, autofocusFocalLength, t);
     }
 
     // How far away whatever is in the middle of the screen is, and whether it is close

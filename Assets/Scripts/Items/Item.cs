@@ -20,6 +20,60 @@ public class Item : MonoBehaviour
     [Header("Camera")]
     [SerializeField] protected PlayerLook playerLook;
 
+    // Draw this item over the world, at the view-model pass's own field of view,
+    // WHILE IT IS IN HAND. See ViewmodelOverlayFeature.
+    //
+    // While it is in hand is the whole of it. That pass clears depth before it draws,
+    // so anything on the layer is painted over the world whatever is in front of it --
+    // which is exactly right for the thing being held up to the eye, and exactly wrong
+    // for the two on the character's hip. Left on the layer permanently, the holstered
+    // weapons hang in front of the player's own body and through every wall, at a
+    // field of view that has nothing to do with the one the world is drawn at.
+    //
+    // A holstered weapon is an object in the world. It should be drawn like one.
+    //
+    // Off entirely for anything that is never held up to the lens.
+    [SerializeField] protected bool drawAsViewModel = true;
+
+    // What the hierarchy wore before it was picked up, so putting it down can hand it
+    // back rather than guess at Default.
+    private int[] _worldLayers;
+    private Transform[] _hierarchy;
+
+    protected virtual void Awake()
+    {
+        if (!drawAsViewModel)
+            return;
+
+        // Includes inactive children: a weapon's parts are routinely switched off --
+        // an alternate sight, a magazine hidden during a reload -- and one that came
+        // back on wearing the wrong layer would be the same bug, just later.
+        _hierarchy = GetComponentsInChildren<Transform>(includeInactive: true);
+        _worldLayers = new int[_hierarchy.Length];
+
+        for (int i = 0; i < _hierarchy.Length; i++)
+            _worldLayers[i] = _hierarchy[i].gameObject.layer;
+    }
+
+    // Called by the item itself as it is drawn and put away. Cached rather than
+    // walked each time: the hierarchy does not change, and a swap is not a moment to
+    // be doing a GetComponentsInChildren.
+    protected void SetViewModelLayer(bool asViewModel)
+    {
+        if (!drawAsViewModel || _hierarchy == null)
+            return;
+
+        int viewModelLayer = GameLayers.ViewModelLayer;
+        if (viewModelLayer < 0)
+            return;
+
+        for (int i = 0; i < _hierarchy.Length; i++)
+        {
+            if (_hierarchy[i] != null)
+                _hierarchy[i].gameObject.layer = asViewModel ? viewModelLayer : _worldLayers[i];
+        }
+    }
+
     // True while the item has been unequipped but is still visibly being put
     // away. Unequipping is instant; the animation that sells it is not, and
     // anything that needs both hands free has to wait for the second one.
