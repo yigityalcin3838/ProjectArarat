@@ -540,12 +540,6 @@ public class PlayerLook : MonoBehaviour
     private bool _wasClimbing;
     private float? _fovOverride;
 
-    // The base is not stored here on purpose -- it is authored on the renderer asset
-    // and read back through SettingsFOV. A copy on the player would be a second place
-    // the same number lives, and the weapon settling to a different FOV than the one
-    // the artist set is exactly the bug that follows from that.
-    private float? _viewModelFovOverride;
-    private float _viewModelFov = -1f;
     private float _breathTimer;
     private Vector3 _currentBreathRotation;
     private float _bobTimer;
@@ -589,15 +583,6 @@ public class PlayerLook : MonoBehaviour
     // push-values-in pattern as PlayerAnimator's hand IK targets.
     public void SetFovOverride(float fov) => _fovOverride = fov;
     public void ClearFovOverride() => _fovOverride = null;
-
-    // The same pattern for the view-model pass, which draws held items over the world
-    // through a projection of its own (see ViewmodelOverlayFeature).
-    //
-    // Separate from the one above because the two answer different questions: the
-    // world FOV decides how much can be seen, the view-model FOV decides how a weapon
-    // is shaped. Down the sights both usually move, and rarely by the same amount.
-    public void SetViewModelFovOverride(float fov) => _viewModelFovOverride = fov;
-    public void ClearViewModelFovOverride() => _viewModelFovOverride = null;
 
 
     // Weapon-driven recoil kick on the camera itself -- the weapon owns the
@@ -735,11 +720,6 @@ public class PlayerLook : MonoBehaviour
         _peekAction?.Disable();
         _freeAimToggleAction?.Disable();
 
-        // Handed back to the renderer asset's own figure. -1 is the feature's "nobody
-        // is driving this" value, and without it exiting play would leave the last
-        // frame's aim FOV baked into the static for the rest of the session.
-        ViewmodelOverlayFeature.runtimeViewmodelFOV = -1f;
-        _viewModelFov = -1f;
     }
 
     private void Update()
@@ -1199,22 +1179,8 @@ public class PlayerLook : MonoBehaviour
             cinemachineCamera.Lens = lens;
         }
 
-        // Eased on the same rate as the world's, because they are one movement drawn
-        // in two passes: raising the sights narrows what can be seen and brings the
-        // weapon up, and the two arriving at different times reads as a weapon sliding
-        // into a picture that has already finished moving.
-        //
-        // Pushed to a static because the renderer feature is not a scene object and
-        // has nothing to be wired to. Which also means it outlives this component --
-        // hence the reset in OnDisable, or a stopped player would leave the last aim
-        // FOV pinned on for good.
-        float targetViewModelFov = _viewModelFovOverride ?? ViewmodelOverlayFeature.SettingsFOV;
-
-        // First frame lands outright rather than easing up from nothing.
-        _viewModelFov = _viewModelFov > 0f
-            ? Mathf.Lerp(_viewModelFov, targetViewModelFov, fovSpeed * Time.deltaTime)
-            : targetViewModelFov;
-
-        ViewmodelOverlayFeature.runtimeViewmodelFOV = _viewModelFov;
+        // There is no second field of view here any more. The held item is drawn by
+        // this same camera, as an ordinary object, so there is one lens and aiming
+        // narrows the weapon along with the world -- which is what a lens does.
     }
 }

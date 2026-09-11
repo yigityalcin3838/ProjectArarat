@@ -44,17 +44,10 @@ public class Weapon : Item
     [SerializeField] private InputActionAsset inputActions;
     [SerializeField] private float aimFov = 40f;
 
-    // What the view-model pass narrows to down the sights.
-    //
-    // Its own figure rather than aimFov, because the two do different jobs. The world
-    // FOV is the zoom -- how much closer the target gets. This one is the weapon's
-    // shape, and how far it should change when the sights come up depends on how the
-    // sight is modelled: an optic wants a much tighter number than irons, and neither
-    // follows from the zoom.
-    //
-    // 0 or less means leave it alone: the view model keeps the FOV authored on the
-    // renderer asset and only the world zooms.
-    [SerializeField] private float viewModelAimFov = 0f;
+    // The lens held items are drawn through is not here. It is one figure on
+    // ViewModelLensFeature, on the renderer asset, and it does not change when the
+    // sights come up -- aimFov above narrows the world, and the weapon's own shape
+    // staying put through that is the point of having a second lens at all.
 
     [SerializeField] private PlayerPostProcessEffects postProcessEffects;
 
@@ -338,7 +331,6 @@ public class Weapon : Item
         _reloadAction?.Disable();
 
         playerLook?.ClearFovOverride();
-        playerLook?.ClearViewModelFovOverride();
 
         // Back to the world. On the hip this is scenery -- it belongs behind whatever
         // is in front of it, at the same field of view as everything else that is
@@ -346,6 +338,11 @@ public class Weapon : Item
         SetViewModelLayer(false);
 
         postProcessEffects?.SetAiming(false);
+
+        // Cleared for the same reason the reload timers are cleared below: Update stops
+        // running the moment this does, so a weapon put away mid-reload would leave focus
+        // pinned to a hand that is now empty.
+        postProcessEffects?.SetReloading(false);
 
         movement?.SetSprintBlocked(false);
         movement?.SetAimSpeedOverride(false);
@@ -474,17 +471,17 @@ public class Weapon : Item
 
         postProcessEffects?.SetAiming(isAiming);
 
+        // Pinning focus to the item is a reload's business, and the reload's state is
+        // only settled by this point in the frame -- the same reason the aim is read
+        // here rather than at the top.
+        postProcessEffects?.SetReloading(isReloading);
+
         if (playerLook != null)
         {
             if (isAiming)
                 playerLook.SetFovOverride(aimFov);
             else
                 playerLook.ClearFovOverride();
-
-            if (isAiming && viewModelAimFov > 0f)
-                playerLook.SetViewModelFovOverride(viewModelAimFov);
-            else
-                playerLook.ClearViewModelFovOverride();
         }
 
         // Can't sprint while aiming down sights, right after firing, or

@@ -17,22 +17,20 @@ public static class GameLayers
 {
     public const string DebrisLayerName = "Debris";
 
-    // The held item, and everything else that is a picture of an object rather than
-    // an object. Pulled out of the ordinary opaque pass and drawn again afterwards,
-    // ignoring depth, so it sits over the world instead of inside it.
+    // The held item. It is drawn like anything else -- same camera, same lens, same
+    // depth, same post-processing -- and this layer exists for one reason only:
+    // keeping it out of the way of gameplay queries.
     //
-    // The order is the whole point. Drawn in sequence with the world, a weapon held
-    // at arm's length is a solid object a few centimetres from the eye, so it buries
-    // itself in every wall the player stands near -- the barrel disappears into the
-    // plaster and the sight comes out the other side. Nothing about the weapon's
-    // position is wrong when that happens; it is being asked to occupy space it was
-    // never meant to occupy.
-    //
-    // And that same closeness is the second thing this file exists for. Being nearer
-    // than everything else puts it in front of every cast a gameplay query makes: a
-    // shot would hit its own barrel, a ground check would find the stock, an
+    // Being a few centimetres from the eye puts it in front of every cast the game
+    // makes. A shot would hit its own barrel, a ground check would find the stock, an
     // interaction probe would stop on the receiver. None of those is a thing that is
-    // there either.
+    // really there, so Queryable below takes this layer out.
+    //
+    // It used to carry a second job: held items were pulled out of the ordinary pass
+    // and drawn afterwards with depth cleared, so a weapon held at arm's length would
+    // not bury itself in nearby walls. That is gone. The weapon is pulled back when
+    // it nears a wall, which solves the same problem where it actually arises --
+    // in the weapon's position, rather than in the way the frame is assembled.
     public const string ViewModelLayerName = "ViewModel";
 
     private static int _debrisMask;

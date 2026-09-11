@@ -20,17 +20,17 @@ public class Item : MonoBehaviour
     [Header("Camera")]
     [SerializeField] protected PlayerLook playerLook;
 
-    // Draw this item over the world, at the view-model pass's own field of view,
-    // WHILE IT IS IN HAND. See ViewmodelOverlayFeature.
+    // Put this item on the view-model layer WHILE IT IS IN HAND.
     //
-    // While it is in hand is the whole of it. That pass clears depth before it draws,
-    // so anything on the layer is painted over the world whatever is in front of it --
-    // which is exactly right for the thing being held up to the eye, and exactly wrong
-    // for the two on the character's hip. Left on the layer permanently, the holstered
-    // weapons hang in front of the player's own body and through every wall, at a
-    // field of view that has nothing to do with the one the world is drawn at.
+    // Nothing about rendering any more -- it is drawn by the ordinary camera like
+    // every other object, and gets the same lens, depth and post-processing. What the
+    // layer buys is being ignored by gameplay queries, which matters only for the
+    // thing held a few centimetres from the eye: a shot must not hit its own barrel.
+    // See GameLayers.
     //
-    // A holstered weapon is an object in the world. It should be drawn like one.
+    // While it is in hand is the whole of it. A holstered weapon is an object in the
+    // world and should be found like one -- left on the layer permanently, the two on
+    // the character's hip would be invisible to every cast in the game.
     //
     // Off entirely for anything that is never held up to the lens.
     [SerializeField] protected bool drawAsViewModel = true;

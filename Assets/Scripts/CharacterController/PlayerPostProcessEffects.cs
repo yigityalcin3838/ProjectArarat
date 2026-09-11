@@ -8,63 +8,21 @@ public class PlayerPostProcessEffects : MonoBehaviour
     [SerializeField] private PlayerMovement movement;
     [SerializeField] private Volume volume;
 
-    // For the ray down the middle of the rendered image, which is what autofocus
-    // measures against. The same ray the weapon fires along, so the lens focuses on
-    // exactly what a shot would hit.
-    [SerializeField] private PlayerLook playerLook;
-
-    [Header("Autofocus")]
-    // Focus follows whatever is being looked at whenever nothing else is claiming the
-    // lens. Looking at something close throws the background out; looking past it
-    // brings the background back, and the rack between them is the effect.
+    // There was an autofocus here once that cast a physics ray down the aim direction,
+    // and it is gone along with URP's depth of field. Both were replaced rather than
+    // repaired: the ray disagreed with the picture in every case that mattered -- it
+    // passed through anything without a collider, stopped on triggers and found the
+    // player's own capsule -- and URP's effect blurred the held weapon's silhouette with
+    // the background's depth, because the weapon is drawn through a lens of its own and
+    // its depths do not describe where its pixels are.
     //
-    // Off, focus distance is the volume's to author, which is the old behaviour.
-    [SerializeField] private bool autofocus = true;
-
-    // How close something has to be before autofocus takes an interest.
+    // NearFieldDepthOfField replaces both. It measures off the frame, so what it focuses
+    // on is whatever was actually drawn, and it composites the held item's own depth over
+    // the world's first so the item is somewhere coherent.
     //
-    // A gate rather than a ceiling. Inside it there is something specific to look at
-    // and pulling focus onto it is the whole effect; past it the view is a landscape,
-    // where a focus plane picked off whatever the crosshair happens to touch is both
-    // arbitrary and invisible -- so focus is handed back to the volume and stays
-    // wherever it was authored.
-    [SerializeField] private float autofocusRange = 10f;
-
-    // A floor on how close it will focus, so a wall walked into does not pull focus
-    // to a hand's breadth and blur the entire frame.
-    [SerializeField] private float autofocusMinDistance = 0.4f;
-
-    // The lens autofocus brings with it, not just where it points.
-    //
-    // This is what makes the range gate mean anything. Focus distance on its own
-    // changes nothing at a narrow aperture -- everything past a metre or two is
-    // inside the depth of field regardless of where the plane sits -- so the volume
-    // can stay dialled to whatever the world should normally look like, and these
-    // two are the shallow lens that swaps in only while something close has taken
-    // focus. Out of range they swap straight back out.
-    //
-    // Millimetres and an f-stop: longer and wider-open both mean more blur, and both
-    // want to be well past what the volume holds for the change to be visible.
-    [SerializeField] private float autofocusFocalLength = 70f;
-    [SerializeField] private float autofocusAperture = 2.2f;
-
-    // How quickly the whole lens changes, focus and all, on the way IN -- something
-    // has come into range and is being racked onto.
-    //
-    // Deliberately slower than the aim and reload speeds: those are the lens being
-    // told where to go, this is it hunting, and a lens that snapped instantly to
-    // every glance would read as a glitch rather than as focus.
-    [SerializeField] private float autofocusInSpeed = 3.5f;
-
-    // And on the way OUT -- focus travelling to something further away, or back to
-    // whatever the volume holds when nothing is in range at all.
-    //
-    // Its own figure because the two are not the same event. Pulling in is decisive:
-    // something specific has been looked at and it is right there. Letting out is
-    // not -- what the eye moves to next is further off and less definite, and a
-    // slower release is what stops the frame snapping every time the player glances
-    // past the edge of something.
-    [SerializeField] private float autofocusOutSpeed = 2f;
+    // What is left here is the gameplay half: this script is the one place gameplay
+    // reaches into post-processing, and the depth of field now has states that gameplay
+    // owns.
 
     [Header("Low Stamina Effect")]
     [SerializeField] private float lowStaminaThresholdRatio = 0.25f;
@@ -83,23 +41,75 @@ public class PlayerPostProcessEffects : MonoBehaviour
     [Header("Smoothing")]
     [SerializeField] private float effectSmoothSpeed = 4f;
 
+    // ── Depth of field ───────────────────────────────────────────────────────────────
+    //
+    // Two states, and they are deliberately not one. A reload moves WHERE FOCUS IS: the
+    // item comes up to be worked on, so focus pins to it and the world falls away. The
+    // walk offset lifts the item's EXEMPTION FROM BLUR: focus carries on measuring the
+    // world, and the item -- which is 30 cm from the eye and therefore violently out of
+    // focus whenever the world is not -- stops being protected from that.
+    //
+    // Kept apart because they overlap. Reloading while walking is ordinary, and a single
+    // "depth of field mood" enum would have to invent an answer for it.
+    [Header("Depth of Field")]
+    [Tooltip("How much of the held item's blur to show while nothing is asking for more.")]
+    [SerializeField] private float restingForegroundBlur = 0.15f;
+
+    [Tooltip("How much to show while the hands are being carried by the walk offset.")]
+    [SerializeField] private float walkingForegroundBlur = 1.0f;
+
+    [Tooltip("Seconds-scale smoothing on the held item's blur, so it eases in with the " +
+             "walk rather than snapping on with the first footstep.")]
+    [SerializeField] private float foregroundBlurSmoothSpeed = 6.0f;
+
+    // Down the sights the gate comes off. Autofocus normally stands down past a few
+    // metres so open ground reads clean, but aiming is the one time the player is
+    // deliberately looking at one distant thing -- so focus follows it however far it is,
+    // and the authored focal range then leaves a narrow sharp slab around it and blurs
+    // the rest. Which is what "only where the crosshair is looking" means at range.
+    [Tooltip("Autofocus range while aiming down sights, in metres. Large enough that the " +
+             "gate effectively comes off.")]
+    [SerializeField] private float aimAutofocusMaxDistance = 500.0f;
+
     private Vignette _vignette;
     private ChromaticAberration _chromaticAberration;
-    private DepthOfField _depthOfField;
+
+    // NOT FETCHED OUT OF THE AUTHORED PROFILE, which is what the first version of this
+    // did and it silently did nothing. The depth of field override belongs on a scene
+    // profile -- that is where an artist puts it, and the project already has an indoor
+    // one and an outdoor one -- so reaching for it through the player's own volume found
+    // nothing and every gameplay state was dropped on the floor.
+    //
+    // This one is created here instead, at a high priority, holding only the parameters
+    // gameplay owns. A volume parameter that has not been overridden does not take part
+    // in the blend, so the authored profiles keep deciding the look and this decides the
+    // state -- and neither has to know the other exists.
+    private Volume _depthOfFieldVolume;
+    private VolumeProfile _depthOfFieldProfile;
+    private NearFieldDepthOfFieldVolume _depthOfField;
+
     private float _baseVignetteIntensity;
     private float _baseVignetteSmoothness;
+    private float _foregroundBlur;
 
     private bool _isAiming;
-
-    // Focal length is in millimetres and the other two are far smaller numbers, so
-    // this is loose enough for the largest of them and still invisible on it.
+    private bool _isReloading;
+    private float _handOffset;
 
     // Lets an equipped item (e.g. Weapon) drive the aim vignette while it's
     // active, without this script needing to know anything about items -- same
     // push-values-in pattern as PlayerLook's FOV override.
     public void SetAiming(bool isAiming) => _isAiming = isAiming;
 
+    // Pushed in by the item that is reloading, for the same reason as the line above:
+    // this script stays ignorant of items, and the item already knows.
+    public void SetReloading(bool isReloading) => _isReloading = isReloading;
 
+    // Pushed in by HandMotion, as a 0..1 of how hard it is currently carrying the hands.
+    // A magnitude rather than a bool, so the blur arrives with the walk instead of
+    // switching on at the first step -- and so a crouch-walk, which offsets the hands
+    // much less, blurs them much less without a second setting saying so.
+    public void SetHandOffset(float amount) => _handOffset = Mathf.Clamp01(amount);
 
     private void Awake()
     {
@@ -107,21 +117,24 @@ public class PlayerPostProcessEffects : MonoBehaviour
         {
             volume.profile.TryGet(out _vignette);
             volume.profile.TryGet(out _chromaticAberration);
-            volume.profile.TryGet(out _depthOfField);
         }
 
+        CreateDepthOfFieldVolume();
+
+        // Read off the profile rather than written into it, so whatever the volume was
+        // authored at is the value everything below returns to.
         if (_vignette != null)
         {
             _baseVignetteIntensity = _vignette.intensity.value;
             _baseVignetteSmoothness = _vignette.smoothness.value;
         }
-
-        // Read from the profile rather than written into it, so whatever the volume
     }
 
     private void Update()
     {
-        if (_vignette == null && _chromaticAberration == null && _depthOfField == null)
+        UpdateDepthOfField();
+
+        if (_vignette == null && _chromaticAberration == null)
             return;
 
         float staminaAmount = 0f;
@@ -148,94 +161,81 @@ public class PlayerPostProcessEffects : MonoBehaviour
             float targetChromatic = staminaAmount * lowStaminaChromaticAberration;
             _chromaticAberration.intensity.value = Mathf.Lerp(_chromaticAberration.intensity.value, targetChromatic, effectSmoothSpeed * Time.deltaTime);
         }
-
-        if (_depthOfField != null)
-            UpdateDepthOfField();
     }
 
-    // The lens is one decision with four claimants, ranked.
-    //
-    // A reload, then the sights, then autofocus finding something inside its range --
-    // and if none of them, the volume's own settings, which is the look the world has
-    // when nothing is going on. Each claimant brings a whole lens: where it is
-    // focused AND what it is. That is the part that matters, because focus distance
-    // on its own does nothing at a narrow aperture; the volume can be dialled to keep
-    // everything sharp and autofocus swaps in a shallow lens only while it has
-    // something to be shallow about.
-    //
-    // The flag is what lets the volume stay authorable. With no claimant this stops
-    // writing entirely and re-reads the volume as the base, so its values are the
-    // ones in effect and can be edited during play without being overwritten a frame
-    // later -- and whatever they are is what the next claim returns to. The base must
-    // only be read while NOT driving, or the return would sample the value it is
-    // writing and the lens would chase itself.
+    // A global volume of its own rather than a component on the player's, because this
+    // has to win the blend against whatever the scene authored, and priority is how a
+    // volume says so.
+    private void CreateDepthOfFieldVolume()
+    {
+        _depthOfFieldProfile = ScriptableObject.CreateInstance<VolumeProfile>();
+        _depthOfFieldProfile.name = "Near Field Depth of Field (Runtime)";
+
+        // False: every parameter starts un-overridden, so nothing here touches the blend
+        // until this script writes it. The alternative would have this volume asserting
+        // its own defaults over the scene's authored ones the moment the player spawns.
+        _depthOfField = _depthOfFieldProfile.Add<NearFieldDepthOfFieldVolume>(overrides: false);
+
+        var host = new GameObject("Near Field Depth of Field (Runtime)");
+        host.transform.SetParent(transform, worldPositionStays: false);
+
+        // Not saved and not shown: it is an implementation detail of this component, and
+        // a stray one left in a scene would override the profile everywhere with whatever
+        // state the player was in when it was saved.
+        host.hideFlags = HideFlags.HideAndDontSave;
+
+        _depthOfFieldVolume = host.AddComponent<Volume>();
+        _depthOfFieldVolume.isGlobal = true;
+        _depthOfFieldVolume.priority = 1000.0f;
+        _depthOfFieldVolume.weight = 1.0f;
+        _depthOfFieldVolume.profile = _depthOfFieldProfile;
+    }
+
+    private void OnDestroy()
+    {
+        // Created with CreateInstance, so nothing else will collect it.
+        if (_depthOfFieldProfile != null)
+            Destroy(_depthOfFieldProfile);
+    }
+
     private void UpdateDepthOfField()
     {
-        // Measured before anything else so the debug readout is honest about range
-        // even while a reload or the sights are holding the lens elsewhere.
-        float measured = 0f;
-        bool hasSubject = autofocus && TryMeasureLookDistance(out measured);
+        if (_depthOfField == null)
+            return;
 
-        // Aiming no longer claims the lens -- autofocus keeps it.
-        //
-        // Which is the better answer for the same moment. A fixed aim lens focuses at
-        // a distance decided in the Inspector, so down the sights the sharp plane sat
-        // wherever it had been typed regardless of what was being aimed at: correct
-        // for a target at that range and wrong at every other. Autofocus focuses on
-        // what the crosshair is actually on -- the same ray the round travels -- which
-        // is the one thing that is right at any range.
-        // One lens, always driving.
-        //
-        // What used to be here was a priority list -- the sights, then a reload, then
-        // autofocus, then the walking carry, then handing the volume its lens back --
-        // and every entry on it was a weapon telling the camera how to see. That is
-        // backwards: what the lens should be focused on is what is being looked at,
-        // and that is true whatever the hands are doing. So the states are gone and
-        // the measurement is the whole system.
-        //
-        // Always on, too. The range gate used to hand focus back to the volume when
-        // nothing was close, which meant the effect switched off exactly when the view
-        // opened up -- and the handover was itself a change the eye could catch. Out
-        // past the range there is simply nothing near enough to blur, so leaving it
-        // running costs nothing and never snaps.
-        float targetFocusDistance = hasSubject ? measured : autofocusRange;
+        // A reload takes focus off the world entirely. Not by switching autofocus off and
+        // leaving it wherever it stood -- that would keep whatever the player happened to
+        // be looking at -- but by pinning focus to the item, which is the thing being
+        // looked at while it is being worked on.
+        _depthOfField.focusMode.overrideState = true;
+        _depthOfField.focusMode.value = _isReloading
+            ? NearFieldDepthOfFieldVolume.FocusMode.Foreground
+            : NearFieldDepthOfFieldVolume.FocusMode.Autofocus;
 
-        // Which way focus is travelling. Pulling in onto something close is decisive;
-        // letting out to something further off is not, and the two want different
-        // speeds -- see autofocusInSpeed and autofocusOutSpeed.
-        float dofSpeed = targetFocusDistance < _depthOfField.focusDistance.value
-            ? autofocusInSpeed
-            : autofocusOutSpeed;
+        // Eased rather than set, so the item's blur arrives with the walk. Snapping it on
+        // at the first frame of movement reads as a glitch, which is the same reason the
+        // vignettes above are lerped.
+        float targetBlur = Mathf.Lerp(restingForegroundBlur, walkingForegroundBlur, _handOffset);
 
-        float t = dofSpeed * Time.deltaTime;
+        _foregroundBlur = Mathf.Lerp(
+            _foregroundBlur, targetBlur, foregroundBlurSmoothSpeed * Time.deltaTime);
 
-        _depthOfField.focusDistance.value = Mathf.Lerp(_depthOfField.focusDistance.value, targetFocusDistance, t);
-        _depthOfField.aperture.value = Mathf.Lerp(_depthOfField.aperture.value, autofocusAperture, t);
-        _depthOfField.focalLength.value = Mathf.Lerp(_depthOfField.focalLength.value, autofocusFocalLength, t);
-    }
+        _depthOfField.foregroundBlurScale.overrideState = true;
+        _depthOfField.foregroundBlurScale.value = _foregroundBlur;
 
-    // How far away whatever is in the middle of the screen is, and whether it is close
-    // enough to be worth focusing on at all.
-    //
-    // Down PlayerLook's aim ray rather than the camera's transform, so focus lands on
-    // what the crosshair covers whatever the camera rig is doing to put it there --
-    // and on exactly what a shot would hit. Debris and movement capsules are excluded
-    // for the same reason they are for bullets: neither is a thing to look at.
-    private bool TryMeasureLookDistance(out float distance)
-    {
-        distance = 0f;
+        // OVERRIDDEN ONLY WHILE AIMING, and released the rest of the time so the scene's
+        // own figure comes back. That is the whole reason to drive this through a volume
+        // rather than by writing numbers into the authored profile: aiming borrows one
+        // parameter and hands it back, and a corridor and a mountainside can still
+        // disagree about what the gate should be when nobody is aiming.
+        _depthOfField.autofocusMaxDistance.overrideState = _isAiming;
 
-        if (playerLook == null)
-            return false;
+        if (_isAiming)
+            _depthOfField.autofocusMaxDistance.value = aimAutofocusMaxDistance;
 
-        // The range doubles as the ray's length, so anything past it is not measured
-        // rather than measured and then discarded.
-        if (!Physics.Raycast(playerLook.InteractionRay, out RaycastHit info, autofocusRange,
-                GameLayers.Queryable, QueryTriggerInteraction.Ignore))
-            return false;
-
-        distance = Mathf.Max(info.distance, autofocusMinDistance);
-
-        return true;
+        // Everything else stays authored -- the focal range, the falloff, the gate when
+        // not aiming, the blur radius. This method only writes what gameplay knows and a
+        // profile cannot: which state the player is in. How that state should LOOK is
+        // still a profile away from being retuned, per area, without touching this file.
     }
 }

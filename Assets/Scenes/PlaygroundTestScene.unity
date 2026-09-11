@@ -774,7 +774,7 @@ Transform:
   m_GameObject: {fileID: 14032142}
   serializedVersion: 2
   m_LocalRotation: {x: 0.17237954, y: 0.10227137, z: -0.6279902, w: 0.75196695}
-  m_LocalPosition: {x: 0.107, y: -0.26, z: -0.095}
+  m_LocalPosition: {x: 0.312, y: -0.911, z: 0.05}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -5852,13 +5852,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 257542596}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.059333485, y: 0.13729031, z: -0.6737422, w: 0.72367287}
-  m_LocalPosition: {x: 0.012, y: -0.02, z: -0.36}
+  m_LocalRotation: {x: -0.049863186, y: 0.080617584, z: -0.6739937, w: 0.73263025}
+  m_LocalPosition: {x: 0.018, y: -0.041, z: -0.331}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 1541698422}
-  m_LocalEulerAnglesHint: {x: 15.716, y: 7.087, z: -84.928}
+  m_LocalEulerAnglesHint: {x: 2.041, y: 10.688, z: -85.035}
 --- !u!1001 &260895692
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -16567,9 +16567,9 @@ MonoBehaviour:
   noItemPitchUpLimit: 75
   noItemPitchDownLimit: 85
   headAnchor: {fileID: 678758961}
-  headFollowAmount: 0.5
+  headFollowAmount: 0.4
   headFollowSmoothTime: 0.001
-  crouchEyeDrop: 0.2
+  crouchEyeDrop: 0.3
   crouchDropTime: 0.1
   headMountWhenHandsAreFree: 1
   headMountBlendTime: 0.25
@@ -16665,14 +16665,6 @@ MonoBehaviour:
   stamina: {fileID: 768611303}
   movement: {fileID: 768611296}
   volume: {fileID: 1898055909}
-  playerLook: {fileID: 768611302}
-  autofocus: 1
-  autofocusRange: 25
-  autofocusMinDistance: 0.1
-  autofocusFocalLength: 70
-  autofocusAperture: 3
-  autofocusInSpeed: 8
-  autofocusOutSpeed: 0.35
   lowStaminaThresholdRatio: 0.25
   lowStaminaVignetteIntensity: 0.1
   lowStaminaVignetteSmoothness: 0.1
@@ -16682,6 +16674,10 @@ MonoBehaviour:
   aimVignetteIntensity: 0.1
   aimVignetteSmoothness: 0.1
   effectSmoothSpeed: 4
+  restingForegroundBlur: 0.15
+  walkingForegroundBlur: 1
+  foregroundBlurSmoothSpeed: 6
+  aimAutofocusMaxDistance: 500
 --- !u!143 &768611305
 CharacterController:
   m_ObjectHideFlags: 0
@@ -20039,7 +20035,6 @@ MonoBehaviour:
   holster: {fileID: 1736185428}
   inputActions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   aimFov: 50
-  viewModelAimFov: 30
   postProcessEffects: {fileID: 768611304}
   weaponAnimator: {fileID: 1774820536}
   fireTrigger: Fire
@@ -20074,16 +20069,16 @@ MonoBehaviour:
   wallCheckRadius: 0.005
   wallPullbackInSpeed: 5
   wallPullbackOutSpeed: 10
-  hipPosition: {x: 0.135, y: 0.1, z: 0.6}
+  hipPosition: {x: 0.135, y: 0.1, z: 0.5}
   hipRotation: {x: 0, y: 0, z: 6}
-  walkPosition: {x: 0.135, y: 0.135, z: 0.5}
-  walkRotation: {x: -45, y: -20, z: 20}
+  walkPosition: {x: 0.135, y: 0.125, z: 0.4}
+  walkRotation: {x: -40, y: -15, z: 6}
   walkTransitionSpeed: 2
   walkPoseDelay: 3
-  runPosition: {x: 0.135, y: 0.135, z: 0.5}
+  runPosition: {x: 0.135, y: 0.125, z: 0.4}
   runRotation: {x: -45, y: -20, z: 20}
   runTransitionSpeed: 2
-  aimPosition: {x: 0.135, y: 0.115, z: 0.6}
+  aimPosition: {x: 0.135, y: 0.115, z: 0.5}
   aimRotation: {x: 0, y: 0, z: 6}
   aimTransitionSpeed: 15
   peekOffset: {x: 0, y: 0, z: -0.05}
@@ -25493,7 +25488,7 @@ Camera:
     height: 1
   near clip plane: 0.01
   far clip plane: 30000
-  field of view: 60
+  field of view: 70
   orthographic: 0
   orthographic size: 5
   m_Depth: -1
@@ -25520,7 +25515,7 @@ Transform:
   m_GameObject: {fileID: 1141664080}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0.034, y: 1.8199999, z: 0.15779999}
+  m_LocalPosition: {x: 0.034, y: 1.8199999, z: 0.13599999}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -26564,7 +26559,7 @@ Transform:
   m_GameObject: {fileID: 1231909080}
   serializedVersion: 2
   m_LocalRotation: {x: 0.17237954, y: 0.10227137, z: -0.6279902, w: 0.75196695}
-  m_LocalPosition: {x: -0.638, y: -0.198, z: -0.078}
+  m_LocalPosition: {x: -0.152, y: -0.291, z: 0.325}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -29115,7 +29110,7 @@ MonoBehaviour:
     LookAtTarget: {fileID: 0}
     CustomLookAtTarget: 0
   Lens:
-    FieldOfView: 60
+    FieldOfView: 70
     OrthographicSize: 5
     NearClipPlane: 0.01
     FarClipPlane: 30000
@@ -29143,7 +29138,7 @@ Transform:
   m_GameObject: {fileID: 1325837976}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0.034, y: 0.203, z: 0.1748}
+  m_LocalPosition: {x: 0.034, y: 0.203, z: 0.153}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -35872,7 +35867,6 @@ MonoBehaviour:
   holster: {fileID: 1548798400}
   inputActions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   aimFov: 50
-  viewModelAimFov: 30
   postProcessEffects: {fileID: 768611304}
   weaponAnimator: {fileID: 1541698423}
   fireTrigger: Fire
@@ -35907,16 +35901,16 @@ MonoBehaviour:
   wallCheckRadius: 0.005
   wallPullbackInSpeed: 5
   wallPullbackOutSpeed: 10
-  hipPosition: {x: 0.11, y: 0.124, z: 0.55}
+  hipPosition: {x: 0.11, y: 0.124, z: 0.5}
   hipRotation: {x: 0, y: 0, z: 6}
-  walkPosition: {x: 0.06, y: 0.05, z: 0.5}
-  walkRotation: {x: 14.69, y: -12.11, z: 6}
+  walkPosition: {x: 0.06, y: 0.035, z: 0.45}
+  walkRotation: {x: 15, y: -10, z: 6}
   walkTransitionSpeed: 1
   walkPoseDelay: 3
-  runPosition: {x: 0.06, y: 0.05, z: 0.5}
-  runRotation: {x: 14.69, y: -12.11, z: 6}
+  runPosition: {x: 0.06, y: 0.035, z: 0.45}
+  runRotation: {x: 5.3, y: -13.8, z: 22.95}
   runTransitionSpeed: 2
-  aimPosition: {x: 0.1, y: 0.135, z: 0.55}
+  aimPosition: {x: 0.1, y: 0.135, z: 0.5}
   aimRotation: {x: 0, y: 0, z: 10}
   aimTransitionSpeed: 15
   peekOffset: {x: 0, y: 0, z: -0.05}
@@ -37268,7 +37262,7 @@ Transform:
   m_GameObject: {fileID: 1751319034}
   serializedVersion: 2
   m_LocalRotation: {x: 0.17237954, y: 0.10227137, z: -0.6279902, w: 0.75196695}
-  m_LocalPosition: {x: 0.325, y: -0.407, z: -0.113}
+  m_LocalPosition: {x: 0.411, y: -0.506, z: 0.173}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -39969,7 +39963,6 @@ MonoBehaviour:
   holster: {fileID: 945280257}
   inputActions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   aimFov: 50
-  viewModelAimFov: 30
   postProcessEffects: {fileID: 768611304}
   weaponAnimator: {fileID: 686630787}
   fireTrigger: Fire
@@ -40004,16 +39997,16 @@ MonoBehaviour:
   wallCheckRadius: 0.005
   wallPullbackInSpeed: 5
   wallPullbackOutSpeed: 10
-  hipPosition: {x: 0.125, y: 0.125, z: 0.55}
+  hipPosition: {x: 0.125, y: 0.125, z: 0.5}
   hipRotation: {x: 0, y: 0, z: 6}
-  walkPosition: {x: 0, y: 0.05, z: 0.4}
+  walkPosition: {x: 0, y: 0.05, z: 0.5}
   walkRotation: {x: -7, y: -30, z: 20}
   walkTransitionSpeed: 1
   walkPoseDelay: 3
-  runPosition: {x: 0, y: 0.05, z: 0.4}
+  runPosition: {x: 0, y: 0.05, z: 0.5}
   runRotation: {x: -7, y: -30, z: 20}
   runTransitionSpeed: 2
-  aimPosition: {x: 0.125, y: 0.14, z: 0.55}
+  aimPosition: {x: 0.125, y: 0.14, z: 0.5}
   aimRotation: {x: 0, y: 0, z: 8}
   aimTransitionSpeed: 15
   peekOffset: {x: 0, y: 0, z: -0.05}
@@ -40093,6 +40086,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::HandMotion
   movement: {fileID: 768611296}
+  postProcessEffects: {fileID: 0}
   look: {fileID: 768611302}
   chestAnchor: {fileID: 59586938}
   chestFollowAmount: 0.25
@@ -41585,6 +41579,10 @@ PrefabInstance:
       propertyPath: m_Layer
       value: 6
       objectReference: {fileID: 0}
+    - target: {fileID: -5537764340589244676, guid: 1deb9001781cf0b4ba09addac4498400, type: 3}
+      propertyPath: m_CastShadows
+      value: 3
+      objectReference: {fileID: 0}
     - target: {fileID: -5383325085736741624, guid: 1deb9001781cf0b4ba09addac4498400, type: 3}
       propertyPath: m_Layer
       value: 6
@@ -42728,7 +42726,7 @@ Transform:
   m_GameObject: {fileID: 2011063185}
   serializedVersion: 2
   m_LocalRotation: {x: -0.18947929, y: 0.10836784, z: -0.86759114, w: -0.4468105}
-  m_LocalPosition: {x: -0.0381, y: -0.0155, z: 0.033}
+  m_LocalPosition: {x: -0.0406, y: -0.0155, z: 0.0749}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []

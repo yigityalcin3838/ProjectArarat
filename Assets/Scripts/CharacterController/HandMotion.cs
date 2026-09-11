@@ -50,6 +50,12 @@ public class HandMotion : MonoBehaviour
 
     [SerializeField] private PlayerMovement movement;
 
+    // Optional. The depth of field blurs the held item in proportion to how hard this
+    // script is carrying the hands, and this is where that figure comes from -- pushed
+    // out rather than read back, the same pattern the item uses to drive the aim
+    // vignette. Left empty, the depth of field simply stays at its resting blur.
+    [SerializeField] private PlayerPostProcessEffects postProcessEffects;
+
     // The camera's bob phase is the walk cycle, and the hands read it rather than
     // running a clock of their own. Two clocks at the same rate stay together; two
     // clocks at different rates are not synchronised by definition, which is why
@@ -407,6 +413,16 @@ public class HandMotion : MonoBehaviour
 
         float bobAmount = ForStance(bobIntensity);
         float swayAmount = ForStance(swayIntensity);
+
+        // Out to the depth of field, BEFORE the step bias and the wander are folded in
+        // below. Those two exist to stop consecutive strides being identical, which is
+        // right for where the hands are and wrong for how blurred they are -- a blur that
+        // pulsed twice per stride would read as a fault rather than as motion.
+        //
+        // The stance figure carries the rest for free: a crouch-walk is 0.4 of a walk and
+        // blurs that much less, aiming is lower still, and a sprint is over 1 and clamps.
+        // None of that needs a second setting saying so.
+        postProcessEffects?.SetHandOffset(isMoving ? bobAmount : 0f);
         float tiltStanceAmount = ForStance(tiltIntensity);
         // Folded into the stance figure rather than applied further down, so it lands
         // on the TARGET and not on the filtered value. The smoothing then carries the

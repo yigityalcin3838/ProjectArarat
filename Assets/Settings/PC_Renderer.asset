@@ -1,5 +1,34 @@
 %YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
+--- !u!114 &-6913692534299922642
+MonoBehaviour:
+  m_ObjectHideFlags: 1
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8311b8a8bd6aee44790293f84c0d3923, type: 3}
+  m_Name: ViewModelLensFeature
+  m_EditorClassIdentifier: Assembly-CSharp::ViewModelLensFeature
+  m_Active: 1
+  viewModelLayers:
+    serializedVersion: 2
+    m_Bits: 512
+  viewModelFov: 40
+  nearFieldAOShader: {fileID: 4800000, guid: 13cefe5947a4ba742b53f2ff526c416b, type: 3}
+  occludeHeldItem: 1
+  bodyLayers:
+    serializedVersion: 2
+    m_Bits: 576
+  aoRadius: 0.05
+  aoIntensity: 2
+  aoBias: 0.0175
+  blurDepthSharpness: 64
+  spillRadius: 35
+  spillOutwardIntensity: 0.2
+  spillInwardIntensity: 1
 --- !u!114 &-5579033308405158290
 MonoBehaviour:
   m_ObjectHideFlags: 1
@@ -28,6 +57,21 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::ScreenSharpeningFeature
   m_Active: 1
   _shader: {fileID: 4800000, guid: f3a354745032dc541bd775b7af61369b, type: 3}
+--- !u!114 &-62231482155755368
+MonoBehaviour:
+  m_ObjectHideFlags: 1
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4c7f7c855b9d2dc44bf2f6e3baf721d7, type: 3}
+  m_Name: NearFieldDepthOfFieldFeature
+  m_EditorClassIdentifier: Assembly-CSharp::NearFieldDepthOfFieldFeature
+  m_Active: 1
+  depthOfFieldShader: {fileID: 4800000, guid: e5f83545cab00914ab2f6c043d64a78e, type: 3}
+  foregroundOnTop: 1
 --- !u!114 &11400000
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -57,8 +101,9 @@ MonoBehaviour:
   - {fileID: -1612994808194565416}
   - {fileID: -5579033308405158290}
   - {fileID: 7741396499818015282}
-  - {fileID: 1500905025259706728}
-  m_RendererFeatureMap: ad6b866f10d7b46cd87a0399c47d9de96e2e70d6c34a93b232ea1ad519f76e6b681934182b49d414
+  - {fileID: -6913692534299922642}
+  - {fileID: -62231482155755368}
+  m_RendererFeatureMap: ad6b866f10d7b46cd87a0399c47d9de96e2e70d6c34a93b232ea1ad519f76e6b2e6fc83645a10da0989842f4cbe822ff
   xrSystemData: {fileID: 0}
   postProcessData: {fileID: 11400000, guid: 41439944d30ece34e96484bdb6645b55, type: 2}
   m_AssetVersion: 3
@@ -87,34 +132,6 @@ MonoBehaviour:
   m_AccurateGbufferNormals: 0
   m_IntermediateTextureMode: 0
   m_TileOnlyMode: 0
---- !u!114 &1500905025259706728
-MonoBehaviour:
-  m_ObjectHideFlags: 1
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 0}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 573f6f75f6172e44da0bf376223202f9, type: 3}
-  m_Name: ViewmodelOverlayFeature
-  m_EditorClassIdentifier: Assembly-CSharp::ViewmodelOverlayFeature
-  m_Active: 1
-  settings:
-    viewmodelLayers:
-      serializedVersion: 2
-      m_Bits: 512
-    overrideFOV: 1
-    viewmodelFOV: 35
-    enableAO: 1
-    aoRadius: 20
-    aoIntensity: 5
-    aoBias: 0.1
-    enableOutline: 1
-    outlineColor: {r: 0, g: 0, b: 0, a: 1}
-    outlineRadius: 17
-    outlineIntensity: 0.35
-    outlineFalloff: 1.66
 --- !u!114 &3414922772153304852
 MonoBehaviour:
   m_ObjectHideFlags: 1
