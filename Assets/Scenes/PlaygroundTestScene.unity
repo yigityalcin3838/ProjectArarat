@@ -20069,16 +20069,16 @@ MonoBehaviour:
   wallCheckRadius: 0.005
   wallPullbackInSpeed: 5
   wallPullbackOutSpeed: 10
-  hipPosition: {x: 0.135, y: 0.1, z: 0.5}
+  hipPosition: {x: 0.135, y: 0.1, z: 0.55}
   hipRotation: {x: 0, y: 0, z: 6}
-  walkPosition: {x: 0.135, y: 0.125, z: 0.4}
+  walkPosition: {x: 0.135, y: 0.125, z: 0.45}
   walkRotation: {x: -40, y: -15, z: 6}
   walkTransitionSpeed: 2
   walkPoseDelay: 3
-  runPosition: {x: 0.135, y: 0.125, z: 0.4}
+  runPosition: {x: 0.135, y: 0.125, z: 0.45}
   runRotation: {x: -45, y: -20, z: 20}
   runTransitionSpeed: 2
-  aimPosition: {x: 0.135, y: 0.115, z: 0.5}
+  aimPosition: {x: 0.135, y: 0.115, z: 0.55}
   aimRotation: {x: 0, y: 0, z: 6}
   aimTransitionSpeed: 15
   peekOffset: {x: 0, y: 0, z: -0.05}
