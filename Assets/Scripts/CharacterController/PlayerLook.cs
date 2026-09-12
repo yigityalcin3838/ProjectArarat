@@ -196,7 +196,18 @@ public class PlayerLook : MonoBehaviour
     [Header("Speed FOV")]
     [SerializeField] private CinemachineCamera cinemachineCamera;
     [SerializeField] private float maxFovBoost = 10f;
-    [SerializeField] private float fovSpeed = 8f;
+    // SECONDS TO CATCH UP, not a rate, and the change of unit is the point.
+    //
+    // This was a lerp rate, which is an exponential approach: fastest at the first frame
+    // and slowing all the way in. That is the opposite of how a pair of sights comes up
+    // -- it reads as a snap followed by a crawl, and no value of the rate fixes it
+    // because the shape is wrong rather than the speed.
+    //
+    // A critically damped spring accelerates out of rest, runs, and decelerates into the
+    // target. It also means something honest: 0.12 is how long the transition takes,
+    // where 8 was a figure whose effect depended on how far there was to go. Same
+    // reasoning as the chest follow's smoothTime further down.
+    [SerializeField] private float fovSmoothTime = 0.12f;
 
 
     [Header("Ladder Look")]
@@ -265,6 +276,18 @@ public class PlayerLook : MonoBehaviour
     // is a character choice rather than a default.
     [SerializeField, Range(0f, 0.9f)] private float bobCycleSkew = 0.3f;
 
+    // How quickly the stride's slow drift moves, in noise samples per second. Well below
+    // a stride, so it varies across several steps rather than within one -- at walking
+    // pace it would just be a second bob.
+    //
+    // THE RATE IS HERE AND THE AMOUNTS ARE NOT, for the same reason the skew above is
+    // here. This is a description of the stride, not of any one thing that rides it: the
+    // gait lengthening and shortening over a few steps is something the whole body does
+    // at once. HandMotion had a noise source of its own, which meant the head could be
+    // growing its stride while the hands shrank theirs -- two systems disagreeing about
+    // the same walk. It reads BobWander now, and keeps its own amount.
+    [SerializeField] private float bobWanderRate = 0.8f;
+
     // The bob's own clock, used ONLY when playerAnimator above is empty. With an
     // animator the cadence is the walk clip's and this is never read.
     //
@@ -277,6 +300,50 @@ public class PlayerLook : MonoBehaviour
     [SerializeField] private float bobPitchAmount = 0.5f;
     [SerializeField] private float bobYawAmount = 0.5f;
     [SerializeField] private float bobRollAmount = 0.5f;
+
+    // METRES, AND THE REASON THE BOB READS AS A HEAD AT ALL.
+    //
+    // Rotation on its own turns the whole world about the eye, which reads as somebody
+    // tilting the camera. A head mostly TRANSLATES -- it rises and falls a couple of
+    // centimetres a step and swings across a centimetre or so -- and translation moves
+    // the world PAST the viewer instead of pivoting it around them.
+    //
+    // There is a second payoff specific to this rig. Items hang off the pivot and not
+    // off the camera, so an offset here moves the eye and leaves the weapon where it was:
+    // the weapon drifts slightly on screen against HandMotion's own bob, and that
+    // relative motion is most of what says the head and the hands are two things. With
+    // rotation alone they turn together and the pair reads welded.
+    //
+    // Keep these SMALL. Two or three centimetres is a walk; much more than that is a
+    // camera on a boom and it makes people ill within a minute.
+    //
+    // Vertical reads the same expression as the pitch above and lateral the same as the
+    // roll, deliberately: bobPhaseOffset then means one thing for the whole bob instead
+    // of lining up the rotation and leaving the translation half a step out. If the head
+    // rises where it should drop, negate the amount rather than moving the offset.
+    [SerializeField] private float bobVerticalAmount = 0.02f;
+    [SerializeField] private float bobHorizontalAmount = 0.012f;
+
+    // Two things stop every stride being a copy of the last one, and the view needs both
+    // for the same reason the hands do -- a bob that repeats exactly is the single
+    // clearest tell that a machine is producing it.
+    //
+    // The first is that left and right are not the same step. sin(bobPhase) runs once per
+    // stride while the footfall runs twice, so it is positive through one step and
+    // negative through the other, which makes it exactly the signal for telling them
+    // apart at no cost.
+    //
+    // SMALLER THAN THE HANDS', which run at 0.4. An uneven gait shows in the hands as
+    // character; in the VIEW it shows as a limp, and past about 0.2 as an injury. The
+    // amounts are each system's own -- only the phase they read is shared.
+    [SerializeField, Range(-0.5f, 0.5f)] private float bobStepAsymmetry = 0.15f;
+
+    // The second is a slow drift with no period at all, so strides vary across several
+    // steps. Noise rather than another sine, because a sine is only a longer pattern --
+    // noticeable as soon as it comes round again -- where this never repeats.
+    //
+    // Also smaller than the hands' 0.45, and for the same reason.
+    [SerializeField, Range(0f, 0.5f)] private float bobWander = 0.2f;
 
     // Scales all three, per stance, the same way HandMotion scales the hands.
     //
@@ -367,6 +434,16 @@ public class PlayerLook : MonoBehaviour
     // Clamped because the ratio has no ceiling of its own: a vehicle or a future
     // gait could hand it anything.
     [SerializeField] private float maxBobSpeedRatio = 2f;
+
+    // HOW FAST THE BOB FADES IN AND OUT, and nothing else. It used to filter the
+    // oscillation, which cut the authored amounts by a fifth to a half depending on
+    // cadence and delayed them by tens of degrees -- see the bob's own comment below.
+    // Now it eases a weight from 0 to 1 when the player starts moving and back when they
+    // stop, so the sine arrives at exactly the size and the timing it was authored at.
+    //
+    // Raising it makes the bob arrive more abruptly with the first step; lowering it has
+    // the view take a stride or two to settle into the walk.
+    [Tooltip("How quickly the bob fades in when movement starts and out when it stops.")]
     [SerializeField] private float bobSmoothing = 8f;
 
     [Header("Camera Jump / Land Shake")]
@@ -381,8 +458,42 @@ public class PlayerLook : MonoBehaviour
     // can recognise rather than a different jolt each time.
     [SerializeField] private float jumpShakeAmount = 2f;
     [SerializeField] private float landShakeAmount = 4f;
+
+    // A FOOTFALL IS THE SAME KIND OF EVENT as a landing, just a smaller one, so it goes
+    // through this spring rather than getting one of its own -- which also makes it a
+    // number directly comparable to the two above.
+    //
+    // Why it is worth having: the bob is a sine, and a sine has no events in it. Real
+    // head motion has a sharp one twice a stride -- weight arrives, the head dips fast
+    // and recovers slowly -- and that impulse is most of the difference between a view
+    // that oscillates and a view that is walking. HandMotion already jolts the hands on
+    // the step; without this the hands twitch at a footfall and the head does not, which
+    // is the inconsistency read from the other side.
+    [SerializeField] private float stepShakeAmount = 0.5f;
     [SerializeField] private float jumpShakeRollAmount = 1f;
     [SerializeField] private float landShakeRollAmount = 2f;
+
+    // ALTERNATES WITH THE FOOT, which is the one way it differs from the two roll amounts
+    // above. Those roll the same way every time on purpose -- a landing is meant to be a
+    // thing the player recognises. A footfall is the opposite: the head tips one way on
+    // the left foot and the other on the right, and a step roll that always went the same
+    // way would read as a stagger rather than as walking.
+    //
+    // The direction comes free. The phase sign that identifies the footfall at all is
+    // also the thing that says which foot it was, so there is no separate left/right
+    // bookkeeping to get out of step with the legs.
+    //
+    // Smaller than the pitch impulse: sideways head motion is read much more readily than
+    // a nod, and this is on top of the continuous roll the bob already has.
+    [SerializeField] private float stepShakeRollAmount = 0.3f;
+
+    // METRES, and it is what lets the shake system carry the walk's translation on its
+    // own once the continuous bob's amounts are turned down.
+    //
+    // Always dips, never alternates: both feet push the body up, so there is no side to
+    // alternate between. That is the same reason the sine bob's vertical ran at twice the
+    // rate of its lateral.
+    [SerializeField] private float stepShakeVerticalAmount = 0.01f;
     [SerializeField] private float shakeSpring = 200f;
     [SerializeField] private float shakeDamping = 20f;
 
@@ -524,6 +635,27 @@ public class PlayerLook : MonoBehaviour
     // still drift, and the drift is exactly the thing that reads as wrong.
     public float BobPhase => _bobPhase;
 
+    // The stride's slow size drift, minus one to plus one. Published beside the phase and
+    // for the same reason: it describes the walk rather than anything that rides it, so
+    // everything reading it stays in agreement about how big this stretch of steps is.
+    // Each reader scales it by an amount of its own.
+    public float BobWander => _bobWander;
+
+    // True on the frame a foot lands, with the sign saying which one.
+    //
+    // ONE DETECTOR, published, rather than everything that wants a footfall finding its
+    // own. The phase lives here, so the crossing is found here; a second search of the
+    // same signal would be a second opinion about when the foot lands, and the file
+    // already makes that argument about clocks. The sign is the half of the stride being
+    // entered, which is the foot that just arrived.
+    //
+    // Readers may be a frame behind depending on script order. At sixteen milliseconds
+    // against a stride of half a second that is far below what their own springs smooth
+    // away, and it can never be missed -- the flag stands for a whole frame.
+    public bool FootfallThisFrame { get; private set; }
+
+    public float FootfallSign { get; private set; }
+
     // The idle drift's phase, in radians, advancing only while the character is
     // standing still. Exposed for the same reason the bob's is: the hands breathe
     // off this rather than a clock of their own, so the two are one breath rather
@@ -536,6 +668,7 @@ public class PlayerLook : MonoBehaviour
     private float _currentLookTilt;
     private Vector2 _freeAim;
     private float _baseFov;
+    private float _fovVelocity;
     private float _climbCameraYaw;
     private bool _wasClimbing;
     private float? _fovOverride;
@@ -544,6 +677,29 @@ public class PlayerLook : MonoBehaviour
     private Vector3 _currentBreathRotation;
     private float _bobTimer;
     private float _bobPhase;
+
+    // 0 standing, 1 at a full walk. The bob's envelope -- see where it is applied for
+    // why the smoothing lives here rather than on the oscillation.
+    private float _bobWeight;
+
+    // The eye's own offset, in the camera's local space. Kept apart from the rotation
+    // because it is applied to a different transform: the rotation can ride the pivot,
+    // this must not, or it would carry the weapon with it.
+    private Vector3 _currentBobPosition;
+
+    // The footfall's own translation, sprung rather than sinusoidal. Separate from
+    // _currentBobPosition because that one is a wave the phase draws directly and this
+    // one is an impulse recovering -- summing them into a single vector would lose the
+    // ability to turn either off on its own.
+    private float _shakeVerticalOffset;
+    private float _shakeVerticalVelocity;
+
+    private float _bobWander;
+
+    // Which half of the stride the phase was in last frame. The sine crosses zero twice
+    // a cycle and those two crossings ARE the two footfalls, so a change of sign is the
+    // event -- no separate step clock to drift against the one the legs are using.
+    private float _lastStepSign;
     private Quaternion _cameraBaseLocalRotation;
     private Vector3 _currentBobRotation;
     private float _shakeOffset;
@@ -979,6 +1135,11 @@ public class PlayerLook : MonoBehaviour
         // warping it anywhere downstream would put them back out of step.
         _bobPhase = rawBobPhase + Mathf.Sin(rawBobPhase) * bobCycleSkew;
 
+        // Read against the clock rather than the phase, and not gated on movement: the
+        // drift keeps moving while the player stands still, so a walk resumes somewhere
+        // new instead of picking up the size it was left at.
+        _bobWander = (Mathf.PerlinNoise(Time.time * bobWanderRate, 0.37f) - 0.5f) * 2f;
+
         // Stance rather than the gait ratio, so a crouch and a sprint are described
         // rather than derived from one another. The ratio above still paces the
         // fallback clock, which is a cadence and not an amount.
@@ -998,13 +1159,93 @@ public class PlayerLook : MonoBehaviour
 
         _currentLookTilt = Mathf.Lerp(_currentLookTilt, targetLookTilt, lookTiltSmoothing * Time.deltaTime);
 
-        Vector3 targetBobRotation = isMoving
-            ? new Vector3(
-                Mathf.Sin(_bobPhase * 2f) * bobPitchAmount * bobAmount,
-                Mathf.Sin(_bobPhase) * bobYawAmount * bobAmount,
-                Mathf.Cos(_bobPhase) * bobRollAmount * bobAmount)
-            : Vector3.zero;
-        _currentBobRotation = Vector3.Lerp(_currentBobRotation, targetBobRotation, bobSmoothing * Time.deltaTime);
+        // THE ENVELOPE IS SMOOTHED, NOT THE OSCILLATION, and this is the difference
+        // between a bob that keeps its shape and one that drifts.
+        //
+        // This used to low-pass the sine itself, and filtering a sine does two things
+        // that both scale with its frequency: it cuts the amplitude by k/sqrt(k^2+w^2)
+        // and delays it by atan(w/k). At a walk that was a fifth of the yaw and roll
+        // gone and nearly half the pitch -- so the three authored amounts did not keep
+        // their ratio to each other, the circular swing they describe was not the swing
+        // on screen, and bobPhaseOffset was carrying about fifty degrees of filter lag
+        // that had nothing to do with where the foot lands.
+        //
+        // Worse, all of it moved with cadence. A sprint raises w, so the bob shrank and
+        // lagged further exactly as bobIntensity was trying to make it bigger. The knobs
+        // were fighting the filter and the cadence decided who won, which is why it never
+        // felt settled at more than one speed.
+        //
+        // The phase comes from the animator and is already continuous, so the sine needs
+        // no smoothing -- it is smooth by construction. What genuinely has to ease is
+        // starting and stopping, and that is a scalar.
+        // THE ENVELOPE IS THE SPEED, not a switch. GaitSpeedRatio is measured against
+        // walkSpeed, so clamped it reads as "how close am I to a full walk" -- which is
+        // exactly the shape the bob should ride. Ramping off a standstill grows it
+        // continuously instead of stepping it on, and at a walk or above it reaches one
+        // and hands full authority back to the stance figure, so nothing is counted twice.
+        //
+        // Which also retires the hard isMoving step this had a moment ago: the fade is
+        // now something the movement is actually doing rather than a filter covering for
+        // a discontinuity.
+        float targetBobWeight = isMoving && movement != null
+            ? Mathf.Clamp01(movement.GaitSpeedRatio)
+            : 0f;
+
+        // Exponential rather than rate-times-delta. The old form is a different time
+        // constant at every framerate, and over k*dt = 1 it overshoots outright -- which
+        // at 8 is any frame longer than 125 ms.
+        _bobWeight = Mathf.Lerp(
+            _bobWeight, targetBobWeight, 1f - Mathf.Exp(-bobSmoothing * Time.deltaTime));
+
+        // Folded into the one scale every part of the bob reads, so the rotation, the
+        // translation and the footfall impulse all vary together. Separately applied they
+        // would drift apart and a step that leaned hard could land soft.
+        float bobStepBias = 1f + Mathf.Sin(_bobPhase) * bobStepAsymmetry;
+        float bobWanderScale = 1f + _bobWander * bobWander;
+
+        float bobScale = bobAmount * _bobWeight * bobStepBias * bobWanderScale;
+
+        _currentBobRotation = new Vector3(
+            Mathf.Sin(_bobPhase * 2f) * bobPitchAmount,
+            Mathf.Sin(_bobPhase) * bobYawAmount,
+            Mathf.Cos(_bobPhase) * bobRollAmount) * bobScale;
+
+        // Vertical on the doubled phase like the pitch -- twice a stride, one dip per
+        // footfall -- and lateral on the base phase like the roll, so the head leans and
+        // shifts toward the same foot rather than arguing with itself.
+        _currentBobPosition = new Vector3(
+            Mathf.Cos(_bobPhase) * bobHorizontalAmount,
+            Mathf.Sin(_bobPhase * 2f) * bobVerticalAmount,
+            0f) * bobScale;
+
+        // The footfall. Taken from the same phase everything else reads, so the impulse
+        // cannot drift against the bob it is punctuating -- a step counter of its own
+        // would be a second opinion about when the foot lands, and the legs already have
+        // the only one that matters.
+        float stepSign = Mathf.Sign(Mathf.Sin(_bobPhase));
+
+        FootfallThisFrame = _lastStepSign != 0f && stepSign != _lastStepSign;
+        FootfallSign = stepSign;
+
+        if (FootfallThisFrame)
+        {
+            // Scaled by the envelope as well as the stance, so a step taken while the
+            // bob is still fading in does not thump at full strength -- and so walking
+            // out of a crouch does not land harder than the crouch it came from.
+            _shakeVelocity += stepShakeAmount * bobScale;
+
+            // Signed by the foot. stepSign is the half of the stride being entered, so
+            // it is the foot that just landed -- the same number that found the footfall
+            // in the first place, which is why the roll cannot end up alternating
+            // against the legs.
+            _shakeRollVelocity += stepShakeRollAmount * bobScale * stepSign;
+
+            // Negative because a foot arriving drives the head DOWN -- a positive amount
+            // should dip, not lift, or the number reads backwards to whoever tunes it.
+            _shakeVerticalVelocity -= stepShakeVerticalAmount * bobScale;
+        }
+
+        _lastStepSign = stepSign;
 
         // Damped spring kick on jump (up) and landing (down) -- an impulse on
         // velocity snaps it away and settles back like a real spring. Pitch and roll
@@ -1016,7 +1257,11 @@ public class PlayerLook : MonoBehaviour
             _shakeRollVelocity -= jumpShakeRollAmount;
         }
 
-        if (movement != null && movement.LandedThisFrame)
+        // The landings that count, at full strength. Walking down stairs lands once per
+        // tread and every one of them was shaking the view -- PlayerMovement decides which
+        // landings are worth reacting to, from the speed it actually arrested, so nothing
+        // here has to keep a threshold of its own or scale anything down.
+        if (movement != null && movement.LandedHardThisFrame)
         {
             _shakeVelocity += landShakeAmount;
             _shakeRollVelocity += landShakeRollAmount;
@@ -1027,6 +1272,12 @@ public class PlayerLook : MonoBehaviour
 
         _shakeRollVelocity += (-shakeSpring * _shakeRollOffset - shakeDamping * _shakeRollVelocity) * Time.deltaTime;
         _shakeRollOffset += _shakeRollVelocity * Time.deltaTime;
+
+        // On the same spring and damping as the angular ones above, so a step settles as
+        // one event rather than as a dip and a nod that finish at different times.
+        _shakeVerticalVelocity +=
+            (-shakeSpring * _shakeVerticalOffset - shakeDamping * _shakeVerticalVelocity) * Time.deltaTime;
+        _shakeVerticalOffset += _shakeVerticalVelocity * Time.deltaTime;
 
         // Weapon-driven recoil kick -- spring/damping come from whatever item is
         // equipped (pushed via SetFireKickProfile), impulse from AddFireKick per shot.
@@ -1156,8 +1407,20 @@ public class PlayerLook : MonoBehaviour
             // fixes the second half of the same problem: an eye point held out in
             // front of the pivot swings through an arc every time the view pitches,
             // and a head that orbits twenty centimetres when it nods is not a head.
+            // The bob's translation goes on AFTER the mount blend, not into it. The blend
+            // is about where the eye is mounted and settles to a fixed point; the bob is
+            // motion about wherever that point turned out to be. Folded inside the Lerp
+            // it would be scaled away to nothing exactly when the head mount takes hold,
+            // which is when the view is most obviously a head.
+            // The bob's translation goes on AFTER the mount blend, not into it. The blend
+            // is about where the eye is mounted and settles to a fixed point; the bob is
+            // motion about wherever that point turned out to be. Folded inside the Lerp
+            // it would be scaled away to nothing exactly when the head mount takes hold,
+            // which is when the view is most obviously a head.
             cinemachineCamera.transform.localPosition =
-                Vector3.Lerp(_cameraBaseLocalPosition, Vector3.zero, _headMountBlend);
+                Vector3.Lerp(_cameraBaseLocalPosition, Vector3.zero, _headMountBlend)
+                + _currentBobPosition
+                + Vector3.up * _shakeVerticalOffset;
             cinemachineCamera.transform.localRotation = _cameraBaseLocalRotation
                 * Quaternion.Euler(_shakeOffset, 0f, _shakeRollOffset + _currentLookTilt);
         }
@@ -1175,7 +1438,12 @@ public class PlayerLook : MonoBehaviour
 
             LensSettings lens = cinemachineCamera.Lens;
             float targetFov = _fovOverride ?? (_baseFov + maxFovBoost * fovBoostRatio);
-            lens.FieldOfView = Mathf.Lerp(lens.FieldOfView, targetFov, fovSpeed * Time.deltaTime);
+
+            // The velocity is carried between frames, which is what lets a target that
+            // moves mid-transition -- sights coming up while the speed boost is still
+            // ramping -- be absorbed rather than restarting the ease.
+            lens.FieldOfView = Mathf.SmoothDamp(
+                lens.FieldOfView, targetFov, ref _fovVelocity, fovSmoothTime);
             cinemachineCamera.Lens = lens;
         }
 

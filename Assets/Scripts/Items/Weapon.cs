@@ -44,9 +44,21 @@ public class Weapon : Item
     [SerializeField] private InputActionAsset inputActions;
     [SerializeField] private float aimFov = 40f;
 
-    // The lens held items are drawn through is not here. It is one figure on
-    // ViewModelLensFeature, on the renderer asset, and it does not change when the
-    // sights come up -- aimFov above narrows the world, and the weapon's own shape
+    // The lens THIS weapon is drawn through while its sights are up. 0 leaves the
+    // renderer asset's figure alone, which is what a weapon with nothing to say does.
+    //
+    // The base lens is still one figure for every held item and still lives on
+    // ViewModelLensFeature -- this does not bring back the per-weapon lens that was
+    // removed. What is genuinely per-weapon is how much it should TIGHTEN for the sights:
+    // a pistol at arm's length and a rifle against the cheek do not want the same one.
+    //
+    // Borrowed and handed back, through the volume PlayerPostProcessEffects keeps, so
+    // lowering the sights restores the base without this having to remember what it was.
+    [SerializeField] private float viewModelAimFov = 0f;
+
+    // The base lens held items are drawn through is not here. It is one figure on
+    // ViewModelLensFeature, on the renderer asset -- aimFov above narrows the world, and
+    // the weapon's own shape
     // staying put through that is the point of having a second lens at all.
 
     [SerializeField] private PlayerPostProcessEffects postProcessEffects;
@@ -341,8 +353,11 @@ public class Weapon : Item
 
         // Cleared for the same reason the reload timers are cleared below: Update stops
         // running the moment this does, so a weapon put away mid-reload would leave focus
-        // pinned to a hand that is now empty.
+        // pinned to a hand that is now empty -- or the lens tightened for a weapon that
+        // is now on the hip.
         postProcessEffects?.SetReloading(false);
+        postProcessEffects?.SetViewModelFovOverride(0f);
+        postProcessEffects?.SetItemCarry(PlayerPostProcessEffects.ItemCarry.Ready);
 
         movement?.SetSprintBlocked(false);
         movement?.SetAimSpeedOverride(false);
@@ -484,6 +499,11 @@ public class Weapon : Item
                 playerLook.ClearFovOverride();
         }
 
+        // The world's lens and the held item's lens, narrowed by the same event and
+        // released by it. Zero is "nothing to say", so a weapon that leaves
+        // viewModelAimFov alone simply never touches the base.
+        postProcessEffects?.SetViewModelFovOverride(isAiming ? viewModelAimFov : 0f);
+
         // Can't sprint while aiming down sights, right after firing, or
         // reloading -- IsSprinting is computed live off this blocked flag,
         // so setting it true here immediately drops an in-progress sprint.
@@ -563,6 +583,24 @@ public class Weapon : Item
                 _isInWalkPose = IsCharacterInWalkPose;
             }
 
+            // WHICH CARRY THIS IS, for the depth of field to soften the item in.
+            //
+            // Pushed from here rather than measured from movement, and that distinction is
+            // the whole of it: walking is not the same thing as being in a walking carry.
+            // A weapon held ready while the legs move is still a weapon held ready, and
+            // softening it then blurs something the player is looking at. What earns the
+            // blur is the weapon being DOWN -- dropped into the walk or run offset, which
+            // lands walkPoseDelay after the legs set off and is cleared outright by a
+            // shot, the sights or a reload.
+            //
+            // Run before walk, matching the pose ladder below, so the precedence is stated
+            // once. Everything the ladder sends to the hip -- aiming, firing, a wall --
+            // falls through to Ready, because those all clear the walk pose above and none
+            // of them is running.
+            postProcessEffects?.SetItemCarry(
+                isRunning ? PlayerPostProcessEffects.ItemCarry.Run
+                    : _isInWalkPose ? PlayerPostProcessEffects.ItemCarry.Walk
+                    : PlayerPostProcessEffects.ItemCarry.Ready);
 
             if (isReloading)
             {
@@ -620,9 +658,17 @@ public class Weapon : Item
             // filtering a filter.
             float peekAmount = playerLook != null ? Mathf.Abs(playerLook.PeekAmount) : 0f;
 
+            // The hands' impulses -- a footfall, a jump, a landing -- ride on top of the
+            // pose for the same reason the leans below do: they are motion about wherever
+            // the pose put the weapon, not a competing opinion about where the pose should
+            // be. HandMotion owns the spring and the amounts; this is the pivot they
+            // happen at.
+            Vector3 impulseShake = handMotion != null ? handMotion.ImpulseShake : Vector3.zero;
+
             posDeltaPivot.localPosition =
                 Vector3.Lerp(_currentAdsPosition, wallBlockPosition, _wallBlockAmount)
-                + peekOffset * peekAmount;
+                + peekOffset * peekAmount
+                + impulseShake;
 
             // The two leans -- into a turn, and out past a corner -- composed on top
             // of the pose rather than lerped into it. Blended into the target
@@ -633,11 +679,14 @@ public class Weapon : Item
             // hold point would swing the whole weapon around the grip in an arc,
             // where rolling here turns it in place, which is what a lean is. Their
             // rolls simply add on Z -- a lean is a lean whichever asked for it.
+            // The impulse roll joins them on Z, and it belongs in exactly this company:
+            // rolls from several causes, none of which should be swinging the weapon
+            // around the hold point in an arc.
             Vector3 leanRotation = Vector3.zero;
             if (handMotion != null)
             {
                 leanRotation = handMotion.PeekRotation;
-                leanRotation.z += handMotion.LookTilt;
+                leanRotation.z += handMotion.LookTilt + handMotion.ImpulseShakeRoll;
             }
 
             posDeltaPivot.localRotation =

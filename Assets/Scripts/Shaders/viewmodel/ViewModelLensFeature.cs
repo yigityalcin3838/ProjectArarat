@@ -87,6 +87,16 @@ public class ViewModelLensFeature : ScriptableRendererFeature
     [Tooltip("Field of view to draw held items at, in degrees. 0 uses the camera's own.")]
     [SerializeField] private float viewModelFov = 35.0f;
 
+    // Seconds to catch up, not a rate. Matched to the world FOV's own figure so the two
+    // lenses move together -- the world narrowing over one span while the weapon's lens
+    // takes another is two transitions where the player asked for one.
+    [Tooltip("How long the lens takes to reach a new figure, in seconds.")]
+    [SerializeField] private float lensFovSmoothTime = 0.12f;
+
+    private float _currentLensFov;
+    private float _lensFovVelocity;
+    private int _lensFovFrame = -1;
+
     // ── Occlusion ────────────────────────────────────────────────────────────────────
     //
     // WHY THESE TWO GET THEIR OWN AO. URP's SSAO is one radius quoted for a room, and
@@ -287,10 +297,19 @@ public class ViewModelLensFeature : ScriptableRendererFeature
         // occlusion.
         if (!isOverlay)
         {
-            _lensPass.Setup(viewModelLayers, viewModelFov, asOverlay: false);
+            _lensPass.Setup(viewModelLayers, ResolveLensFov(renderingData.cameraData.camera), asOverlay: false);
             renderer.EnqueuePass(_lensPass);
             return;
         }
+
+        // RESOLVED ONCE, HERE, and handed to everything that needs it.
+        //
+        // The draw and the occlusion both unproject with this, and the whole point of
+        // them living in one feature is that they cannot end up with different answers.
+        // Asking for it twice -- once per pass -- would be the same mistake in a new
+        // place: occlusion computed at one field of view and painted onto a weapon drawn
+        // at another slides off the geometry it belongs to.
+        float lensFov = ResolveLensFov(renderingData.cameraData.camera);
 
         var settings = new NearFieldAOPass.Settings
         {
@@ -324,7 +343,7 @@ public class ViewModelLensFeature : ScriptableRendererFeature
             renderer.EnqueuePass(_bodyAOPass);
         }
 
-        _lensPass.Setup(viewModelLayers, viewModelFov, asOverlay: true);
+        _lensPass.Setup(viewModelLayers, lensFov, asOverlay: true);
         renderer.EnqueuePass(_lensPass);
 
         // The held item last, and it has to be last: its occlusion multiplies into the
@@ -332,9 +351,65 @@ public class ViewModelLensFeature : ScriptableRendererFeature
         // darken the world and then have the weapon painted over the result.
         if (occludeHeldItem && _heldItemMaterials != null && _heldItemMaterials.IsValid)
         {
-            _heldItemAOPass.Setup(_heldItemMaterials, settings, viewModelFov, viewModelLayers);
+            _heldItemAOPass.Setup(_heldItemMaterials, settings, lensFov, viewModelLayers);
             renderer.EnqueuePass(_heldItemAOPass);
         }
+    }
+
+    // The base figure, unless something is borrowing it -- eased, not switched.
+    //
+    // The field on this asset is the lens for every held item and stays that way. What a
+    // volume can do is take it for a moment -- a weapon tightening it while its sights
+    // are up -- and hand it straight back, which is the one thing a static could never
+    // express and the reason the per-weapon figure went away the first time.
+    //
+    // ── THE EASING IS HERE, AND IT HAS TO BE ─────────────────────────────────────────
+    //
+    // Interpolating between the base and the aim figure needs both ends, and this is the
+    // only place that has them: the base lives on this asset and gameplay only ever pushes
+    // an intent. Smoothed where the value is pushed instead, it would be easing towards a
+    // number it could not see, which is why what arrives here is a target rather than a
+    // ready-made interpolation.
+    //
+    // SmoothDamp rather than a lerp rate, matching the world FOV: a spring accelerates out
+    // of rest and decelerates into the target, where a lerp rate is fastest on the first
+    // frame and reads as a snap followed by a crawl.
+    //
+    // A zero base means "the camera's own", so it is resolved to actual degrees before any
+    // of this -- easing towards a sentinel would drive the lens to nothing. Once the eased
+    // figure lands back within a hair of the camera's, the pass skips itself again, so the
+    // no-lens state arrives smoothly rather than being switched back on release.
+    private float ResolveLensFov(Camera camera)
+    {
+        var lens = VolumeManager.instance.stack.GetComponent<NearFieldLensVolume>();
+
+        float baseFov = viewModelFov > 0.0f ? viewModelFov : camera.fieldOfView;
+
+        float target = lens != null && lens.viewModelFov.value > 0.0f
+            ? lens.viewModelFov.value
+            : baseFov;
+
+        // First frame lands outright rather than easing up from nothing.
+        if (_currentLensFov <= 0.0f)
+        {
+            _currentLensFov = target;
+            _lensFovVelocity = 0.0f;
+
+            return _currentLensFov;
+        }
+
+        // ONCE PER FRAME, whatever the camera. AddRenderPasses runs per camera -- the game
+        // view and a scene view in the same frame -- and stepping the spring in each would
+        // advance it at a rate that depended on how many windows happened to be open.
+        if (Time.frameCount != _lensFovFrame)
+        {
+            _lensFovFrame = Time.frameCount;
+
+            _currentLensFov = Mathf.SmoothDamp(
+                _currentLensFov, target, ref _lensFovVelocity, lensFovSmoothTime);
+        }
+
+        return _currentLensFov;
     }
 
     // The lens, in one place, so the draw and the two unprojections cannot disagree.

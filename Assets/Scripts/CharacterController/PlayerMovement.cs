@@ -87,6 +87,14 @@ public class PlayerMovement : MonoBehaviour
     public bool IsInCar { get; private set; }
     public float CarSpeedRatio => _activeCar != null ? _activeCar.SpeedRatio : 0f;
 
+    // Metres per second of fall below which a landing is not one worth reacting to.
+    //
+    // See LandedHardThisFrame. It has to clear the -2 a grounded character is held at, or
+    // a staircase reads as a fall per tread. There is no upper figure to pair it with:
+    // above this, every landing lands the same.
+    [Header("Landing")]
+    [SerializeField] private float landingMinSpeed = 3.5f;
+
     public bool IsGrounded { get; private set; }
     public bool IsGroundedStable => IsGrounded || (Time.time - _lastGroundedTime) < airborneGraceTime;
     public bool IsCrouching { get; private set; }
@@ -137,6 +145,9 @@ public class PlayerMovement : MonoBehaviour
         // wrong too.
         && _moveInput.y >= 0f;
 
+    // Grounded on purpose, and left that way: the animator and the stamina both ask this
+    // and neither should count air time as running. What must NOT ask it is the target
+    // speed -- see _heldGaitSpeed in ApplyMovement for why.
     public bool IsSprinting => IsGrounded && CanSprint;
     public bool IsSprintingStable => IsGroundedStable && CanSprint;
     public bool IsClimbingLadder => _ladderPhase != LadderPhase.None;
@@ -162,8 +173,25 @@ public class PlayerMovement : MonoBehaviour
 
     // One-frame pulses for equipped items (e.g. Weapon) to react to with a
     // one-shot effect (a jump/land kick) -- read-only, mirrors IsGrounded etc.
+    // The gait speed in force. Negative until the first grounded frame sets it, which is
+    // the only reason it is not simply assigned in Awake -- the speeds it comes from are
+    // serialized and a spawn in mid-air would otherwise be capped at zero.
+    private float _heldGaitSpeed = -1f;
+
     public bool JumpedThisFrame { get; private set; }
     public bool LandedThisFrame { get; private set; }
+
+    // WHETHER THAT LANDING COUNTS, and it is a yes or no rather than a strength.
+    //
+    // LandedThisFrame reports an event: walking down a flight of stairs lands once per
+    // tread, and each one was firing a full shake. So the question that had to be answered
+    // was which landings are worth reacting to at all -- and once answered, the ones that
+    // are all land with the same weight. A landing that arrives at half strength reads as
+    // a bug in the shake rather than as a gentler drop.
+    //
+    // Made once, here, because the only thing that knows the impact is whatever arrested
+    // it. Every effect that wants it reads this instead of keeping a threshold of its own.
+    public bool LandedHardThisFrame { get; private set; }
 
     // Lets an equipped item (e.g. Weapon) block sprinting while active (e.g. while
     // aiming down sights), without PlayerMovement needing to know anything about
@@ -300,6 +328,7 @@ public class PlayerMovement : MonoBehaviour
 
         JumpedThisFrame = false;
         LandedThisFrame = false;
+        LandedHardThisFrame = false;
 
         _moveInput = _moveAction.ReadValue<Vector2>();
 
@@ -925,7 +954,21 @@ public class PlayerMovement : MonoBehaviour
         // _velocity.y still holds the pre-impact falling speed here -- ApplyGravity
         // (which resets it once grounded) hasn't run yet this frame.
         if (IsGrounded && !_wasGrounded && _velocity.y < 0f)
+        {
             LandedThisFrame = true;
+
+            // THE THRESHOLD IS NOT NEAR ZERO, and that is the part worth knowing.
+            // ApplyGravity holds a grounded character at -2 rather than at rest, so
+            // leaving the ground for a single frame and touching down again already
+            // reports two metres a second of "fall". A stair tread, a kerb, or the ground
+            // check flickering over a seam all arrive in that region -- which is why every
+            // step down a staircase was firing a landing.
+            //
+            // So the figure has to clear that baseline. Above it every landing counts the
+            // same: one line, one comparison, and nothing downstream has to decide how
+            // much of a landing it just had.
+            LandedHardThisFrame = -_velocity.y >= landingMinSpeed;
+        }
         _wasGrounded = IsGrounded;
 
         if (IsGrounded)
@@ -957,7 +1000,30 @@ public class PlayerMovement : MonoBehaviour
         Vector3 wishDir = transform.right * _moveInput.x + transform.forward * _moveInput.y;
         wishDir = Vector3.ClampMagnitude(wishDir, 1f);
 
-        Vector3 targetHorizontal = wishDir * GetGaitSpeed(IsSprinting, _moveInput.y < 0f);
+        // LATCHED ON THE GROUND AND HELD IN THE AIR, and this one line is the whole of a
+        // bug that read as the character braking mid-jump.
+        //
+        // IsSprinting requires IsGrounded -- correctly, for the animator and the stamina,
+        // which should not count air time as running. Asking it for a TARGET SPEED is a
+        // different question, and the moment the feet left the ground the answer dropped
+        // from sprintSpeed to walkSpeed. MoveTowards below then did exactly what it is
+        // told to and dragged a sprinting jump down to a walk in mid-air, over the same
+        // acceleration that is meant to describe feet pushing against ground.
+        //
+        // So the gait speed in force is latched every grounded frame and simply held
+        // while airborne: on the ground this is the live figure, off it there is nothing
+        // to push against and no reason for the number to move. That covers the crouch
+        // and the backward cases for free -- crouching in mid-air does not lower a jump's
+        // top speed either, and for the same reason.
+        //
+        // Note this bounds the speed, it does not maintain it. Releasing the key still
+        // coasts to a stop in the air at full ground authority, because MoveTowards is
+        // reaching for a target of zero rather than for a slower gait. Whether the air
+        // should have less say than the ground is a separate question from this one.
+        if (IsGrounded || _heldGaitSpeed < 0f)
+            _heldGaitSpeed = GetGaitSpeed(CanSprint, _moveInput.y < 0f);
+
+        Vector3 targetHorizontal = wishDir * _heldGaitSpeed;
         Vector3 currentHorizontal = new Vector3(_velocity.x, 0f, _velocity.z);
 
         // Symmetric on purpose: the same figure that gets the character moving is

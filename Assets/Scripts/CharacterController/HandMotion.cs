@@ -50,11 +50,6 @@ public class HandMotion : MonoBehaviour
 
     [SerializeField] private PlayerMovement movement;
 
-    // Optional. The depth of field blurs the held item in proportion to how hard this
-    // script is carrying the hands, and this is where that figure comes from -- pushed
-    // out rather than read back, the same pattern the item uses to drive the aim
-    // vignette. Left empty, the depth of field simply stays at its resting blur.
-    [SerializeField] private PlayerPostProcessEffects postProcessEffects;
 
     // The camera's bob phase is the walk cycle, and the hands read it rather than
     // running a clock of their own. Two clocks at the same rate stay together; two
@@ -155,10 +150,60 @@ public class HandMotion : MonoBehaviour
     // reading as a person walking and starts reading as one losing their footing.
     [SerializeField, Range(0f, 0.5f)] private float bobWander = 0.45f;
 
-    // How quickly that drift moves, in noise samples per second. Well below a
-    // stride, so it varies across several steps rather than within one -- at walking
-    // pace it would just be a second bob.
-    [SerializeField] private float bobWanderRate = 0.8f;
+    // The rate this drifts at is PlayerLook's, alongside the phase and the cycle skew,
+    // because it describes the stride rather than the hands. See BobWander there.
+
+    [Header("Step / Jump / Land Shake")]
+    // The hands taking the footfall. NOT the jump and landing coming back -- those were
+    // deliberately given to the view alone, because leaving the ground and hitting it
+    // again happen to the head while the hands go on holding something braced. A stride
+    // is the opposite case: the hands are being CARRIED through it, and the impulse that
+    // arrives twice a stride arrives at them too.
+    //
+    // It is also what the bob on its own cannot give. A sine has no events in it, so
+    // however well it is tuned the hands oscillate rather than walk.
+    //
+    // Metres, downward. Positive dips the hands.
+    [SerializeField] private float stepShakeAmount = 0.006f;
+
+
+    // Degrees, and it ALTERNATES WITH THE FOOT -- the sign comes from PlayerLook's
+    // footfall, so the hands and the head tip on the same foot instead of each deciding
+    // for themselves which one it was.
+    [SerializeField] private float stepShakeRollAmount = 0.6f;
+
+    // LEAVING THE GROUND AND HITTING IT AGAIN, which the hands did not answer until now.
+    //
+    // The old arrangement gave both to the view alone, on the reasoning that they happen
+    // to the head while the hands hold something braced. Half of that holds: the hands DO
+    // stay braced, so they should not be thrown about. But something held has mass, and a
+    // body that suddenly accelerates leaves it behind -- which is a small, sprung
+    // displacement, not a throw. That is what these are.
+    //
+    // BOTH DIP, and that is not a mistake. On takeoff the body gains upward speed and
+    // what it is carrying lags, so the weapon ends up lower in the hands. On landing the
+    // fall is arrested and the weapon carries on down before it recovers. Two opposite
+    // events, the same relative direction, because in both the body changes velocity
+    // upward and the mass does not.
+    //
+    // Metres. Positive dips.
+    [SerializeField] private float jumpShakeAmount = 0.004f;
+    [SerializeField] private float landShakeAmount = 0.012f;
+
+    // Degrees, and the same way every time rather than alternating like the footfall's.
+    // That is the view's reasoning borrowed intact: a landing should be a thing the
+    // player recognises, and a roll that picked a side each time would just be noise.
+    [SerializeField] private float jumpShakeRollAmount = 0.3f;
+    [SerializeField] private float landShakeRollAmount = 0.8f;
+
+    // ONE SPRING FOR ALL THREE, which is what keeps them comparable: a footfall is a
+    // small landing, and giving each its own spring would mean three settling times to
+    // keep in step by hand. Matched to the view's own shake for the same reason.
+    //
+    // Critically-damped-ish: enough damping that a step does not ring, little enough
+    // that it recovers rather than creeping back.
+    [SerializeField] private float stepShakeSpring = 200f;
+    [SerializeField] private float stepShakeDamping = 20f;
 
     [Header("Strafe Sway")]
     // The movement half of the lag, against the look half further down. Horizontal
@@ -297,6 +342,10 @@ public class HandMotion : MonoBehaviour
     private Vector3 _currentBobOffset;
     private Vector3 _currentBobRotation;
     private Vector3 _currentSway;
+    private float _stepShakeOffset;
+    private float _stepShakeVelocity;
+    private float _stepShakeRoll;
+    private float _stepShakeRollVelocity;
     private Vector2 _currentLookSway;
     private float _currentTilt;
 
@@ -361,6 +410,25 @@ public class HandMotion : MonoBehaviour
     // and completely different motions.
     public Vector3 PeekRotation => look != null ? peekRotation * look.PeekAmount : Vector3.zero;
 
+    // Every impulse the hands take -- footfalls, jumps, landings -- as one displacement
+    // and one roll, for whatever is held to apply at its own pivot.
+    //
+    // The same division as the look tilt and the peek above, and for the same reason.
+    // Rolling the hold point swings the whole weapon around the grip in an arc; rolling
+    // at the item turns it in place, which is what a weapon rocking in the hands looks
+    // like. The figures, the spring and the stance scaling stay here with the rest of the
+    // hand motion -- only the point it turns about belongs to the item.
+    //
+    // One pair rather than a pair per cause, because the hands are one thing and take one
+    // displacement. A landing mid-stride adds to the step it interrupted.
+    //
+    // The dip is published as a vector so the item can simply add it, and it ends up in
+    // the item's own space rather than the world's: the hands drop along the weapon's
+    // axis, not along global up.
+    public Vector3 ImpulseShake => Vector3.up * _stepShakeOffset;
+
+    public float ImpulseShakeRoll => _stepShakeRoll;
+
     // The chest socket in whatever space the hold's localPosition is written in.
     // Taken from the hold's actual parent rather than assuming anything about the
     // rig, so it can be nested a level deeper without this quietly reading the wrong
@@ -414,15 +482,12 @@ public class HandMotion : MonoBehaviour
         float bobAmount = ForStance(bobIntensity);
         float swayAmount = ForStance(swayIntensity);
 
-        // Out to the depth of field, BEFORE the step bias and the wander are folded in
-        // below. Those two exist to stop consecutive strides being identical, which is
-        // right for where the hands are and wrong for how blurred they are -- a blur that
-        // pulsed twice per stride would read as a fault rather than as motion.
-        //
-        // The stance figure carries the rest for free: a crouch-walk is 0.4 of a walk and
-        // blurs that much less, aiming is lower still, and a sprint is over 1 and clamps.
-        // None of that needs a second setting saying so.
-        postProcessEffects?.SetHandOffset(isMoving ? bobAmount : 0f);
+        // The depth of field used to take a blur magnitude from here, measured off this
+        // bob. It does not any more, and the reason is worth keeping: this figure reports
+        // MOVEMENT, and movement is the wrong question. A weapon held ready while the legs
+        // are going is still a weapon held ready, and softening it blurs the thing the
+        // player is looking at. What earns the blur is the item being dropped into its
+        // walk or run offset -- which only the item can see, so the item pushes it.
         float tiltStanceAmount = ForStance(tiltIntensity);
         // Folded into the stance figure rather than applied further down, so it lands
         // on the TARGET and not on the filtered value. The smoothing then carries the
@@ -452,20 +517,67 @@ public class HandMotion : MonoBehaviour
         // signal for telling the two apart, at no cost.
         float stepBias = 1f + Mathf.Sin(bobPhase) * bobStepAsymmetry;
 
-        // The second is a slow wander with no period at all. Noise rather than
-        // another sine, because a sine would only be a longer pattern -- audible as
-        // soon as it came round again -- where this never repeats. Read against the
-        // clock rather than the phase so it keeps drifting while standing still and
-        // the walk resumes somewhere new.
-        float wander = 1f + (Mathf.PerlinNoise(Time.time * bobWanderRate, 0.37f) - 0.5f) * 2f * bobWander;
+        // The second is a slow wander with no period at all, so strides vary across
+        // several steps.
+        //
+        // TAKEN FROM PlayerLook RATHER THAN GENERATED HERE. It used to have a noise
+        // source of its own, and two sources meant the head could be growing its stride
+        // while the hands shrank theirs -- the same walk, described two different ways.
+        // The gait lengthening and shortening is something the whole body does at once,
+        // which puts it with the phase and the skew: shared signal, local amount. The
+        // amount below is still the hands' own.
+        float wander = 1f + look.BobWander * bobWander;
 
         bobAmount *= stepBias * wander;
 
+        // The footfall, taken from PlayerLook rather than found again here: the phase
+        // lives there, so the crossing is found there, and a second search of the same
+        // signal would be a second opinion about when the foot lands.
+        //
         // Scaled by the same figure the bob itself is, which is what ties the jolt to
         // the step that produced it: the heavier foot of a limp lands harder, a
         // sprint stamps, a crouch barely touches down, and the wander keeps
         // consecutive steps from thumping identically. All of that comes free from
         // multiplying by a number that already carries it.
+        if (look.FootfallThisFrame)
+        {
+            _stepShakeVelocity -= stepShakeAmount * bobAmount;
+            _stepShakeRollVelocity += stepShakeRollAmount * bobAmount * look.FootfallSign;
+        }
+
+        // Into the SAME accumulators as the footfall, not springs of their own. The hands
+        // are one thing and they take one displacement; a jump landed on mid-stride
+        // should add to the step it interrupted rather than be tracked beside it.
+        //
+        // Not scaled by bobAmount either -- that figure describes a stride, and a landing
+        // is not one. It lands at full strength whatever the gait was.
+        if (movement != null)
+        {
+            if (movement.JumpedThisFrame)
+            {
+                _stepShakeVelocity -= jumpShakeAmount;
+                _stepShakeRollVelocity += jumpShakeRollAmount;
+            }
+
+            // The landings that count, at full strength. A flight of stairs lands once per
+            // tread and none of them should jolt the weapon -- PlayerMovement decides
+            // which ones are worth reacting to, from the speed it arrested.
+            if (movement.LandedHardThisFrame)
+            {
+                _stepShakeVelocity -= landShakeAmount;
+                _stepShakeRollVelocity += landShakeRollAmount;
+            }
+        }
+
+        // Integrated every frame whether a step landed or not -- a spring that is only
+        // advanced when it is struck never comes back.
+        _stepShakeVelocity +=
+            (-stepShakeSpring * _stepShakeOffset - stepShakeDamping * _stepShakeVelocity) * Time.deltaTime;
+        _stepShakeOffset += _stepShakeVelocity * Time.deltaTime;
+
+        _stepShakeRollVelocity +=
+            (-stepShakeSpring * _stepShakeRoll - stepShakeDamping * _stepShakeRollVelocity) * Time.deltaTime;
+        _stepShakeRoll += _stepShakeRollVelocity * Time.deltaTime;
 
         // Vertical runs at twice the horizontal: one dip per footfall against one
         // side-to-side swing per full stride. Pitch follows the vertical phase;
@@ -596,9 +708,15 @@ public class HandMotion : MonoBehaviour
         // The peek is not here. It, like the look tilt, is turned about the item's
         // own pivot instead -- both are read off this component by whatever is held.
         //
-        // Neither is the jump and landing: the hands no longer answer either. Leaving
-        // the ground and hitting it again reach the view alone now, on the rendered
-        // camera, which the items are deliberately not parented to.
+        // Neither is the impulse shake -- the footfalls, the jump and the landing. Those
+        // join the tilt and the peek in being worked out here and applied by the item, at
+        // its own pivot.
+        //
+        // The view still gets its own, larger version of the jump and landing on the
+        // rendered camera, which the items are deliberately not parented to. The hands
+        // answering as well is not that decision reversed: the view is thrown, where the
+        // hands only lag. Something held has mass and a body that changes speed leaves it
+        // behind, which is a small sprung displacement rather than a shake.
         transform.localRotation = _baseLocalRotation * Quaternion.Euler(
             _currentBobRotation.x + _currentLookSway.x + look.FreeAim.x + _currentBreathRotation.x,
             _currentBobRotation.y + _currentLookSway.y + look.FreeAim.y,

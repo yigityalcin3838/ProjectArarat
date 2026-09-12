@@ -71,6 +71,22 @@ Shader "Custom/EnvironmentPBR"
             // invisible to this shader.
             #pragma multi_compile _ _CLUSTER_LIGHT_LOOP
 
+            // Light cookies -- the masks that shape a light into a window frame, a
+            // gobo, a pattern of leaves.
+            //
+            // THE SAME FAILURE SHAPE AS THE TWO NEIGHBOURS HERE, and it is the shape
+            // worth recognising: URP guards the cookie sampling inside GetMainLight and
+            // GetAdditionalLight with this keyword, so without it the atlas is built
+            // every frame, the light carries its cookie, and this shader reads none of
+            // it. The light lands as an unshaped cone. Nothing errors, nothing warns,
+            // and the material looks like the cookie was simply not assigned.
+            //
+            // Nothing else was needed for it: the sampling happens in the overloads that
+            // take positionWS, this pass fills inputData.positionWS and hands the lot to
+            // UniversalFragmentPBR, so every path the cookie travels was already here
+            // and only the switch was missing.
+            #pragma multi_compile_fragment _ _LIGHT_COOKIES
+
             // Lets the surface receive the SSAO the renderer already computes.
             // Same failure shape as above: absent, the ambient occlusion texture
             // is produced every frame and then simply never read here.

@@ -17,17 +17,18 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 512
   viewModelFov: 40
+  lensFovSmoothTime: 0.12
   nearFieldAOShader: {fileID: 4800000, guid: 13cefe5947a4ba742b53f2ff526c416b, type: 3}
   occludeHeldItem: 1
   bodyLayers:
     serializedVersion: 2
     m_Bits: 576
   aoRadius: 0.05
-  aoIntensity: 2
-  aoBias: 0.0175
+  aoIntensity: 1.5
+  aoBias: 0.005
   blurDepthSharpness: 64
-  spillRadius: 35
-  spillOutwardIntensity: 0.2
+  spillRadius: 7
+  spillOutwardIntensity: 0.35
   spillInwardIntensity: 1
 --- !u!114 &-5579033308405158290
 MonoBehaviour:

@@ -55,8 +55,20 @@ public class PlayerPostProcessEffects : MonoBehaviour
     [Tooltip("How much of the held item's blur to show while nothing is asking for more.")]
     [SerializeField] private float restingForegroundBlur = 0.15f;
 
-    [Tooltip("How much to show while the hands are being carried by the walk offset.")]
-    [SerializeField] private float walkingForegroundBlur = 1.0f;
+    // A FLOOR, not a scale, and that distinction is the whole reason both behaviours can
+    // be on at once. The carry's blur does not go through the focus path: out in the open
+    // nothing is inside the autofocus gate, the effect stands down so the field reads
+    // clean, and anything riding on that engagement went down with it. This rides on
+    // nothing and the item takes whichever blur is larger.
+    //
+    // Two figures, because a run carry is a looser one than a walk carry and reads as
+    // more motion. Neither is driven by the legs -- see ItemCarry.
+    [Tooltip("Blur the held item carries in its walking offset, as a fraction of the " +
+             "maximum radius. Independent of focus.")]
+    [SerializeField] private float walkCarryBlur = 0.5f;
+
+    [Tooltip("The same, for the running offset.")]
+    [SerializeField] private float runCarryBlur = 1.0f;
 
     [Tooltip("Seconds-scale smoothing on the held item's blur, so it eases in with the " +
              "walk rather than snapping on with the first footstep.")]
@@ -87,6 +99,7 @@ public class PlayerPostProcessEffects : MonoBehaviour
     private Volume _depthOfFieldVolume;
     private VolumeProfile _depthOfFieldProfile;
     private NearFieldDepthOfFieldVolume _depthOfField;
+    private NearFieldLensVolume _lens;
 
     private float _baseVignetteIntensity;
     private float _baseVignetteSmoothness;
@@ -94,7 +107,7 @@ public class PlayerPostProcessEffects : MonoBehaviour
 
     private bool _isAiming;
     private bool _isReloading;
-    private float _handOffset;
+    private ItemCarry _itemCarry;
 
     // Lets an equipped item (e.g. Weapon) drive the aim vignette while it's
     // active, without this script needing to know anything about items -- same
@@ -105,11 +118,39 @@ public class PlayerPostProcessEffects : MonoBehaviour
     // this script stays ignorant of items, and the item already knows.
     public void SetReloading(bool isReloading) => _isReloading = isReloading;
 
-    // Pushed in by HandMotion, as a 0..1 of how hard it is currently carrying the hands.
-    // A magnitude rather than a bool, so the blur arrives with the walk instead of
-    // switching on at the first step -- and so a crouch-walk, which offsets the hands
-    // much less, blurs them much less without a second setting saying so.
-    public void SetHandOffset(float amount) => _handOffset = Mathf.Clamp01(amount);
+    // How the held item is being carried, pushed in by the item itself.
+    //
+    // AN ENUM AND NOT AN AMOUNT, which is the division everything here follows: the item
+    // knows which carry it is in -- only it can, since the pose is cleared by a shot, the
+    // sights or a reload -- and this script decides what that should look like. An item
+    // pushing a blur strength would be an item with opinions about post-processing.
+    //
+    // It replaced a magnitude measured off HandMotion's bob. That read movement, and
+    // movement is the wrong question: a weapon held ready while the legs are moving is
+    // still held ready, and softening it blurs the thing the player is looking at.
+    public enum ItemCarry
+    {
+        // Up and usable -- at the hip, aiming, firing, pulled in by a wall.
+        Ready,
+
+        // Dropped into the walking offset.
+        Walk,
+
+        // Dropped into the running offset.
+        Run,
+    }
+
+    public void SetItemCarry(ItemCarry carry) => _itemCarry = carry;
+
+    // The lens the held item is drawn through, while an item wants a say in it.
+    //
+    // Pushed in by the item, like everything else here, and zero hands it back -- the
+    // renderer asset's own figure is the base and the item only borrows it. That is the
+    // whole reason this goes through a volume: a static could set the figure but had no
+    // way of saying "and stop".
+    public void SetViewModelFovOverride(float fov) => _viewModelFovOverride = Mathf.Max(fov, 0f);
+
+    private float _viewModelFovOverride;
 
     private void Awake()
     {
@@ -176,8 +217,29 @@ public class PlayerPostProcessEffects : MonoBehaviour
         // its own defaults over the scene's authored ones the moment the player spawns.
         _depthOfField = _depthOfFieldProfile.Add<NearFieldDepthOfFieldVolume>(overrides: false);
 
+        // The lens rides in the same profile. One runtime volume for everything gameplay
+        // borrows from post-processing, rather than one per effect -- they all have the
+        // same lifetime and the same priority, and splitting them would only be more
+        // objects saying the same thing about when they apply.
+        _lens = _depthOfFieldProfile.Add<NearFieldLensVolume>(overrides: false);
+
         var host = new GameObject("Near Field Depth of Field (Runtime)");
         host.transform.SetParent(transform, worldPositionStays: false);
+
+        // ON THE SAME LAYER AS THE SCENE'S OWN VOLUME, and this is the difference between
+        // this working and doing nothing at all.
+        //
+        // A Volume only reaches a camera whose Volume Mask includes its layer. A new
+        // GameObject is born on Default, so if the project keeps its volumes on a layer of
+        // their own -- which is the usual arrangement, and what the camera's mask is for
+        // -- this one is invisible to every camera and every value pushed into it is
+        // silently discarded. Nothing errors; the effect simply never changes.
+        //
+        // Derived from the volume already wired to this component rather than authored as
+        // a second field: that object's layer is demonstrably one the camera sees, since
+        // the vignette driven through it arrives. Stating the layer twice is how the two
+        // end up disagreeing.
+        host.layer = volume != null ? volume.gameObject.layer : gameObject.layer;
 
         // Not saved and not shown: it is an implementation detail of this component, and
         // a stray one left in a scene would override the profile everywhere with whatever
@@ -200,6 +262,14 @@ public class PlayerPostProcessEffects : MonoBehaviour
 
     private void UpdateDepthOfField()
     {
+        // Overridden only while an item is asking, and released otherwise so the renderer
+        // asset's base comes back -- the same borrow-and-return the aim gate below uses.
+        if (_lens != null)
+        {
+            _lens.viewModelFov.overrideState = _viewModelFovOverride > 0f;
+            _lens.viewModelFov.value = _viewModelFovOverride;
+        }
+
         if (_depthOfField == null)
             return;
 
@@ -212,16 +282,36 @@ public class PlayerPostProcessEffects : MonoBehaviour
             ? NearFieldDepthOfFieldVolume.FocusMode.Foreground
             : NearFieldDepthOfFieldVolume.FocusMode.Autofocus;
 
+        // The focus-derived share stays where the profile put it. Only the floor moves,
+        // because only the floor is about the hands being carried.
+        _depthOfField.foregroundBlurScale.overrideState = true;
+        _depthOfField.foregroundBlurScale.value = restingForegroundBlur;
+
+        // RELEASED DURING A RELOAD, because a reload wants the item sharp and the floor is
+        // the one thing that would blur it anyway -- focus is pinned to it, so its
+        // focus-derived blur is already nothing.
+        //
+        // In practice a reload also clears the carry outright, so this is belt and braces
+        // rather than the only guard. It is kept because the two facts are independent:
+        // whether the item is down is the item's business, and whether a reload should
+        // soften it is this script's.
+        float carryFloor = _itemCarry switch
+        {
+            ItemCarry.Run => runCarryBlur,
+            ItemCarry.Walk => walkCarryBlur,
+            _ => 0.0f,
+        };
+
+        float targetFloor = _isReloading ? 0.0f : carryFloor;
+
         // Eased rather than set, so the item's blur arrives with the walk. Snapping it on
         // at the first frame of movement reads as a glitch, which is the same reason the
         // vignettes above are lerped.
-        float targetBlur = Mathf.Lerp(restingForegroundBlur, walkingForegroundBlur, _handOffset);
-
         _foregroundBlur = Mathf.Lerp(
-            _foregroundBlur, targetBlur, foregroundBlurSmoothSpeed * Time.deltaTime);
+            _foregroundBlur, targetFloor, foregroundBlurSmoothSpeed * Time.deltaTime);
 
-        _depthOfField.foregroundBlurScale.overrideState = true;
-        _depthOfField.foregroundBlurScale.value = _foregroundBlur;
+        _depthOfField.foregroundBlurFloor.overrideState = true;
+        _depthOfField.foregroundBlurFloor.value = _foregroundBlur;
 
         // OVERRIDDEN ONLY WHILE AIMING, and released the rest of the time so the scene's
         // own figure comes back. That is the whole reason to drive this through a volume

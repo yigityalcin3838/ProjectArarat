@@ -143,6 +143,7 @@ public class NearFieldDepthOfFieldFeature : ScriptableRendererFeature
             blurFalloff = volume.blurFalloff.value,
             maxBlurRadius = volume.maxBlurRadius.value,
             foregroundBlurScale = volume.foregroundBlurScale.value,
+            foregroundBlurFloor = volume.foregroundBlurFloor.value,
             focusCurrent = current,
             focusPrevious = previous,
         };
@@ -182,6 +183,7 @@ public class NearFieldDepthOfFieldFeature : ScriptableRendererFeature
             public float blurFalloff;
             public float maxBlurRadius;
             public float foregroundBlurScale;
+            public float foregroundBlurFloor;
             public RTHandle focusCurrent;
             public RTHandle focusPrevious;
         }
@@ -201,6 +203,7 @@ public class NearFieldDepthOfFieldFeature : ScriptableRendererFeature
         private static readonly int BlurFalloffId = Shader.PropertyToID("_BlurFalloff");
         private static readonly int MaxBlurRadiusId = Shader.PropertyToID("_MaxBlurRadius");
         private static readonly int ForegroundBlurScaleId = Shader.PropertyToID("_ForegroundBlurScale");
+        private static readonly int ForegroundBlurFloorId = Shader.PropertyToID("_ForegroundBlurFloor");
         private static readonly int ForegroundDepthTexId = Shader.PropertyToID("_ForegroundDepthTex");
         private static readonly int MergedDepthTexId = Shader.PropertyToID("_MergedDepthTex");
         private static readonly int PrevFocusTexId = Shader.PropertyToID("_PrevFocusTex");
@@ -242,6 +245,7 @@ public class NearFieldDepthOfFieldFeature : ScriptableRendererFeature
             public float blurFalloff;
             public float maxBlurRadius;
             public float foregroundBlurScale;
+            public float foregroundBlurFloor;
             public float pinnedDistance;
         }
 
@@ -423,6 +427,7 @@ public class NearFieldDepthOfFieldFeature : ScriptableRendererFeature
                 passData.blurFalloff = _settings.blurFalloff;
                 passData.maxBlurRadius = _settings.maxBlurRadius;
                 passData.foregroundBlurScale = foregroundBlurScale;
+                passData.foregroundBlurFloor = _settings.foregroundBlurFloor;
 
                 builder.UseTexture(source, AccessFlags.Read);
                 builder.UseTexture(mergedDepth, AccessFlags.Read);
@@ -477,6 +482,7 @@ public class NearFieldDepthOfFieldFeature : ScriptableRendererFeature
                 passData.blurFalloff = _settings.blurFalloff;
                 passData.maxBlurRadius = _settings.maxBlurRadius;
                 passData.foregroundBlurScale = foregroundBlurScale;
+                passData.foregroundBlurFloor = _settings.foregroundBlurFloor;
 
                 builder.UseTexture(source, AccessFlags.Read);
                 builder.UseTexture(mergedDepth, AccessFlags.Read);
@@ -520,6 +526,7 @@ public class NearFieldDepthOfFieldFeature : ScriptableRendererFeature
             data.material.SetFloat(BlurFalloffId, data.blurFalloff);
             data.material.SetFloat(MaxBlurRadiusId, data.maxBlurRadius);
             data.material.SetFloat(ForegroundBlurScaleId, data.foregroundBlurScale);
+            data.material.SetFloat(ForegroundBlurFloorId, data.foregroundBlurFloor);
 
             ctx.cmd.SetGlobalTexture(MergedDepthTexId, data.mergedDepth);
             ctx.cmd.SetGlobalTexture(ForegroundDepthTexId, data.foregroundDepth);

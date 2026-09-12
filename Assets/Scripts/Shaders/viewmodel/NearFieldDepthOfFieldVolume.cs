@@ -127,9 +127,21 @@ public sealed class NearFieldDepthOfFieldVolume : VolumeComponent, IPostProcessC
     // Separate from everything above because it answers the other question. At 0 the held
     // item never blurs whatever focus is doing; at 1 it blurs exactly as much as its
     // distance says it should.
-    [Tooltip("How much of the held item's own blur to actually show. Low keeps it " +
-             "readable; 1 is what the walk offset wants.")]
+    [Tooltip("How much of the held item's FOCUS-DERIVED blur to show. Low keeps it " +
+             "readable when the world is in focus.")]
     public ClampedFloatParameter foregroundBlurScale = new ClampedFloatParameter(0.15f, 0.0f, 1.0f);
+
+    // Driven by the walk offset, and independent of everything above on purpose.
+    //
+    // What the walk asks for is not a statement about a focal plane -- it is "the thing in
+    // my hands is being carried, soften it" -- and expressing it through the focus path
+    // fell apart in the open: nothing is inside the autofocus gate there, the effect
+    // stands down so the field reads clean, and a foreground blur that rode on that
+    // engagement went down with it. So this one rides on nothing. The foreground takes
+    // whichever of the two is larger.
+    [Tooltip("Blur the held item carries whatever focus is doing, as a fraction of the " +
+             "maximum radius. Gameplay drives this from the walk offset.")]
+    public ClampedFloatParameter foregroundBlurFloor = new ClampedFloatParameter(0.0f, 0.0f, 1.0f);
 
     // Zero radius is off, and off has to mean "do not enqueue" rather than "blur by
     // nothing" -- five passes that produce the original image are five passes wasted.
