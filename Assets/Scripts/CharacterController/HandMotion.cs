@@ -205,6 +205,40 @@ public class HandMotion : MonoBehaviour
     [SerializeField] private float stepShakeSpring = 200f;
     [SerializeField] private float stepShakeDamping = 20f;
 
+    [Header("Hand Tremor")]
+    // Fear in the hands. Nothing drives this yet -- the slider is the whole interface for
+    // now, and SetTremor below is what a scare, a wound or a held breath will push into
+    // later.
+    //
+    // AT THE ITEM'S PIVOT, with the lean, the peek and the impulse shake -- computed here
+    // and applied there, for the reason all four share.
+    //
+    // The hands grip the weapon, so a tremor in them turns it about the GRIP. The hold
+    // origin is somewhere else, and rotating there swings the whole weapon through an arc
+    // -- the muzzle travelling centimetres for a fraction of a degree, which reads as the
+    // weapon being waved rather than as hands that cannot keep still.
+    [Range(0f, 1f)]
+    [SerializeField] private float tremor = 0f;
+
+    // Metres and degrees at full strength. The rotation carries most of it: at arm's
+    // length a fraction of a degree moves the muzzle further than a millimetre of shift
+    // does, which is why a real tremor is read off the far end of what is held.
+    [SerializeField] private float tremorPositionAmount = 0.0035f;
+    [SerializeField] private float tremorRotationAmount = 0.5f;
+
+    // Noise samples per second. A fear tremor sits somewhere around eight to twelve hertz
+    // -- fast enough not to read as sway, slow enough not to read as a rendering fault.
+    [SerializeField] private float tremorFrequency = 9f;
+
+    // Seconds for the AMOUNT to catch up, not the tremor itself.
+    //
+    // The tremor needs no filtering -- Perlin noise is smooth by construction, and
+    // filtering it would cost amplitude the same way filtering the bob's sine did. What
+    // has to ease is the arrival: fear turns up all at once, and a shake that switches on
+    // between two frames reads as a glitch rather than as a fright. Put here so every
+    // future driver gets it and none has to remember to ramp its own value.
+    [SerializeField] private float tremorSmoothTime = 0.25f;
+
     [Header("Strafe Sway")]
     // The movement half of the lag, against the look half further down. Horizontal
     // and forward come from intent rather than velocity: the hands trail the
@@ -346,6 +380,10 @@ public class HandMotion : MonoBehaviour
     private float _stepShakeVelocity;
     private float _stepShakeRoll;
     private float _stepShakeRollVelocity;
+    private float _currentTremor;
+    private float _tremorVelocity;
+    private Vector3 _tremorOffset;
+    private Vector3 _tremorRotation;
     private Vector2 _currentLookSway;
     private float _currentTilt;
 
@@ -384,6 +422,59 @@ public class HandMotion : MonoBehaviour
     // stops walking does not present their weapon. Only InterruptWalkPose clears it,
     // and only the held item knows when that applies.
     public float WalkTime { get; private set; }
+
+    // How hard the hands are shaking, zero to one. Pushed in by whatever decides the
+    // character is frightened -- a scare, a wound, a held breath -- the same
+    // push-values-in pattern everything else here uses.
+    //
+    // Writes the serialized field rather than shadowing it, so the Inspector slider and
+    // this are the same number. Which means the slider works for authoring right up until
+    // something starts pushing, and then stops -- the honest behaviour, and the reason not
+    // to keep a separate runtime value that would silently win.
+    public void SetTremor(float amount) => tremor = Mathf.Clamp01(amount);
+
+    // A tremor is noise, not a wave, and that is the whole of why it reads as nerves
+    // rather than as machinery. A sine at nine hertz is a vibration; noise at nine hertz
+    // never repeats.
+    //
+    // SIX SEPARATE NOISE LINES, three for the offset and three for the rotation, each
+    // read at its own place in the field. Sharing one line across the axes would move them
+    // in lockstep, which is a single rigid wobble in one direction -- and sharing between
+    // the offset and the rotation would weld the shift to the tilt, so the hands would
+    // swing about a fixed point instead of shaking.
+    private void UpdateTremor()
+    {
+        // The amount eases; the noise does not. See tremorSmoothTime.
+        _currentTremor = Mathf.SmoothDamp(
+            _currentTremor, Mathf.Clamp01(tremor), ref _tremorVelocity, tremorSmoothTime);
+
+        if (_currentTremor <= 0.0001f)
+        {
+            _tremorOffset = Vector3.zero;
+            _tremorRotation = Vector3.zero;
+
+            return;
+        }
+
+        float t = Time.time * tremorFrequency;
+
+        _tremorOffset = TremorNoise(t, 11.3f, 41.7f, 73.1f)
+            * (tremorPositionAmount * _currentTremor);
+
+        _tremorRotation = TremorNoise(t, 127.9f, 191.5f, 233.7f)
+            * (tremorRotationAmount * _currentTremor);
+    }
+
+    // Perlin returns zero to one, so it is recentred to plus and minus one -- left as it
+    // comes, the hands would be displaced to one side and tremble about that instead of
+    // about where the pose put them.
+    private static Vector3 TremorNoise(float t, float lineX, float lineY, float lineZ)
+    {
+        return new Vector3(
+            Mathf.PerlinNoise(t, lineX) - 0.5f,
+            Mathf.PerlinNoise(t, lineY) - 0.5f,
+            Mathf.PerlinNoise(t, lineZ) - 0.5f) * 2f;
+    }
 
     // Called by whatever is held when something needs the hands elsewhere -- a shot,
     // the sights, a reload. Clearing it means the walking carry has to be walked into
@@ -428,6 +519,13 @@ public class HandMotion : MonoBehaviour
     public Vector3 ImpulseShake => Vector3.up * _stepShakeOffset;
 
     public float ImpulseShakeRoll => _stepShakeRoll;
+
+    // The tremor, for the item to apply at its own pivot alongside the three above. All
+    // three Euler axes rather than a single roll, because a tremor has no favoured
+    // direction -- that is most of what separates it from a lean.
+    public Vector3 Tremor => _tremorOffset;
+
+    public Vector3 TremorRotation => _tremorRotation;
 
     // The chest socket in whatever space the hold's localPosition is written in.
     // Taken from the hold's actual parent rather than assuming anything about the
@@ -692,6 +790,8 @@ public class HandMotion : MonoBehaviour
         // No peek slide here. The hold is shared by everything that gets picked up,
         // and how far a thing has to be pulled in to clear a corner is a fact about
         // that thing -- so it lives on the item, beside its other poses.
+        UpdateTremor();
+
         transform.localPosition =
             Vector3.Lerp(_baseLocalPosition, _followedLocalPosition, chestFollowAmount)
             + _currentBobOffset + _currentSway + _currentBreathOffset;

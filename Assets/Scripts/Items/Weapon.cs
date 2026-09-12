@@ -663,7 +663,14 @@ public class Weapon : Item
             // the pose put the weapon, not a competing opinion about where the pose should
             // be. HandMotion owns the spring and the amounts; this is the pivot they
             // happen at.
-            Vector3 impulseShake = handMotion != null ? handMotion.ImpulseShake : Vector3.zero;
+            // The tremor rides here for the same reason: hands grip the weapon, so shaking
+            // hands turn it about the GRIP. Applied at the hold origin instead it would
+            // swing the whole weapon through an arc and read as the thing being waved
+            // rather than as hands that cannot keep still.
+            Vector3 impulseShake = Vector3.zero;
+
+            if (handMotion != null)
+                impulseShake = handMotion.ImpulseShake + handMotion.Tremor;
 
             posDeltaPivot.localPosition =
                 Vector3.Lerp(_currentAdsPosition, wallBlockPosition, _wallBlockAmount)
@@ -685,7 +692,9 @@ public class Weapon : Item
             Vector3 leanRotation = Vector3.zero;
             if (handMotion != null)
             {
-                leanRotation = handMotion.PeekRotation;
+                // The tremor comes in on all three axes, unlike everything else summed
+                // here: a lean has a direction and a tremor does not.
+                leanRotation = handMotion.PeekRotation + handMotion.TremorRotation;
                 leanRotation.z += handMotion.LookTilt + handMotion.ImpulseShakeRoll;
             }
 
