@@ -49,9 +49,22 @@ public class PlayerAnimator : MonoBehaviour
     //
     // Because they compound, they are not shares of a budget: 1 and 1 is two turns,
     // not one split in half.
+    // Capped at 1 each, because one bone doing the entire turn is the most a bone can
+    // sensibly be asked for -- past that it is not a share of anything.
+    //
+    // THE SLIDERS ALONE DO NOT MAKE THIS SAFE, and it is worth knowing why: they bound
+    // each bone and the chain compounds, so four ones is still four turns. What bounds
+    // the total is the ceiling applied where they are read, below.
+    [Range(0f, 1f)]
     [SerializeField] private float defaultSpineAimWeight = 1f;
+
+    [Range(0f, 1f)]
     [SerializeField] private float defaultChestAimWeight = 0f;
+
+    [Range(0f, 1f)]
     [SerializeField] private float defaultUpperChestAimWeight = 0f;
+
+    [Range(0f, 1f)]
     [SerializeField] private float defaultNeckAimWeight = 0f;
 
     [Header("Peek Slide")]
@@ -559,11 +572,15 @@ public class PlayerAnimator : MonoBehaviour
     // pattern as hand IK targets.
     public void SetAimRigWeightOverride(float spineWeight, float chestWeight, float upperChestWeight, float neckWeight)
     {
+        // Clamped on the way in, because this route has no slider to do it. The total is
+        // capped where the weights are read either way, but a NEGATIVE one would subtract
+        // from that total and quietly inflate everything else when it was scaled -- a bone
+        // asked to turn backwards making the others turn further.
         _hasAimRigWeightOverride = true;
-        _spineAimWeightOverride = spineWeight;
-        _chestAimWeightOverride = chestWeight;
-        _upperChestAimWeightOverride = upperChestWeight;
-        _neckAimWeightOverride = neckWeight;
+        _spineAimWeightOverride = Mathf.Clamp01(spineWeight);
+        _chestAimWeightOverride = Mathf.Clamp01(chestWeight);
+        _upperChestAimWeightOverride = Mathf.Clamp01(upperChestWeight);
+        _neckAimWeightOverride = Mathf.Clamp01(neckWeight);
     }
 
     public void ClearAimRigWeightOverride() => _hasAimRigWeightOverride = false;
@@ -825,16 +842,35 @@ public class PlayerAnimator : MonoBehaviour
         float upperChestWeight = _hasAimRigWeightOverride ? _upperChestAimWeightOverride : defaultUpperChestAimWeight;
         float neckWeight = _hasAimRigWeightOverride ? _neckAimWeightOverride : defaultNeckAimWeight;
 
-        // Taken as written, not normalised. 1 on a bone means that bone applies the
-        // whole angle; 0 means it applies none.
+        // A CEILING ON THE TOTAL, not a normalisation, and the difference is the whole
+        // reason this is safe to add.
         //
-        // Which makes them readable one at a time -- spine 1 and the rest 0 is "the
-        // waist does all of it", and that is exactly what it does -- at the cost of
-        // being able to overshoot: the bones are a chain, so a share given to one is
-        // carried by everything above it, and spine 1 with chest 1 turns the chest
-        // twice over. Whatever is set here is applied literally.
-        if (spineWeight <= 0f && chestWeight <= 0f && upperChestWeight <= 0f && neckWeight <= 0f)
+        // The bones are a chain: each applies its share and carries everything above it,
+        // so the angles add. aimOffsetMaxPitch bounds what ONE bone contributes and
+        // nothing bounded the sum -- four weights of 1 asked for four full turns, and at
+        // 55 degrees of pitch that is 220 degrees of upper body. The character somersaults,
+        // which is not a bug so much as the setting being taken at its word.
+        //
+        // Normalising always would have fixed it and cost the thing these weights are for:
+        // 1/0/0/0 and 0.25 each would become the same setting, and "the waist does all of
+        // it" would stop being readable off the Inspector. So the sum is only touched when
+        // it exceeds one. Below that nothing changes and every existing rig is untouched;
+        // above it the four are scaled down together, which keeps their RATIO -- the shape
+        // of the bend the author drew -- and gives up only the overshoot.
+        float weightSum = spineWeight + chestWeight + upperChestWeight + neckWeight;
+
+        if (weightSum <= 0f)
             return;
+
+        if (weightSum > 1f)
+        {
+            float scale = 1f / weightSum;
+
+            spineWeight *= scale;
+            chestWeight *= scale;
+            upperChestWeight *= scale;
+            neckWeight *= scale;
+        }
 
         Vector3 up = transform.up;
 

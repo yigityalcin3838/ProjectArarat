@@ -8045,12 +8045,12 @@ MonoBehaviour:
   turnInPlaceToleranceAngle: 90
   aimOffsetMaxYaw: 90
   aimOffsetMaxPitch: 90
-  aimOffsetSmoothTime: 0.1
-  aimOffsetYawDeadzone: 4
-  defaultSpineAimWeight: 0.25
-  defaultChestAimWeight: 0.01
-  defaultUpperChestAimWeight: 0.01
-  defaultNeckAimWeight: 0.25
+  aimOffsetSmoothTime: 0
+  aimOffsetYawDeadzone: 0
+  defaultSpineAimWeight: 0.5
+  defaultChestAimWeight: 0.25
+  defaultUpperChestAimWeight: 0.25
+  defaultNeckAimWeight: 1
   peekSpineBone: {fileID: 1912272547}
   peekChestBone: {fileID: 1062668486}
   peekUpperChestBone: {fileID: 59586938}
@@ -11648,7 +11648,7 @@ Light:
   serializedVersion: 13
   m_Type: 1
   m_Color: {r: 1, g: 1, b: 1, a: 1}
-  m_Intensity: 0.75
+  m_Intensity: 2
   m_Range: 10
   m_SpotAngle: 30
   m_InnerSpotAngle: 21.80208
@@ -11657,7 +11657,7 @@ Light:
     m_Type: 2
     m_Resolution: -1
     m_CustomResolution: -1
-    m_Strength: 0.5
+    m_Strength: 1
     m_Bias: 0.05
     m_NormalBias: 0.4
     m_NearPlane: 0.2
@@ -16531,6 +16531,7 @@ MonoBehaviour:
   doorInteractDistance: 2
   carDoorTag: CarDoorLeft
   carInteractDistance: 2
+  sprintMaxAngle: 60
   landingMinSpeed: 3.5
 --- !u!23 &768611299
 MeshRenderer:
@@ -16686,14 +16687,118 @@ MonoBehaviour:
   freeAimCentreSpeed: 7
   lookTiltAmount: 7
   lookTiltReferenceRate: 200
-  lookTiltIntensity:
-    crouch: 2
-    walk: 1
-    sprint: 2
-    aim: 0.5
+  lookTiltSprintIntensity: 1.4
   lookTiltSmoothing: 4
   maxBobSpeedRatio: 2
   bobSmoothing: 8
+  reloadPitchCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.15368728
+      value: 10.1265335
+      inSlope: 3.5430033
+      outSlope: 3.5430033
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0.2682557
+    - serializedVersion: 3
+      time: 0.7945729
+      value: 10.202286
+      inSlope: -3.2068205
+      outSlope: -3.2068205
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.4162126
+      outWeight: 0.85201645
+    - serializedVersion: 3
+      time: 1
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  reloadYawCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.21619038
+      value: 5.0101304
+      inSlope: 3.5430033
+      outSlope: 3.5430033
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0.2682557
+    - serializedVersion: 3
+      time: 0.7987396
+      value: 4.959442
+      inSlope: -3.2068205
+      outSlope: -3.2068205
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.4162126
+      outWeight: 0.85201645
+    - serializedVersion: 3
+      time: 1
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  reloadRollCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 34
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 1
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 34
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
   jumpShakeAmount: 180
   landShakeAmount: 360
   stepShakeAmount: 3
@@ -16792,7 +16897,6 @@ MonoBehaviour:
   movement: {fileID: 768611296}
   itemSlots:
   - {fileID: 901984125}
-  - {fileID: 1678308404}
   - {fileID: 1909062647}
 --- !u!114 &768611307
 MonoBehaviour:
@@ -20134,6 +20238,15 @@ MonoBehaviour:
   cameraKickHorizontalAmount: 25
   cameraKickSpring: 75
   cameraKickDamping: 12
+  cameraKickDontTurnBack: 0
+  cameraShakeRollAmount: 7
+  cameraShakeFrequency: 7
+  cameraShakeDecay: 14
+  weaponKickBack: 2
+  weaponKickRise: 720
+  weaponKickRoll: 720
+  weaponKickSpring: 350
+  weaponKickDamping: 25
   fireHipHoldDuration: 0.2
   posDeltaPivot: {fileID: 901984127}
   muzzlePoint: {fileID: 670684129}
@@ -35923,7 +36036,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &1678308405
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -35968,6 +36081,15 @@ MonoBehaviour:
   cameraKickHorizontalAmount: 75
   cameraKickSpring: 50
   cameraKickDamping: 20
+  cameraKickDontTurnBack: 0
+  cameraShakeRollAmount: 1.5
+  cameraShakeFrequency: 26
+  cameraShakeDecay: 11
+  weaponKickBack: 0.03
+  weaponKickRise: 4
+  weaponKickRoll: 2
+  weaponKickSpring: 260
+  weaponKickDamping: 22
   fireHipHoldDuration: 0.2
   posDeltaPivot: {fileID: 1678308406}
   muzzlePoint: {fileID: 1015725934}
@@ -40189,9 +40311,18 @@ MonoBehaviour:
   movement: {fileID: 768611296}
   handMotion: {fileID: 1915127693}
   cameraKickAmount: 360
-  cameraKickHorizontalAmount: 100
+  cameraKickHorizontalAmount: 360
   cameraKickSpring: 50
   cameraKickDamping: 20
+  cameraKickDontTurnBack: 0
+  cameraShakeRollAmount: 30
+  cameraShakeFrequency: 7
+  cameraShakeDecay: 14
+  weaponKickBack: 3
+  weaponKickRise: 180
+  weaponKickRoll: 360
+  weaponKickSpring: 125
+  weaponKickDamping: 12
   fireHipHoldDuration: 0.2
   posDeltaPivot: {fileID: 1909062649}
   muzzlePoint: {fileID: 169215702}
@@ -40294,7 +40425,7 @@ MonoBehaviour:
   chestAnchor: {fileID: 59586938}
   chestFollowAmount: 0.25
   chestFollowSmoothTime: 0.25
-  bobHorizontalAmount: 0.005
+  bobHorizontalAmount: 0.01
   bobVerticalAmount: 0.005
   bobPitchAmount: 1
   bobYawAmount: 1
@@ -40302,7 +40433,7 @@ MonoBehaviour:
   bobIntensity:
     crouch: 1.5
     walk: 1
-    sprint: 8
+    sprint: 4
     aim: 0.5
   bobSmoothing:
     crouch: 7
@@ -40324,7 +40455,7 @@ MonoBehaviour:
   landShakeRollAmount: 180
   stepShakeSpring: 75
   stepShakeDamping: 15
-  tremor: 0.2
+  tremor: 0
   tremorPositionAmount: 0.001
   tremorRotationAmount: 0.5
   tremorFrequency: 10
@@ -40353,13 +40484,13 @@ MonoBehaviour:
     walk: 2
     sprint: 2
     aim: 2
-  lookSwayYawAmount: 7
-  lookSwayPitchAmount: 7
+  lookSwayYawAmount: 14
+  lookSwayPitchAmount: 14
   lookSwayReferenceRate: 300
   lookSwayIntensity:
     crouch: 1
     walk: 1
-    sprint: 4
+    sprint: 2
     aim: 0.5
   lookSwayFreeAimOnMultiplier: 0.25
   lookSwayFreeAimOffMultiplier: 1
@@ -40369,7 +40500,7 @@ MonoBehaviour:
     sprint: 6
     aim: 4
   peekRotation: {x: 0, y: 0, z: -20}
-  lookTiltAmount: 25
+  lookTiltAmount: 30
   lookTiltReferenceRate: 300
   lookTiltIntensity:
     crouch: 1
@@ -41807,6 +41938,10 @@ PrefabInstance:
       value: 6
       objectReference: {fileID: 0}
     - target: {fileID: -5258791721928388097, guid: 1deb9001781cf0b4ba09addac4498400, type: 3}
+      propertyPath: m_CastShadows
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: -5258791721928388097, guid: 1deb9001781cf0b4ba09addac4498400, type: 3}
       propertyPath: m_UpdateWhenOffscreen
       value: 1
       objectReference: {fileID: 0}
@@ -42048,6 +42183,10 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 6706990990955670532, guid: 1deb9001781cf0b4ba09addac4498400, type: 3}
       propertyPath: m_UpdateWhenOffscreen
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 6954307757982347702, guid: 1deb9001781cf0b4ba09addac4498400, type: 3}
+      propertyPath: m_CastShadows
       value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 6954307757982347702, guid: 1deb9001781cf0b4ba09addac4498400, type: 3}

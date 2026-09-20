@@ -151,6 +151,80 @@ public class Weapon : Item
     [SerializeField] private float cameraKickSpring = 200f;
     [SerializeField] private float cameraKickDamping = 20f;
 
+    // Ticked, the climb stays and the player has to pull it down. Unticked, the view
+    // settles back on its own and a burst costs nothing to hold.
+    //
+    // Per weapon because it is a statement about the gun rather than about the game: a
+    // pistol that returns to where it was pointed and a rifle that walks up a wall are
+    // both reasonable, and which one this is belongs beside its kick amounts.
+    //
+    // NOTE the spring above stops doing anything when this is on -- the climb is handed
+    // straight to the aim, so there is no offset left for a spring to pull on and only
+    // the damping shapes how quickly the rise slows. Tune damping, not spring, in this
+    // mode.
+    [SerializeField] private bool cameraKickDontTurnBack = false;
+
+    // The rattle on top of the kick, and the two are doing different jobs.
+    //
+    // The kick has a DIRECTION and a shape: up, scattered sideways, settling over a
+    // spring. It is what the shot does to the aim. This is the view refusing to settle
+    // cleanly, so a shot does not resolve into a tidy arc and back -- without it a burst
+    // reads as three identical pushes, with it as a gun being fought.
+    //
+    // ROLL ONLY, and on the VIEW rather than the weapon. Rolling the weapon put the
+    // rattle in the same pixels the kick was already using, and shaking it on every axis
+    // had the gun swimming rather than rattling. Roll about the view axis moves no part of
+    // the aim -- the crosshair stays where it is -- so this is free to be as loud as it
+    // needs to be, which a kick never is.
+    //
+    // Per weapon, like the kick's spring: how a shot rattles is part of how a gun feels.
+    // The figures live here and the view runs them, the same division SetFireKickProfile
+    // uses.
+    //
+    // Noise rather than a spring, for the same reason the hand tremor is noise: a spring
+    // rings, and a ring is a pattern. This never repeats.
+    [SerializeField] private float cameraShakeRollAmount = 1.5f;
+
+    // Noise samples per second. Well above the kick's own frequency -- the kick is the
+    // motion and this is the grain on it, so close together they read as one mushy
+    // wobble instead of a push with texture.
+    [SerializeField] private float cameraShakeFrequency = 26f;
+
+    // How fast it dies, per second. Short: a rattle that outlives the kick stops being
+    // part of the shot and starts being a character who cannot hold still.
+    [SerializeField] private float cameraShakeDecay = 11f;
+
+    [Header("Fire Weapon Kick")]
+    // The other half of a shot, and it is a PICTURE of the recoil rather than the recoil
+    // itself -- that distinction is why the two are separate settings rather than one.
+    //
+    // The camera kick above throws the aim off and has to be pulled back; it costs the
+    // player accuracy. This moves the weapon in the hands and costs nothing, because the
+    // shot is traced from the camera. Tuning them together would mean a gun that looks
+    // punchy being a gun that is hard to control, which are two decisions.
+    //
+    // At the item's pivot, with the lean, the bob's siblings and the tremor: the weapon
+    // rocks in the hands rather than swinging about the hold point in an arc.
+    //
+    // Metres back along the weapon's own axis. Which axis that is comes from the pivot's
+    // orientation, so a rig with the barrel down +Z takes a positive figure and one built
+    // the other way takes a negative -- there is no guessing it from here.
+    [SerializeField] private float weaponKickBack = 0.03f;
+
+    // Degrees of muzzle rise. Has a direction, like the camera's pitch kick.
+    [SerializeField] private float weaponKickRise = 4f;
+
+    // Degrees of twist, scattered either side per shot for the same reason the camera's
+    // yaw is: a gun that flicks the same way every time reads as a tic.
+    [SerializeField] private float weaponKickRoll = 2f;
+
+    // Its own spring, not the camera's. A weapon settles faster than a view does -- it is
+    // lighter and it is being held -- and sharing one figure would tie the gun's snap to
+    // how long the player spends recovering their aim.
+    [SerializeField] private float weaponKickSpring = 260f;
+    [SerializeField] private float weaponKickDamping = 22f;
+
+
     [Header("Weapon Pose")]
     [SerializeField] private float fireHipHoldDuration = 0.2f;
     [SerializeField] private Transform posDeltaPivot;
@@ -246,9 +320,29 @@ public class Weapon : Item
     private Quaternion _currentAdsRotation;
     private float _fireHipTimer;
     private float _reloadTimer;
+
+    // How long the step that is currently running was given, captured when it starts.
+    //
+    // The timer counts DOWN and the curve is driven on how far through we are, so the
+    // length it started at is the only way back to a fraction. Per step rather than per
+    // reload on purpose: a shotgun feeds one shell at a time, and each shell is its own
+    // little reload -- the curve replaying per shell is what feeding looks like.
+    private float _reloadStepDuration;
     private float _drawTimer;
     private bool _wasInWalkPose;
     private bool _isInWalkPose;
+
+    // The weapon's own recoil, one spring per axis it moves on. Impulses are SET rather
+    // than added, the same rule the camera kick uses: rapid fire would otherwise stack
+    // shot on shot into a throw nobody asked for, and the second round of a burst would
+    // kick harder than the first for no reason.
+    private float _kickBackOffset;
+    private float _kickBackVelocity;
+    private float _kickRiseOffset;
+    private float _kickRiseVelocity;
+    private float _kickRollOffset;
+    private float _kickRollVelocity;
+
     private bool _isFeedingShells;
     private bool _feedInterrupted;
     private float _wallBlockAmount;
@@ -357,6 +451,10 @@ public class Weapon : Item
         // is now on the hip.
         postProcessEffects?.SetReloading(false);
         postProcessEffects?.SetViewModelFovOverride(0f);
+
+        // Or the view stays parked wherever the curve had reached when the weapon left
+        // the hands -- Update stops running the moment this does.
+        playerLook?.ClearReload();
         postProcessEffects?.SetItemCarry(PlayerPostProcessEffects.ItemCarry.Ready);
 
         movement?.SetSprintBlocked(false);
@@ -418,7 +516,8 @@ public class Weapon : Item
         playerAnimator?.SetLeftHandIKTarget(leftGripPoint, leftElbowHint);
         playerAnimator?.SetAimRigWeightOverride(spineAimWeight, chestAimWeight, upperChestAimWeight, neckAimWeight);
 
-        playerLook?.SetFireKickProfile(cameraKickSpring, cameraKickDamping);
+        playerLook?.SetFireKickProfile(cameraKickSpring, cameraKickDamping, cameraKickDontTurnBack);
+        playerLook?.SetFireShakeProfile(cameraShakeRollAmount, cameraShakeFrequency, cameraShakeDecay);
 
         if (_drawTimer > 0f)
             _drawTimer -= Time.deltaTime;
@@ -475,6 +574,11 @@ public class Weapon : Item
         {
             BeginReloadStep();
             isReloading = _reloadTimer > 0f;
+
+            // Captured here rather than inside BeginReloadStep, which is called from more
+            // than one place and sets the timer from figures that differ by weapon. What
+            // the curve needs is simply "what it started at", whatever set it.
+            _reloadStepDuration = _reloadTimer;
         }
 
         // Read here rather than at the top of the frame, because a reload refuses it
@@ -490,6 +594,13 @@ public class Weapon : Item
         // only settled by this point in the frame -- the same reason the aim is read
         // here rather than at the top.
         postProcessEffects?.SetReloading(isReloading);
+
+        // The view's reload curve, driven on how far through the current step is. The
+        // timer counts down, so this counts up.
+        if (isReloading && _reloadStepDuration > 0f)
+            playerLook?.SetReloadProgress(1f - _reloadTimer / _reloadStepDuration);
+        else
+            playerLook?.ClearReload();
 
         if (playerLook != null)
         {
@@ -544,6 +655,21 @@ public class Weapon : Item
             // After the trace, not before: the round leaves along the aim the shot
             // was taken with, and the kick is what that shot does to the next one.
             playerLook?.AddFireKick(cameraKickAmount, cameraKickHorizontalAmount);
+
+            // The weapon's own kick goes in on the same frame as the camera's, off the
+            // same event, so the gun jumping and the view climbing are one thing rather
+            // than two that happen to be near each other.
+            //
+            // Set, not added -- see the fields. The roll is scattered either side; the
+            // other two have a direction, because a gun goes back and up, never forward
+            // and down.
+            _kickBackVelocity = -weaponKickBack;
+            _kickRiseVelocity = -weaponKickRise;
+            _kickRollVelocity = Random.Range(-1f, 1f) * weaponKickRoll;
+
+            // The view's rattle, off the same event. Its figures were pushed when this
+            // weapon was equipped, so all a shot has to say is that one happened.
+            playerLook?.AddFireShake();
         }
 
         if (posDeltaPivot != null)
@@ -667,10 +793,21 @@ public class Weapon : Item
             // hands turn it about the GRIP. Applied at the hold origin instead it would
             // swing the whole weapon through an arc and read as the thing being waved
             // rather than as hands that cannot keep still.
+            // Integrated every frame whether a shot landed or not -- a spring that is only
+            // advanced when it is struck never comes back.
+            IntegrateKick(ref _kickBackOffset, ref _kickBackVelocity);
+            IntegrateKick(ref _kickRiseOffset, ref _kickRiseVelocity);
+            IntegrateKick(ref _kickRollOffset, ref _kickRollVelocity);
+
             Vector3 impulseShake = Vector3.zero;
 
             if (handMotion != null)
                 impulseShake = handMotion.ImpulseShake + handMotion.Tremor;
+
+            // Back along the weapon's own forward, which is what makes this a recoil
+            // rather than a slide: the pivot's local Z is the barrel, so the gun retreats
+            // down its own line whatever angle it is being held at.
+            impulseShake += Vector3.forward * _kickBackOffset;
 
             posDeltaPivot.localPosition =
                 Vector3.Lerp(_currentAdsPosition, wallBlockPosition, _wallBlockAmount)
@@ -697,6 +834,11 @@ public class Weapon : Item
                 leanRotation = handMotion.PeekRotation + handMotion.TremorRotation;
                 leanRotation.z += handMotion.LookTilt + handMotion.ImpulseShakeRoll;
             }
+
+            // The shot's own rise and twist, added whether or not there is a HandMotion --
+            // a weapon recoils in nobody's hands just the same.
+            leanRotation.x += _kickRiseOffset;
+            leanRotation.z += _kickRollOffset;
 
             posDeltaPivot.localRotation =
                 Quaternion.Slerp(_currentAdsRotation, Quaternion.Euler(wallBlockRotation), _wallBlockAmount)
@@ -783,6 +925,15 @@ public class Weapon : Item
     // No HandMotion means no walk pose at all, which is deliberate: the alternative
     // is a per-weapon timer that reintroduces exactly the reset-on-swap this exists
     // to remove.
+    // One damped spring, three axes using it. The same integration the camera kick and
+    // the hands' step shake run, so a shot settles on all of them over the same curve and
+    // the gun, the view and the hands read as one event.
+    private void IntegrateKick(ref float offset, ref float velocity)
+    {
+        velocity += (-weaponKickSpring * offset - weaponKickDamping * velocity) * Time.deltaTime;
+        offset += velocity * Time.deltaTime;
+    }
+
     private bool IsCharacterInWalkPose =>
         handMotion != null && handMotion.WalkTime >= walkPoseDelay;
 

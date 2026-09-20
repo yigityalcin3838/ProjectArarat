@@ -102,6 +102,24 @@ public class HandMotion : MonoBehaviour
     [SerializeField] private float bobYawAmount = 4f;
     [SerializeField] private float bobRollAmount = 6f;
 
+    // THERE WAS A SHARPNESS KNOB HERE AND IT WAS THE WRONG OPERATOR. It raised each
+    // channel to a power -- |s|^k -- to gather the motion into the footfall, and the
+    // result trembled.
+    //
+    // The reason is geometric rather than a bug. Yaw and roll are sin and cos of the same
+    // phase, so the pair traces a CIRCLE; raising both to a power turns that circle into a
+    // superellipse, and above 1 the superellipse is concave. A concave path reverses
+    // direction sharply where it crosses the axes, four times a stride, which is exactly
+    // what a tremble is. The offset pair has the same problem in a figure-eight.
+    //
+    // A wave whose axes describe one shape cannot be sharpened one axis at a time. What
+    // can be changed without distorting the shape is WHEN the point moves around it --
+    // a reparametrisation, not a reshaping -- which is PlayerLook.bobCycleSkew, and it is
+    // shared with the camera and the legs because timing is shared.
+    //
+    // For the hit at the footfall itself, the step shake below is the honest instrument:
+    // an impulse is an event, and a hard step is an event rather than a louder wave.
+
     // Smoothing is a catch-up rate, so higher is tighter, not slower. Crouching
     // gets the tightest of the three and a sprint the loosest -- the pace is the
     // whole difference between a placed step and a thrown one.
@@ -375,6 +393,10 @@ public class HandMotion : MonoBehaviour
     private Vector3 _followVelocity;
     private Vector3 _currentBobOffset;
     private Vector3 _currentBobRotation;
+
+    // 0 standing, 1 walking. The bob's envelope -- see where it is applied for why the
+    // smoothing lives here rather than on the oscillation.
+    private float _bobWeight;
     private Vector3 _currentSway;
     private float _stepShakeOffset;
     private float _stepShakeVelocity;
@@ -682,19 +704,40 @@ public class HandMotion : MonoBehaviour
         // yaw and roll follow the horizontal one, a quarter cycle apart from each
         // other so the whole thing traces a circle rather than a line. Same
         // pairing the camera uses, so the two read as one motion.
-        Vector3 targetBobOffset = isMoving
-            ? new Vector3(
-                Mathf.Cos(bobPhase) * bobHorizontalAmount * bobAmount,
-                Mathf.Sin(bobPhase * 2f) * bobVerticalAmount * bobAmount,
-                0f)
-            : Vector3.zero;
+        // THE ENVELOPE IS SMOOTHED, NOT THE OSCILLATION, and this is what puts the punch
+        // back into the footfall.
+        //
+        // These two used to be lerped straight into _currentBobOffset and
+        // _currentBobRotation, which low-passes the sine itself. A first-order filter cuts
+        // a sine's amplitude by k/sqrt(k^2+w^2) and delays it by atan(w/k), and both get
+        // worse as the frequency rises -- so the doubled-rate channels, the vertical and
+        // the pitch, lost the most. Those are exactly the ones that peak at the footfall,
+        // which is why the step read as soft however the amounts were tuned: the filter
+        // was rounding off the peaks and nothing else.
+        //
+        // It also moved with cadence, so a sprint lost more than a walk while bobIntensity
+        // was trying to make the sprint bigger. Same fault the camera's bob had, same fix:
+        // the phase comes from the animator and is smooth by construction, so the sine
+        // needs no filtering. What has to ease is starting and stopping, and that is a
+        // scalar.
+        float targetBobWeight = isMoving ? 1f : 0f;
 
-        Vector3 targetBobRotation = isMoving
-            ? new Vector3(
-                Mathf.Sin(bobPhase * 2f) * bobPitchAmount * bobAmount,
-                Mathf.Sin(bobPhase) * bobYawAmount * bobAmount,
-                Mathf.Cos(bobPhase) * bobRollAmount * bobAmount)
-            : Vector3.zero;
+        // Exponential rather than rate-times-delta: the old form is a different time
+        // constant at every framerate, and past k*dt = 1 it overshoots outright.
+        _bobWeight = Mathf.Lerp(
+            _bobWeight, targetBobWeight, 1f - Mathf.Exp(-ForStance(bobSmoothing) * Time.deltaTime));
+
+        float bobScale = bobAmount * _bobWeight;
+
+        Vector3 targetBobOffset = new Vector3(
+            Mathf.Cos(bobPhase) * bobHorizontalAmount,
+            Mathf.Sin(bobPhase * 2f) * bobVerticalAmount,
+            0f) * bobScale;
+
+        Vector3 targetBobRotation = new Vector3(
+            Mathf.Sin(bobPhase * 2f) * bobPitchAmount,
+            Mathf.Sin(bobPhase) * bobYawAmount,
+            Mathf.Cos(bobPhase) * bobRollAmount) * bobScale;
 
         // Gated on the same isMoving the bob is, inverted -- so the two hand over to
         // each other on the same frame and never overlap. Vertical runs at half the
@@ -749,8 +792,10 @@ public class HandMotion : MonoBehaviour
             : -movement.MoveInput.x * tiltAmount * tiltStanceAmount;
 
         _currentTilt = Mathf.Lerp(_currentTilt, targetTilt, ForStance(tiltSmoothing) * Time.deltaTime);
-        _currentBobOffset = Vector3.Lerp(_currentBobOffset, targetBobOffset, ForStance(bobSmoothing) * Time.deltaTime);
-        _currentBobRotation = Vector3.Lerp(_currentBobRotation, targetBobRotation, ForStance(bobSmoothing) * Time.deltaTime);
+        // Assigned, not filtered. The easing these two used to get is in the weight the
+        // targets were built with -- see the envelope above.
+        _currentBobOffset = targetBobOffset;
+        _currentBobRotation = targetBobRotation;
         _currentSway = Vector3.Lerp(_currentSway, targetSway, ForStance(swaySmoothing) * Time.deltaTime);
         _currentLookSway = Vector2.Lerp(_currentLookSway, targetLookSway, ForStance(lookSwaySmoothing) * Time.deltaTime);
 

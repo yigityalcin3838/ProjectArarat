@@ -92,6 +92,13 @@ public class PlayerMovement : MonoBehaviour
     // See LandedHardThisFrame. It has to clear the -2 a grounded character is held at, or
     // a staircase reads as a fall per tread. There is no upper figure to pair it with:
     // above this, every landing lands the same.
+    // How far off straight ahead a sprint is still a sprint, in degrees.
+    //
+    // 60 admits the diagonals and refuses the pure sidestep, which on WASD is the whole
+    // of the question: W+D is 45 degrees and passes, D alone is 90 and does not. Raising
+    // it past 90 puts the old behaviour back.
+    [SerializeField] private float sprintMaxAngle = 60f;
+
     [Header("Landing")]
     [SerializeField] private float landingMinSpeed = 3.5f;
 
@@ -139,11 +146,21 @@ public class PlayerMovement : MonoBehaviour
         // sprint is a character sliding backwards at speed with its legs driving the
         // wrong way.
         //
-        // Zero passes, so a pure sidestep still sprints. Only a backward component
-        // stops it -- which is the rule as stated, and tightening it to demand actual
-        // forward intent is one character change away if strafing at speed reads
-        // wrong too.
-        && _moveInput.y >= 0f;
+        // Forward INTENT, not merely the absence of reverse. This used to pass anything
+        // with y >= 0, so a pure sidestep sprinted -- a character crabbing sideways at
+        // running speed, with a forward run clip playing, which reads worse than the
+        // backward case the rule was written for.
+        //
+        // An angle rather than a larger threshold on y, because that is the thing being
+        // described: on a normalised input y IS the cosine of the angle from forward, so
+        // the test below is "am I heading within sprintMaxAngle of straight ahead". A
+        // bare y > 0 would admit a hundredth of forward lean, which is a sidestep with a
+        // rounding error in it.
+        //
+        // Normalised, so an analog stick held gently forward is judged on its DIRECTION
+        // and not on how far it was pushed. The magnitude check above already guarantees
+        // there is a direction to normalise.
+        && Vector2.Dot(_moveInput.normalized, Vector2.up) >= Mathf.Cos(sprintMaxAngle * Mathf.Deg2Rad);
 
     // Grounded on purpose, and left that way: the animator and the stamina both ask this
     // and neither should count air time as running. What must NOT ask it is the target

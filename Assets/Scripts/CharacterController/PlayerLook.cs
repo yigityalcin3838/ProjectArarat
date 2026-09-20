@@ -420,7 +420,17 @@ public class PlayerLook : MonoBehaviour
     // than a firm one.
     [SerializeField] private float lookTiltReferenceRate = 200f;
 
-    [SerializeField] private StanceValues lookTiltIntensity = new StanceValues(0.6f, 1f, 1.4f, 0.35f);
+    // SPRINTING ONLY, which is why this is one figure and not a stance table any more.
+    //
+    // A cant on the view is the body committing to a turn it cannot cheaply take back.
+    // At a walk there is nothing to commit -- the character can stop or reverse inside a
+    // step -- so the roll reads as the camera being tilted rather than as weight going
+    // somewhere. At a run it reads as the run.
+    //
+    // The table it replaced carried 0.6 / 1 / 1.4 / 0.35 across crouch, walk, sprint and
+    // aim. Once three of those are zero the table is a table with one entry in it, and
+    // the sprint figure is kept here verbatim so the run feels exactly as it did.
+    [SerializeField] private float lookTiltSprintIntensity = 1.4f;
 
     // Its own filter rather than the bob's: raw mouse deltas are spiky in a way a
     // footfall never is, and the two need different amounts of smoothing to sit
@@ -445,6 +455,35 @@ public class PlayerLook : MonoBehaviour
     // the view take a stride or two to settle into the walk.
     [Tooltip("How quickly the bob fades in when movement starts and out when it stops.")]
     [SerializeField] private float bobSmoothing = 8f;
+
+    [Header("Reload Curve")]
+    // The head moving to watch a reload, authored once and shared by every weapon.
+    //
+    // UNIVERSAL BY BEING DRIVEN ON PROGRESS, not on time. The weapon pushes how far
+    // through its reload it is, nought to one, so one curve stretches over a pistol's
+    // magazine and a shotgun's shell alike -- and a shotgun replays it per shell, which
+    // is what feeding one at a time looks like. A curve in seconds would have to be
+    // redrawn for every weapon and would fall out of step the moment a reload's length
+    // was retuned.
+    //
+    // Degrees, straight off the curve, so there is no amount to multiply and nothing to
+    // keep in step with the shape. Draw it at the size you want it.
+    //
+    // START AND END AT ZERO. Nothing eases these in -- the progress arrives at 0 and
+    // leaves at 1 -- so a curve that ends somewhere else steps the view back on the frame
+    // the reload finishes.
+    //
+    // On the rendered camera rather than the pivot, with the look tilt and the shot's
+    // rattle: the view leans to watch the weapon, and the weapon is exactly what should
+    // not lean with it. It also means none of this reaches the aim.
+    [SerializeField] private AnimationCurve reloadPitchCurve = new AnimationCurve(
+        new Keyframe(0f, 0f), new Keyframe(0.35f, 6f), new Keyframe(1f, 0f));
+
+    [SerializeField] private AnimationCurve reloadYawCurve = new AnimationCurve(
+        new Keyframe(0f, 0f), new Keyframe(1f, 0f));
+
+    [SerializeField] private AnimationCurve reloadRollCurve = new AnimationCurve(
+        new Keyframe(0f, 0f), new Keyframe(1f, 0f));
 
     [Header("Camera Jump / Land Shake")]
     // The view's alone -- none of this reaches the weapon. Leaving the ground and
@@ -713,6 +752,60 @@ public class PlayerLook : MonoBehaviour
     private float _fireKickYawVelocity;
     private float _fireKickSpring = 200f;
     private float _fireKickDamping = 20f;
+
+    // The kick's climb never comes back on its own -- the player has to pull it down.
+    //
+    // WHAT IT ACTUALLY CHANGES is where the rotation is kept. Off, the climb lives in
+    // _fireKickOffset, which the spring drags back to zero: the view rises and settles and
+    // the aim ends where it started. On, every frame's worth of climb is handed to Pitch
+    // instead and the offset is left at nothing, so the recoil becomes part of where the
+    // player is looking and the only thing that brings it down is the mouse.
+    //
+    // That also quietly retires the spring in this mode. With the offset always zero its
+    // restoring term is zero too, so what is left is a velocity decaying under damping --
+    // a climb that slows to a stop. The spring figure still matters when this is off, and
+    // does nothing at all when it is on, which is worth knowing before tuning it.
+    //
+    // PITCH ONLY. The horizontal kick is scattered either side per shot, so making it
+    // permanent is a random walk in the direction the character faces -- the barrel would
+    // wander off and never come back, which is a different feature and a worse default.
+    // The climb is the thing a player fights; the sideways shake is the gun shaking.
+    private bool _fireKickDontTurnBack;
+
+    // This frame's climb, waiting for the clamp. Pitch is bounded by limits that are
+    // worked out in the look pass, so the transfer happens there rather than here -- baked
+    // in without them, a long burst would drive the view past vertical.
+    private float _fireKickPitchCarry;
+
+    // The shot's rattle: a decaying roll on the rendered camera.
+    //
+    // Not serialized, like the kick's spring above -- every figure here is pushed in by
+    // whatever is being fired, because how a shot rattles is part of how a gun feels. The
+    // defaults only cover the frames before anything has spoken.
+    //
+    // On the CAMERA and not the pivot, which is the opposite of where the kick goes and
+    // for a reason that is worth stating: the kick has to reach the pivot because the aim
+    // is taken from there and wandering off target IS the recoil. A roll about the view
+    // axis moves no part of the aim, so it belongs one level down with the other things
+    // that are a picture rather than a cause -- the landing shake, the look tilt. It also
+    // means the weapon does not roll with it: the view rattles past a gun that is doing
+    // its own, separate kick.
+    private float _fireShakeRollAmount = 1.5f;
+    private float _fireShakeFrequency = 26f;
+    private float _fireShakeDecay = 11f;
+
+    // 1 the instant a shot lands, decaying to nothing. Scales the noise rather than being
+    // noise itself, so the rattle's SHAPE is the same every shot and only its size
+    // changes -- which is what makes rapid fire read as one sustained rattle instead of a
+    // series of unrelated jitters.
+    private float _fireShakeAmount;
+    private float _fireShakeRoll;
+
+    // Negative when nothing is reloading, which keeps "how far through" and "is there one"
+    // as one value -- a separate bool would be a second thing to clear, and the one that
+    // got missed would leave the view parked mid-curve.
+    private float _reloadProgress = -1f;
+    private Vector3 _reloadRotation;
     private Vector3 _basePivotLocalPosition;
     private Vector3 _headReference;
     private bool _hasHeadReference;
@@ -744,10 +837,30 @@ public class PlayerLook : MonoBehaviour
     // Weapon-driven recoil kick on the camera itself -- the weapon owns the
     // amount/spring/damping (its recoil "feel") and just pushes them in, the same
     // push-values-in pattern as the FOV override above.
-    public void SetFireKickProfile(float spring, float damping)
+    // How far through a reload the held weapon is, nought to one. Pushed in by the weapon
+    // because only it knows how long its own reload is -- and pushed as a FRACTION rather
+    // than as seconds, which is what lets one curve serve every weapon.
+    public void SetReloadProgress(float progress) => _reloadProgress = Mathf.Clamp01(progress);
+
+    public void ClearReload() => _reloadProgress = -1f;
+
+    // The rattle's figures, pushed the same way and for the same reason as the kick's.
+    public void SetFireShakeProfile(float rollAmount, float frequency, float decay)
+    {
+        _fireShakeRollAmount = rollAmount;
+        _fireShakeFrequency = frequency;
+        _fireShakeDecay = decay;
+    }
+
+    // Set to full rather than added to, the same rule the kick's velocities follow: a
+    // burst should rattle continuously, not accumulate into a shake that outgrows the gun.
+    public void AddFireShake() => _fireShakeAmount = 1f;
+
+    public void SetFireKickProfile(float spring, float damping, bool dontTurnBack)
     {
         _fireKickSpring = spring;
         _fireKickDamping = damping;
+        _fireKickDontTurnBack = dontTurnBack;
     }
 
     // A shot's punch on the view: an upward pitch kick plus a random left/right yaw
@@ -979,7 +1092,15 @@ public class PlayerLook : MonoBehaviour
             pitchDownLimit *= pitchScale;
         }
         float previousPitch = Pitch;
-        Pitch = Mathf.Clamp(Pitch - _lookInput.y * mouseSensitivity, -pitchUpLimit, pitchDownLimit);
+        // The recoil's climb goes in beside the mouse and through the same clamp, because
+        // once it is not coming back it IS the aim and nothing about it should behave
+        // differently from the player having moved the mouse that far. Consumed as it is
+        // read, so a frame that does not reach here cannot apply it twice.
+        Pitch = Mathf.Clamp(
+            Pitch - _lookInput.y * mouseSensitivity + _fireKickPitchCarry,
+            -pitchUpLimit, pitchDownLimit);
+
+        _fireKickPitchCarry = 0f;
 
         LookDelta = new Vector2(appliedYaw, Pitch - previousPitch);
 
@@ -1154,8 +1275,19 @@ public class PlayerLook : MonoBehaviour
         // instead of holding a lean against a wall the player cannot turn past.
         float lookRate = Time.deltaTime > 0f ? LookDelta.x / Time.deltaTime : 0f;
 
+        // Folded into the TARGET, not applied to the filtered value, so breaking into a
+        // run eases the cant in over lookTiltSmoothing and dropping out of one eases it
+        // away. A gate on the result would switch it, and the switch would land in the
+        // middle of whatever turn the player was making.
+        //
+        // IsSprintingStable rather than IsSprinting: a stride over a kerb takes the feet
+        // off the ground for a frame, and the tilt should not blink out with it.
+        float sprintIntensity = movement != null && movement.IsSprintingStable
+            ? lookTiltSprintIntensity
+            : 0f;
+
         float targetLookTilt = -Mathf.Clamp(lookRate / lookTiltReferenceRate, -1f, 1f)
-            * lookTiltAmount * ForStance(lookTiltIntensity);
+            * lookTiltAmount * sprintIntensity;
 
         _currentLookTilt = Mathf.Lerp(_currentLookTilt, targetLookTilt, lookTiltSmoothing * Time.deltaTime);
 
@@ -1284,8 +1416,40 @@ public class PlayerLook : MonoBehaviour
         _fireKickVelocity += (-_fireKickSpring * _fireKickOffset - _fireKickDamping * _fireKickVelocity) * Time.deltaTime;
         _fireKickOffset += _fireKickVelocity * Time.deltaTime;
 
+        // Handed to the aim instead of being held as an offset, which is the whole of the
+        // setting. Zeroing the offset every frame is also what takes the spring out of the
+        // picture -- its restoring term is proportional to an offset that is never allowed
+        // to exist, so only the damping is left and the climb simply decelerates.
+        if (_fireKickDontTurnBack)
+        {
+            _fireKickPitchCarry += _fireKickOffset;
+            _fireKickOffset = 0f;
+        }
+
         _fireKickYawVelocity += (-_fireKickSpring * _fireKickYawOffset - _fireKickDamping * _fireKickYawVelocity) * Time.deltaTime;
         _fireKickYawOffset += _fireKickYawVelocity * Time.deltaTime;
+
+        // Evaluated rather than filtered: the curve IS the motion, and running it through
+        // a smoothing pass would cost it the shape it was drawn with -- the same mistake
+        // the bob was making when it low-passed its own sine.
+        _reloadRotation = _reloadProgress >= 0f
+            ? new Vector3(
+                reloadPitchCurve.Evaluate(_reloadProgress),
+                reloadYawCurve.Evaluate(_reloadProgress),
+                reloadRollCurve.Evaluate(_reloadProgress))
+            : Vector3.zero;
+
+        // Exponential, so the rattle fades over the same time whatever the framerate -- a
+        // fixed fraction per frame would die in half the time at 120 fps.
+        _fireShakeAmount *= Mathf.Exp(-_fireShakeDecay * Time.deltaTime);
+
+        // Perlin recentred to plus and minus one. Left as it comes it returns zero to one,
+        // which would roll the view permanently to one side and rattle about THAT rather
+        // than about level.
+        _fireShakeRoll = _fireShakeAmount > 0.0001f
+            ? (Mathf.PerlinNoise(Time.time * _fireShakeFrequency, 83.3f) - 0.5f) * 2f
+                * _fireShakeRollAmount * _fireShakeAmount
+            : 0f;
 
         if (cameraPivot != null)
         {
@@ -1422,7 +1586,10 @@ public class PlayerLook : MonoBehaviour
                 + _currentBobPosition
                 + Vector3.up * _shakeVerticalOffset;
             cinemachineCamera.transform.localRotation = _cameraBaseLocalRotation
-                * Quaternion.Euler(_shakeOffset, 0f, _shakeRollOffset + _currentLookTilt);
+                * Quaternion.Euler(
+                    _shakeOffset + _reloadRotation.x,
+                    _reloadRotation.y,
+                    _shakeRollOffset + _currentLookTilt + _fireShakeRoll + _reloadRotation.z);
         }
 
         if (cinemachineCamera != null)
