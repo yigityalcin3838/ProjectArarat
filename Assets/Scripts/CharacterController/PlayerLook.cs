@@ -223,6 +223,22 @@ public class PlayerLook : MonoBehaviour
     [SerializeField, Range(0f, 1f)] private float carPitchLimitAtMaxYawRatio = 0.2f;
 
     [Header("Camera Breathing")]
+    // A slow drift on pitch, yaw and roll while standing still, so the view is never
+    // perfectly locked.
+    //
+    // IT MOVES THE AIM AS WELL AS THE VIEW, which is what keeps the reticle in the middle
+    // of the screen while it happens -- see ViewChain. That puts it on the other side of
+    // the line from the bob and the shake: those move the head and the reticle holds its
+    // target, this moves where the character is pointing and the reticle goes with it.
+    //
+    // Which is the honest reading of each. A landing is something that happens TO a
+    // marksman; a breath is something they are doing, and shooting between breaths is the
+    // oldest skill in the trade. Taking it out of the aim would have been taking the skill
+    // out with it.
+    //
+    // The clock is also shared: it is published as BreathPhase and the hands breathe off
+    // that rather than a clock of their own, so the character has one breath instead of
+    // two at nearly the same rate drifting in and out of step.
     [SerializeField] private float breathFrequency = 1f;
     [SerializeField] private float breathPitchAmount = 0.3f;
     [SerializeField] private float breathYawAmount = 0.3f;
@@ -526,6 +542,25 @@ public class PlayerLook : MonoBehaviour
     // a nod, and this is on top of the continuous roll the bob already has.
     [SerializeField] private float stepShakeRollAmount = 0.3f;
 
+    // The view settling as the sights come up -- one impulse, on the frame the aim is
+    // asked for.
+    //
+    // ON THE CAMERA, WHICH IS WHY IT IS HERE AND NOT ON THE PIVOT. Raising the sights must
+    // not throw the aim: the player asked to look at something more carefully, and a kick
+    // that moved where they were pointing would be the control fighting the intent. Down
+    // here it is a picture of the weapon coming up, in the same company as the landing
+    // shake and the shot's rattle -- all things that happen to the head.
+    //
+    // Sharing the spring above rather than getting one of its own, for the reason the
+    // footfall does: these are all the same kind of event at different sizes, and one
+    // settle means they read as one head rather than as four springs.
+    //
+    // Positive dips the view, matching the landing. Negative lifts it. Roll has a fixed
+    // direction on purpose -- a shoulder comes up the same way every time, and a side
+    // chosen per press would read as a twitch.
+    [SerializeField] private float aimKickAmount = 0.8f;
+    [SerializeField] private float aimKickRollAmount = 0.4f;
+
     // METRES, and it is what lets the shake system carry the walk's translation on its
     // own once the continuous bob's amounts are turned down.
     //
@@ -548,7 +583,84 @@ public class PlayerLook : MonoBehaviour
     // camera.
     public Camera RenderCamera => renderCamera != null ? renderCamera : Camera.main;
 
-    // Dead centre of the rendered image, as a world ray. Asked of the camera's own
+    // Where the player is pointing, with the animation taken out -- the same chain the
+    // pivot and the camera are built from, minus every term that is a picture rather than
+    // an instruction.
+    //
+    // KEPT means: the look, the body's facing, a peek, and the fire kick. The kick stays
+    // because the muzzle climbing off target IS the recoil -- take it out and a shot
+    // stops costing anything.
+    //
+    // DROPPED means: the breath, the bob, the landing and step shake, the shot's rattle,
+    // the reload curve, the look tilt. Those move the head, not the aim, and letting them
+    // reach the ray is what had the reticle wandering several degrees at walking pace.
+    //
+    // Rebuilt rather than subtracted out of the camera's own ray, because the terms go in
+    // as sums inside one Euler and Euler(a + b) is not Euler(a) * Euler(b) -- there is no
+    // rotation to divide back out. Same formula, different inputs, which is why the two
+    // are worth reading side by side if either is ever changed.
+    private Quaternion ViewChain(bool includeProcedural)
+    {
+        Transform pivotParent = cameraPivot != null ? cameraPivot.parent : null;
+        Quaternion parentRotation = pivotParent != null ? pivotParent.rotation : transform.rotation;
+
+        Vector3 bob = includeProcedural ? _currentBobRotation : Vector3.zero;
+        float tilt = includeProcedural ? _currentTilt : 0f;
+
+        // THE BREATH IS IN BOTH, and that one word is the whole difference between it and
+        // the bob directly beside it.
+        //
+        // A term that appears in both chains cancels out of the correction between them,
+        // so the reticle does not move for it -- the view drifts and the mark drifts with
+        // it, and the crosshair sits in the middle of the screen throughout. A term in the
+        // camera chain only leaves the mark where it was and lets the view wander around
+        // it.
+        //
+        // Which side a thing belongs on is a question about whether the character MEANT
+        // it. A breath is something a marksman is doing and shoots between; a landing is
+        // something that happens to them.
+        Quaternion chain = parentRotation
+            * _peekTiltRotation
+            * Quaternion.Euler(
+                Pitch + _currentBreathRotation.x + bob.x + _fireKickOffset,
+                _climbCameraYaw + _currentBreathRotation.y + bob.y + _fireKickYawOffset,
+                tilt + _currentBreathRotation.z + bob.z)
+            * _cameraBaseLocalRotation;
+
+        if (!includeProcedural)
+            return chain;
+
+        return chain * Quaternion.Euler(
+            _shakeOffset + _reloadRotation.x,
+            _reloadRotation.y,
+            _shakeRollOffset + _currentLookTilt + _fireShakeRoll + _reloadRotation.z);
+    }
+
+    // The turn that takes the camera's own heading back to the player's.
+    //
+    // EXPRESSED AS A DELTA ON PURPOSE, rather than as a finished world rotation, and this
+    // is what stopped the reticle shaking while the view pitched.
+    //
+    // Cinemachine drives the rendered camera in LateUpdate, and the reticle projects
+    // through that camera in LateUpdate too, with no fixed order between them -- so the
+    // transform a projection reads can be a frame behind the state this script holds.
+    // While the view is still nobody notices; while it is moving the two disagree by
+    // however far the view travelled in a frame, and mouse input is noisy frame to frame,
+    // so the disagreement arrives as jitter.
+    //
+    // A finished rotation cannot survive that: it is this frame's answer, measured against
+    // last frame's camera. A delta can, because it is applied TO whatever camera pose the
+    // projection is about to use -- stale or not, both sides of the comparison are then
+    // the same instant, which is the property the old camera-centre ray had for free.
+    private Quaternion AimCorrection => Quaternion.Inverse(ViewChain(true)) * ViewChain(false);
+
+    // Dead centre of the RENDERED IMAGE, as a world ray -- which is not the same as where
+    // the player is pointing, and is the reason InteractionRay below no longer builds on
+    // it. Everything that shakes the view is in here: the bob, the breath, a landing.
+    // Useful for asking what is in the middle of the picture, wrong for asking what the
+    // player is aiming at.
+    //
+    // Asked of the camera's own
     // projection rather than built from some transform's forward, so it is the middle
     // of the picture by definition -- under any field of view, aspect, lens shift or
     // Cinemachine arrangement, and whether or not the vcam sits on the pivot.
@@ -577,17 +689,45 @@ public class PlayerLook : MonoBehaviour
     // disagree -- a reticle in one place and a bullet in another is the class of bug
     // that costs an evening to find, and it is only avoidable by construction.
     //
-    // It is the eye ray turned by the free-aim angles, because free aim is a decision
-    // the player made about where to point. Bob and sway are deliberately absent:
-    // those are a walking animation on the model, not an instruction about where to
-    // shoot, and firing down them wanders several degrees at walking pace. Recoil
-    // needs no special handling and still climbs, since the fire kick is applied to
-    // the camera pivot and so moves the eye ray itself.
+    // It is StableAimRotation turned by the free-aim angles, because free aim is a
+    // decision the player made about where to point. Bob and sway are absent: those are a
+    // walking animation on the model, not an instruction about where to shoot, and firing
+    // down them wanders several degrees at walking pace.
+    //
+    // THIS USED TO SAY THEY WERE ABSENT AND THEY WERE NOT. It was built on AimRay, the
+    // rendered image's centre -- and the bob is written to the pivot the camera hangs off,
+    // so it was in there along with the breath, the landing shake and everything else that
+    // moves the head. The comment described the intent and the code did the opposite of
+    // it, which is the worst of both: nobody re-reads a line that already claims to be
+    // right. StableAimRotation is that intent, built.
+    //
+    // Recoil still climbs, and now by being named rather than by accident: the fire kick
+    // is one of the terms StableAimRotation keeps.
     public Ray InteractionRay
     {
         get
         {
-            Ray eyeRay = AimRay;
+            // The eye's POSITION, which is allowed to move -- the head does rise and fall
+            // with a stride and the shot leaves from wherever it actually is. Only the
+            // DIRECTION is held steady, and at any distance worth aiming at, a couple of
+            // centimetres of origin is nothing beside a couple of degrees of heading.
+            Camera renderedCamera = RenderCamera;
+
+            if (renderedCamera == null)
+            {
+                Transform fallback = cameraPivot != null ? cameraPivot : transform;
+
+                return new Ray(fallback.position, ViewChain(false) * Vector3.forward);
+            }
+
+            // Turned off the camera's OWN pose rather than built beside it, so whichever
+            // frame that pose belongs to, the correction belongs to the same one. See
+            // AimCorrection.
+            Transform eyeTransform = renderedCamera.transform;
+
+            Ray eyeRay = new Ray(
+                eyeTransform.position,
+                eyeTransform.rotation * AimCorrection * Vector3.forward);
 
             if (_freeAim == Vector2.zero)
                 return eyeRay;
@@ -750,6 +890,12 @@ public class PlayerLook : MonoBehaviour
     private float _fireKickVelocity;
     private float _fireKickYawOffset;
     private float _fireKickYawVelocity;
+    private Quaternion _peekTiltRotation = Quaternion.identity;
+
+    // Last frame's aim, for spotting the edge. The kick is a reaction to the command
+    // arriving, not a state that holds while the sights are up.
+    private bool _wasAiming;
+
     private float _fireKickSpring = 200f;
     private float _fireKickDamping = 20f;
 
@@ -1319,8 +1465,12 @@ public class PlayerLook : MonoBehaviour
         // Which also retires the hard isMoving step this had a moment ago: the fade is
         // now something the movement is actually doing rather than a filter covering for
         // a discontinuity.
+        // THE STANCE FIGURE IS IN HERE TOO, for the reason the hands' is: ForStance
+        // switches hard, and outside the filter a sprint arrives as a step in amplitude
+        // rather than as a gait change. The speed ratio ramps on its own; the stance
+        // figure does not, and it is the one that jumps when the key goes down.
         float targetBobWeight = isMoving && movement != null
-            ? Mathf.Clamp01(movement.GaitSpeedRatio)
+            ? Mathf.Clamp01(movement.GaitSpeedRatio) * bobAmount
             : 0f;
 
         // Exponential rather than rate-times-delta. The old form is a different time
@@ -1335,7 +1485,10 @@ public class PlayerLook : MonoBehaviour
         float bobStepBias = 1f + Mathf.Sin(_bobPhase) * bobStepAsymmetry;
         float bobWanderScale = 1f + _bobWander * bobWander;
 
-        float bobScale = bobAmount * _bobWeight * bobStepBias * bobWanderScale;
+        // The per-step variation stays OUTSIDE the filter: smoothing the step bias and the
+        // wander would average away the very difference between one stride and the next
+        // that they exist to create.
+        float bobScale = _bobWeight * bobStepBias * bobWanderScale;
 
         _currentBobRotation = new Vector3(
             Mathf.Sin(_bobPhase * 2f) * bobPitchAmount,
@@ -1398,6 +1551,22 @@ public class PlayerLook : MonoBehaviour
             _shakeVelocity += landShakeAmount;
             _shakeRollVelocity += landShakeRollAmount;
         }
+
+        // THE RISING EDGE ONLY. Aiming is a state and this is not -- it fires when the
+        // command arrives and the spring takes it from there, the same shape as a landing.
+        //
+        // Read off movement rather than pushed in by the weapon: the aim is a fact about
+        // the character, true with a pistol, a rifle or nothing at all, and routing it
+        // through whatever happens to be held would make an empty-handed aim silent.
+        bool isAimingNow = movement != null && movement.IsAiming;
+
+        if (isAimingNow && !_wasAiming)
+        {
+            _shakeVelocity += aimKickAmount;
+            _shakeRollVelocity += aimKickRollAmount;
+        }
+
+        _wasAiming = isAimingNow;
 
         _shakeVelocity += (-shakeSpring * _shakeOffset - shakeDamping * _shakeVelocity) * Time.deltaTime;
         _shakeOffset += _shakeVelocity * Time.deltaTime;
@@ -1532,7 +1701,13 @@ public class PlayerLook : MonoBehaviour
             //
             // Same sign as the strafe tilt below, so stepping right and leaning
             // right cock the same way instead of cancelling.
-            Quaternion peekTiltRotation = Quaternion.AngleAxis(PeekTiltAngle, Vector3.forward);
+            // Kept, because the aim ray has to rebuild this same chain without the
+            // animation in it and a peek is a decision about where to point rather than
+            // an animation. Stored rather than recomputed there: PeekTiltAngle is read
+            // off a filter that moves, and two reads a frame apart are two answers.
+            _peekTiltRotation = Quaternion.AngleAxis(PeekTiltAngle, Vector3.forward);
+
+            Quaternion peekTiltRotation = _peekTiltRotation;
 
             // The look, the breath, the bob, and a shot's pitch and yaw kick.
             //

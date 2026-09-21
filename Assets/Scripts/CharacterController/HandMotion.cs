@@ -223,6 +223,7 @@ public class HandMotion : MonoBehaviour
     [SerializeField] private float stepShakeSpring = 200f;
     [SerializeField] private float stepShakeDamping = 20f;
 
+
     [Header("Hand Tremor")]
     // Fear in the hands. Nothing drives this yet -- the slider is the whole interface for
     // now, and SetTremor below is what a scare, a wound or a held breath will push into
@@ -336,6 +337,54 @@ public class HandMotion : MonoBehaviour
     // smoothing to sit still.
     [SerializeField] private StanceValues lookSwaySmoothing = new StanceValues(16f, 12f, 9f, 18f);
 
+    [Header("Look Sway Tilt")]
+    // The same turn, told a second time -- at the item's own pivot, and on a spring.
+    //
+    // TWO THINGS SEPARATE IT FROM THE LOOK SWAY ABOVE, and it needs both.
+    //
+    // The pivot: the sway rotates the HOLD, so the weapon swings around the grip through
+    // an arc and the whole thing displaces sideways as it turns. This turns it in place,
+    // about the point the hands are gripping, so the muzzle leads and the stock trails.
+    // Both are true of a real turn and neither reads right alone -- one is the arms
+    // carrying it across, the other is the weapon pivoting in them.
+    //
+    // The filter: the sway is lerped and this is sprung, so they arrive at different
+    // times and with different shapes. The quick part is the hands reacting; the slow,
+    // overshooting part is what they are holding catching up.
+    //
+    // NOT ROLL. The look tilt below is the roll, and it already has this turn's cant
+    // covered at the same pivot. This is pitch and yaw only.
+    [SerializeField] private float lookSwayTiltYawAmount = 3f;
+    [SerializeField] private float lookSwayTiltPitchAmount = 2f;
+
+    // A SPRING RATHER THAN A LERP, which is the difference between arriving and settling.
+    //
+    // A lerp only ever approaches: fastest at the start, slowing all the way in, never
+    // passing the target. However slow it is made, the weapon just gets there late. A
+    // spring carries momentum, so it runs past the turn and comes back -- and that
+    // overshoot is what reads as weight, because a thing with mass does not stop where
+    // the hands stopped.
+    //
+    // Everything that settles in this project is a spring already: the fire kick, the step
+    // shake, the jump and landing. Those all pull towards zero; this one is driven, so it
+    // pulls towards a target that is itself moving.
+    //
+    // FREQUENCY AND DAMPING RATIO, NOT SPRING AND DAMPING. The raw pair looks simpler and
+    // is a trap here: the damping ratio is c / 2*sqrt(k), so holding c fixed while the
+    // stance changes k changes how bouncy it is per stance -- and it changes it the wrong
+    // way round, with aiming (the stiffest) coming out the loosest. Expressed like this,
+    // the ratio means the same thing in every stance and only the speed moves.
+    //
+    // Frequency in radians per second: higher settles sooner. Ratio at 1 is critical --
+    // no overshoot at all, which is a lerp with better manners; below that it starts to
+    // bounce, and 0.4 to 0.6 is where a carried weapon lives.
+    [SerializeField] private StanceValues lookSwayTiltFrequency = new StanceValues(9f, 6f, 4.5f, 11f);
+
+    [Range(0.1f, 1f)]
+    [SerializeField] private float lookSwayTiltDamping = 0.5f;
+
+
+
     [Header("Peek")]
     // Degrees at a full lean, mirrored the other way for the other side. On top of
     // whatever the camera pivot's own peek roll already gives the weapon by carrying
@@ -402,11 +451,15 @@ public class HandMotion : MonoBehaviour
     private float _stepShakeVelocity;
     private float _stepShakeRoll;
     private float _stepShakeRollVelocity;
+
     private float _currentTremor;
     private float _tremorVelocity;
     private Vector3 _tremorOffset;
     private Vector3 _tremorRotation;
     private Vector2 _currentLookSway;
+    private Vector2 _currentLookSwayTilt;
+    private Vector2 _lookSwayTiltVelocity;
+
     private float _currentTilt;
 
     // Which of the four is in force. Aiming wins outright -- someone lining up a
@@ -455,6 +508,13 @@ public class HandMotion : MonoBehaviour
     // to keep a separate runtime value that would silently win.
     public void SetTremor(float amount) => tremor = Mathf.Clamp01(amount);
 
+    // NO EDGE DETECTION, which is most of why this is simpler than the curve it replaced.
+    //
+    // The target is just "where should the weapon be right now", and the spring is always
+    // chasing it. Raising the sights moves the target and the spring follows; dropping
+    // them moves it back and the spring follows again. Interrupting halfway needs no
+    // special case at all -- the spring is already partway there with the velocity it had,
+    // and carrying that velocity into the new move is exactly what a hand does.
     // A tremor is noise, not a wave, and that is the whole of why it reads as nerves
     // rather than as machinery. A sine at nine hertz is a vibration; noise at nine hertz
     // never repeats.
@@ -541,6 +601,16 @@ public class HandMotion : MonoBehaviour
     public Vector3 ImpulseShake => Vector3.up * _stepShakeOffset;
 
     public float ImpulseShakeRoll => _stepShakeRoll;
+
+    // The turn's lag, in pitch and yaw, for the item to apply at its own pivot.
+    //
+    // X is pitch and Y is yaw, matching the order they are summed into a rotation -- and
+    // the order the hold's own look sway uses, so the two layers cannot end up describing
+    // the same turn on different axes.
+    //
+    // Roll is not here: that is LookTilt, which already carries this turn's cant. A third
+    // opinion about the same roll would just be the cant applied twice.
+    public Vector2 LookSwayTilt => _currentLookSwayTilt;
 
     // The tremor, for the item to apply at its own pivot alongside the three above. All
     // three Euler axes rather than a single roll, because a tremor has no favoured
@@ -699,6 +769,7 @@ public class HandMotion : MonoBehaviour
             (-stepShakeSpring * _stepShakeRoll - stepShakeDamping * _stepShakeRollVelocity) * Time.deltaTime;
         _stepShakeRoll += _stepShakeRollVelocity * Time.deltaTime;
 
+
         // Vertical runs at twice the horizontal: one dip per footfall against one
         // side-to-side swing per full stride. Pitch follows the vertical phase;
         // yaw and roll follow the horizontal one, a quarter cycle apart from each
@@ -720,14 +791,28 @@ public class HandMotion : MonoBehaviour
         // the phase comes from the animator and is smooth by construction, so the sine
         // needs no filtering. What has to ease is starting and stopping, and that is a
         // scalar.
-        float targetBobWeight = isMoving ? 1f : 0f;
+        // THE STANCE FIGURE IS IN THE ENVELOPE, NOT BESIDE IT, and that is what stops a
+        // sprint arriving as a step.
+        //
+        // ForStance switches hard -- walk to sprint is one figure replaced by another
+        // between two frames -- and the lerp that used to absorb it was the one on the
+        // oscillation, which had to go. Left outside, the amplitude jumped the moment the
+        // key went down. Folded in here it eases across instead, and the filter is doing
+        // the job it was always described as doing: smoothing an amplitude, not a wave.
+        //
+        // So this one scalar now carries both things that can change abruptly: whether the
+        // character is moving at all, and which gait it is moving in.
+        float targetBobWeight = isMoving ? ForStance(bobIntensity) : 0f;
 
         // Exponential rather than rate-times-delta: the old form is a different time
         // constant at every framerate, and past k*dt = 1 it overshoots outright.
         _bobWeight = Mathf.Lerp(
             _bobWeight, targetBobWeight, 1f - Mathf.Exp(-ForStance(bobSmoothing) * Time.deltaTime));
 
-        float bobScale = bobAmount * _bobWeight;
+        // The per-step variation stays OUTSIDE the filter. Smoothing the step bias and the
+        // wander would average away exactly the difference between one stride and the next
+        // that they exist to create.
+        float bobScale = _bobWeight * stepBias * wander;
 
         Vector3 targetBobOffset = new Vector3(
             Mathf.Cos(bobPhase) * bobHorizontalAmount,
@@ -781,6 +866,14 @@ public class HandMotion : MonoBehaviour
             -Mathf.Clamp(lookRate.y / lookSwayReferenceRate, -1f, 1f) * lookSwayPitchAmount * lookSwayAmount,
             -Mathf.Clamp(lookRate.x / lookSwayReferenceRate, -1f, 1f) * lookSwayYawAmount * lookSwayAmount);
 
+        // The pivot layer's target, off the same normalised rate and the same stance
+        // figure. Only the amounts and the filter differ -- reading the rate twice would
+        // be two answers to "how fast is the view turning", and the reference rate is
+        // already the one place that question is settled.
+        Vector2 targetLookSwayTilt = new Vector2(
+            -Mathf.Clamp(lookRate.y / lookSwayReferenceRate, -1f, 1f) * lookSwayTiltPitchAmount * lookSwayAmount,
+            -Mathf.Clamp(lookRate.x / lookSwayReferenceRate, -1f, 1f) * lookSwayTiltYawAmount * lookSwayAmount);
+
         float targetLookTilt =
             -Mathf.Clamp(lookRate.x / lookTiltReferenceRate, -1f, 1f) * lookTiltAmount * lookTiltStanceAmount;
 
@@ -798,6 +891,24 @@ public class HandMotion : MonoBehaviour
         _currentBobRotation = targetBobRotation;
         _currentSway = Vector3.Lerp(_currentSway, targetSway, ForStance(swaySmoothing) * Time.deltaTime);
         _currentLookSway = Vector2.Lerp(_currentLookSway, targetLookSway, ForStance(lookSwaySmoothing) * Time.deltaTime);
+
+        // Driven damped spring, integrated the same way every other spring here is: a
+        // pull towards the target proportional to how far away it is, minus a drag
+        // proportional to how fast it is already going.
+        //
+        // k and c are rebuilt from the frequency and the ratio each frame rather than
+        // stored, so a stance change moves the speed and leaves the bounce alone -- see
+        // the fields. The arithmetic is two multiplies and is not worth caching.
+        float tiltOmega = ForStance(lookSwayTiltFrequency);
+        float tiltStiffness = tiltOmega * tiltOmega;
+        float tiltDrag = 2f * lookSwayTiltDamping * tiltOmega;
+
+        Vector2 tiltAcceleration =
+            (targetLookSwayTilt - _currentLookSwayTilt) * tiltStiffness
+            - _lookSwayTiltVelocity * tiltDrag;
+
+        _lookSwayTiltVelocity += tiltAcceleration * Time.deltaTime;
+        _currentLookSwayTilt += _lookSwayTiltVelocity * Time.deltaTime;
 
         _currentLookTilt = Mathf.Lerp(_currentLookTilt, targetLookTilt, ForStance(lookTiltSmoothing) * Time.deltaTime);
         _currentBreathOffset = Vector3.Lerp(_currentBreathOffset, targetBreathOffset, breathSmoothing * Time.deltaTime);

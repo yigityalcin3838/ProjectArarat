@@ -164,6 +164,7 @@ public class Weapon : Item
     // mode.
     [SerializeField] private bool cameraKickDontTurnBack = false;
 
+
     // The rattle on top of the kick, and the two are doing different jobs.
     //
     // The kick has a DIRECTION and a shape: up, scattered sideways, settling over a
@@ -236,6 +237,7 @@ public class Weapon : Item
     //
     // Empty switches the whole thing off.
     [SerializeField] private Transform muzzlePoint;
+
 
     // Where the weapon ends up when there is no room for it, in the same terms as
     // hipPosition and aimPosition -- and, like those, found per weapon rather than
@@ -832,6 +834,14 @@ public class Weapon : Item
                 // The tremor comes in on all three axes, unlike everything else summed
                 // here: a lean has a direction and a tremor does not.
                 leanRotation = handMotion.PeekRotation + handMotion.TremorRotation;
+
+                // The turn's lag, in pitch and yaw. The hold has already carried the
+                // weapon across on its own sway; this is the weapon finishing the turn
+                // afterwards, about the grip -- the half a hold rotation cannot express,
+                // since rotating there swings the whole thing through an arc instead.
+                leanRotation.x += handMotion.LookSwayTilt.x;
+                leanRotation.y += handMotion.LookSwayTilt.y;
+
                 leanRotation.z += handMotion.LookTilt + handMotion.ImpulseShakeRoll;
             }
 

@@ -136,7 +136,7 @@ MonoBehaviour:
   active: 1
   intensity:
     m_OverrideState: 1
-    m_Value: 0.3
+    m_Value: 0.05
   shaftColor:
     m_OverrideState: 1
     m_Value: {r: 1, g: 1, b: 1, a: 1}
@@ -173,7 +173,7 @@ MonoBehaviour:
   active: 1
   maxBlurRadius:
     m_OverrideState: 1
-    m_Value: 15
+    m_Value: 32
   focusMode:
     m_OverrideState: 1
     m_Value: 0
@@ -197,16 +197,16 @@ MonoBehaviour:
     m_Value: 3
   focusRange:
     m_OverrideState: 1
-    m_Value: 0.5
+    m_Value: 3
   blurFalloff:
     m_OverrideState: 1
-    m_Value: 2
+    m_Value: 25
   foregroundBlurScale:
     m_OverrideState: 1
     m_Value: 0.15
   foregroundBlurFloor:
     m_OverrideState: 1
-    m_Value: 0
+    m_Value: 0.5
 --- !u!114 &-3053997929550838105
 MonoBehaviour:
   m_ObjectHideFlags: 3
@@ -257,10 +257,10 @@ MonoBehaviour:
   active: 1
   fogColor:
     m_OverrideState: 1
-    m_Value: {r: 0.6415094, g: 0.6415094, b: 0.6415094, a: 1}
+    m_Value: {r: 0.5330188, g: 0.7305561, b: 1, a: 1}
   density:
     m_OverrideState: 1
-    m_Value: 0.0125
+    m_Value: 0.0015
   heightFalloff:
     m_OverrideState: 1
     m_Value: 0.01
@@ -272,7 +272,7 @@ MonoBehaviour:
     m_Value: 0
   maxOpacity:
     m_OverrideState: 1
-    m_Value: 0.75
+    m_Value: 0.5
 --- !u!114 &-1216621516061285780
 MonoBehaviour:
   m_ObjectHideFlags: 3
@@ -592,19 +592,19 @@ MonoBehaviour:
   active: 1
   postExposure:
     m_OverrideState: 1
-    m_Value: 0.5
+    m_Value: 0
   contrast:
     m_OverrideState: 1
-    m_Value: 50
+    m_Value: 15
   colorFilter:
     m_OverrideState: 1
-    m_Value: {r: 0.7783019, g: 0.8740947, b: 1, a: 1}
+    m_Value: {r: 1, g: 1, b: 1, a: 1}
   hueShift:
     m_OverrideState: 1
     m_Value: 0
   saturation:
     m_OverrideState: 1
-    m_Value: 35
+    m_Value: 15
 --- !u!114 &5530443416288443775
 MonoBehaviour:
   m_ObjectHideFlags: 3

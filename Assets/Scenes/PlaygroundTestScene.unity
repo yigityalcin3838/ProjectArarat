@@ -20,13 +20,13 @@ RenderSettings:
   m_FogDensity: 0.008
   m_LinearFogStart: 100.6
   m_LinearFogEnd: 299.9
-  m_AmbientSkyColor: {r: 0.6313726, g: 0.6313726, b: 0.6313726, a: 1}
+  m_AmbientSkyColor: {r: 1, g: 1, b: 1, a: 1}
   m_AmbientEquatorColor: {r: 0.114, g: 0.125, b: 0.133, a: 1}
   m_AmbientGroundColor: {r: 0.047, g: 0.043, b: 0.035, a: 1}
   m_AmbientIntensity: 2.21
   m_AmbientMode: 3
   m_SubtractiveShadowColor: {r: 0.42, g: 0.478, b: 0.627, a: 1}
-  m_SkyboxMaterial: {fileID: 2100000, guid: b2d729674a1d7254aac25fb672203f06, type: 2}
+  m_SkyboxMaterial: {fileID: 2100000, guid: df61d4331f9595847aba59f8285d18b0, type: 2}
   m_HaloStrength: 0.5
   m_FlareStrength: 1
   m_FlareFadeSpeed: 3
@@ -8055,8 +8055,8 @@ MonoBehaviour:
   peekChestBone: {fileID: 1062668486}
   peekUpperChestBone: {fileID: 59586938}
   peekHeadBone: {fileID: 1743536585}
-  peekHeadTiltMultiplier: 2
-  aimHeadTiltMultiplier: 2
+  peekHeadTiltMultiplier: 3
+  aimHeadTiltMultiplier: 3
   aimHeadTiltSpeed: 8
   handIKTransitionDuration: 0.175
   layerWeightTransitionSpeed: 7
@@ -11647,7 +11647,7 @@ Light:
   m_Enabled: 1
   serializedVersion: 13
   m_Type: 1
-  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_Color: {r: 1, g: 0.9467446, b: 0.8443396, a: 1}
   m_Intensity: 2
   m_Range: 10
   m_SpotAngle: 30
@@ -16659,20 +16659,20 @@ MonoBehaviour:
   carLookPitchDownLimit: 75
   carPitchLimitAtMaxYawRatio: 0.2
   breathFrequency: 2
-  breathPitchAmount: 1
+  breathPitchAmount: 0.3
   breathYawAmount: 0.3
-  breathRollAmount: 1
+  breathRollAmount: 0.3
   breathSmoothing: 4
   playerAnimator: {fileID: 360032582}
   bobPhaseOffset: 0
   bobCycleSkew: 0
   bobWanderRate: 0.8
   bobFallbackFrequency: 6
-  bobPitchAmount: 0.3
-  bobYawAmount: 0.3
-  bobRollAmount: 0.3
-  bobVerticalAmount: 0.003
-  bobHorizontalAmount: 0.006
+  bobPitchAmount: 0.15
+  bobYawAmount: 0.15
+  bobRollAmount: 0.15
+  bobVerticalAmount: 0.0015
+  bobHorizontalAmount: 0.003
   bobStepAsymmetry: 0.15
   bobWander: 0.2
   bobIntensity:
@@ -16805,6 +16805,8 @@ MonoBehaviour:
   jumpShakeRollAmount: -60
   landShakeRollAmount: -60
   stepShakeRollAmount: 3
+  aimKickAmount: 0
+  aimKickRollAmount: -60
   stepShakeVerticalAmount: 0.01
   shakeSpring: 120
   shakeDamping: 12
@@ -16846,10 +16848,10 @@ MonoBehaviour:
   lowStaminaVignetteIntensity: 0.1
   lowStaminaVignetteSmoothness: 0.1
   lowStaminaChromaticAberration: 0.15
-  crouchVignetteIntensity: 0.1
-  crouchVignetteSmoothness: 0.1
-  aimVignetteIntensity: 0.1
-  aimVignetteSmoothness: 0.1
+  crouchVignetteIntensity: 0.01
+  crouchVignetteSmoothness: 0.25
+  aimVignetteIntensity: 0.01
+  aimVignetteSmoothness: 0.25
   effectSmoothSpeed: 4
   restingForegroundBlur: 0.15
   walkCarryBlur: 0.5
@@ -20212,7 +20214,7 @@ MonoBehaviour:
   holster: {fileID: 1736185428}
   inputActions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   aimFov: 50
-  viewModelAimFov: 35
+  viewModelAimFov: 30
   postProcessEffects: {fileID: 768611304}
   weaponAnimator: {fileID: 1774820536}
   fireTrigger: Fire
@@ -20265,7 +20267,7 @@ MonoBehaviour:
   runPosition: {x: 0.135, y: 0.125, z: 0.45}
   runRotation: {x: -45, y: -20, z: 20}
   runTransitionSpeed: 2
-  aimPosition: {x: 0.135, y: 0.115, z: 0.55}
+  aimPosition: {x: 0.135, y: 0.115, z: 0.65}
   aimRotation: {x: 0, y: 0, z: 6}
   aimTransitionSpeed: 15
   peekOffset: {x: 0, y: 0, z: -0.05}
@@ -40288,7 +40290,7 @@ MonoBehaviour:
   holster: {fileID: 945280257}
   inputActions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   aimFov: 50
-  viewModelAimFov: 35
+  viewModelAimFov: 30
   postProcessEffects: {fileID: 768611304}
   weaponAnimator: {fileID: 686630787}
   fireTrigger: Fire
@@ -40332,7 +40334,7 @@ MonoBehaviour:
   wallCheckRadius: 0.005
   wallPullbackInSpeed: 5
   wallPullbackOutSpeed: 10
-  hipPosition: {x: 0.125, y: 0.125, z: 0.5}
+  hipPosition: {x: 0.14, y: 0.125, z: 0.5}
   hipRotation: {x: 0, y: 0, z: 6}
   walkPosition: {x: 0, y: 0.05, z: 0.5}
   walkRotation: {x: -7, y: -30, z: 20}
@@ -40425,11 +40427,11 @@ MonoBehaviour:
   chestAnchor: {fileID: 59586938}
   chestFollowAmount: 0.25
   chestFollowSmoothTime: 0.25
-  bobHorizontalAmount: 0.01
-  bobVerticalAmount: 0.005
-  bobPitchAmount: 1
+  bobHorizontalAmount: -0.002
+  bobVerticalAmount: -0.001
+  bobPitchAmount: 0.5
   bobYawAmount: 1
-  bobRollAmount: 2
+  bobRollAmount: 1
   bobIntensity:
     crouch: 1.5
     walk: 1
@@ -40460,14 +40462,14 @@ MonoBehaviour:
   tremorRotationAmount: 0.5
   tremorFrequency: 10
   tremorSmoothTime: 0.25
-  swayHorizontalAmount: 0.025
+  swayHorizontalAmount: 0.05
   swayVerticalAmount: 0
-  swayForwardAmount: 0.025
+  swayForwardAmount: 0.05
   swayIntensity:
     crouch: 1
     walk: 1
     sprint: 2
-    aim: 1
+    aim: 0.5
   swaySmoothing:
     crouch: 2
     walk: 2
@@ -40484,23 +40486,31 @@ MonoBehaviour:
     walk: 2
     sprint: 2
     aim: 2
-  lookSwayYawAmount: 14
-  lookSwayPitchAmount: 14
+  lookSwayYawAmount: 8
+  lookSwayPitchAmount: 8
   lookSwayReferenceRate: 300
   lookSwayIntensity:
     crouch: 1
     walk: 1
-    sprint: 2
+    sprint: 6
     aim: 0.5
   lookSwayFreeAimOnMultiplier: 0.25
   lookSwayFreeAimOffMultiplier: 1
   lookSwaySmoothing:
     crouch: 4
     walk: 4
-    sprint: 6
+    sprint: 4
     aim: 4
-  peekRotation: {x: 0, y: 0, z: -20}
-  lookTiltAmount: 30
+  lookSwayTiltYawAmount: -4
+  lookSwayTiltPitchAmount: -4
+  lookSwayTiltFrequency:
+    crouch: 8
+    walk: 8
+    sprint: 8
+    aim: 8
+  lookSwayTiltDamping: 0.5
+  peekRotation: {x: 0, y: 0, z: -30}
+  lookTiltAmount: -15
   lookTiltReferenceRate: 300
   lookTiltIntensity:
     crouch: 1
