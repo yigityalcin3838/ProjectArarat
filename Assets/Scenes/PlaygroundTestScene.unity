@@ -20236,18 +20236,18 @@ MonoBehaviour:
   hitMarkerDuration: 4
   movement: {fileID: 768611296}
   handMotion: {fileID: 1915127693}
-  cameraKickAmount: 50
-  cameraKickHorizontalAmount: 25
-  cameraKickSpring: 75
-  cameraKickDamping: 12
-  cameraKickDontTurnBack: 0
-  cameraShakeRollAmount: 7
-  cameraShakeFrequency: 7
-  cameraShakeDecay: 14
-  weaponKickBack: 2
-  weaponKickRise: 720
-  weaponKickRoll: 720
-  weaponKickSpring: 350
+  cameraKickAmount: 75
+  cameraKickHorizontalAmount: 75
+  cameraKickSpring: 150
+  cameraKickDamping: 25
+  cameraKickDontTurnBack: 1
+  cameraShakeRollAmount: 10
+  cameraShakeFrequency: 5
+  cameraShakeDecay: 7
+  weaponKickBack: 1
+  weaponKickRise: 500
+  weaponKickRoll: 360
+  weaponKickSpring: 700
   weaponKickDamping: 25
   fireHipHoldDuration: 0.2
   posDeltaPivot: {fileID: 901984127}
@@ -20259,17 +20259,17 @@ MonoBehaviour:
   wallPullbackInSpeed: 5
   wallPullbackOutSpeed: 10
   hipPosition: {x: 0.135, y: 0.1, z: 0.55}
-  hipRotation: {x: 0, y: 0, z: 6}
+  hipRotation: {x: -3, y: -3, z: 6}
   walkPosition: {x: 0.135, y: 0.125, z: 0.45}
   walkRotation: {x: -40, y: -15, z: 6}
-  walkTransitionSpeed: 2
+  walkTransitionSpeed: 1.5
   walkPoseDelay: 3
   runPosition: {x: 0.135, y: 0.125, z: 0.45}
   runRotation: {x: -45, y: -20, z: 20}
   runTransitionSpeed: 2
-  aimPosition: {x: 0.135, y: 0.115, z: 0.65}
-  aimRotation: {x: 0, y: 0, z: 6}
-  aimTransitionSpeed: 15
+  aimPosition: {x: 0.125, y: 0.115, z: 0.65}
+  aimRotation: {x: -1.5, y: -1.5, z: 3}
+  aimTransitionSpeed: 7
   peekOffset: {x: 0, y: 0, z: -0.05}
   playerAnimator: {fileID: 360032582}
   rightGripPoint: {fileID: 1243831821}
@@ -40289,7 +40289,7 @@ MonoBehaviour:
   drawAsViewModel: 1
   holster: {fileID: 945280257}
   inputActions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
-  aimFov: 50
+  aimFov: 55
   viewModelAimFov: 30
   postProcessEffects: {fileID: 768611304}
   weaponAnimator: {fileID: 686630787}
@@ -40312,17 +40312,17 @@ MonoBehaviour:
   hitMarkerDuration: 4
   movement: {fileID: 768611296}
   handMotion: {fileID: 1915127693}
-  cameraKickAmount: 360
-  cameraKickHorizontalAmount: 360
-  cameraKickSpring: 50
+  cameraKickAmount: 240
+  cameraKickHorizontalAmount: 240
+  cameraKickSpring: 500
   cameraKickDamping: 20
-  cameraKickDontTurnBack: 0
+  cameraKickDontTurnBack: 1
   cameraShakeRollAmount: 30
   cameraShakeFrequency: 7
-  cameraShakeDecay: 14
-  weaponKickBack: 3
-  weaponKickRise: 180
-  weaponKickRoll: 360
+  cameraShakeDecay: 7
+  weaponKickBack: 2
+  weaponKickRise: 90
+  weaponKickRoll: 180
   weaponKickSpring: 125
   weaponKickDamping: 12
   fireHipHoldDuration: 0.2
@@ -40334,8 +40334,8 @@ MonoBehaviour:
   wallCheckRadius: 0.005
   wallPullbackInSpeed: 5
   wallPullbackOutSpeed: 10
-  hipPosition: {x: 0.14, y: 0.125, z: 0.5}
-  hipRotation: {x: 0, y: 0, z: 6}
+  hipPosition: {x: 0.14, y: 0.115, z: 0.5}
+  hipRotation: {x: -1.5, y: -3, z: 6}
   walkPosition: {x: 0, y: 0.05, z: 0.5}
   walkRotation: {x: -7, y: -30, z: 20}
   walkTransitionSpeed: 1
@@ -40344,7 +40344,7 @@ MonoBehaviour:
   runRotation: {x: -7, y: -30, z: 20}
   runTransitionSpeed: 2
   aimPosition: {x: 0.125, y: 0.14, z: 0.5}
-  aimRotation: {x: 0, y: 0, z: 8}
+  aimRotation: {x: -1, y: -3, z: 8}
   aimTransitionSpeed: 15
   peekOffset: {x: 0, y: 0, z: -0.05}
   playerAnimator: {fileID: 360032582}
