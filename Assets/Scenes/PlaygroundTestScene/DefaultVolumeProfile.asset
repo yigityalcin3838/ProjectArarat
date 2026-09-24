@@ -173,7 +173,7 @@ MonoBehaviour:
   active: 1
   maxBlurRadius:
     m_OverrideState: 1
-    m_Value: 32
+    m_Value: 0
   focusMode:
     m_OverrideState: 1
     m_Value: 0
