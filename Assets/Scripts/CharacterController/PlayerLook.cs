@@ -117,28 +117,33 @@ public class PlayerLook : MonoBehaviour
     // only sink into a crouch, and a crouch that snapped brought the stride with it.
     [SerializeField] private float crouchDropTime = 0.15f;
 
-    // Empty hands, a ladder, a car: three states with nothing to hold steady, and in
-    // all three the view sits ON the head socket instead of following it.
+    // THERE IS NO HEAD MOUNT ANY MORE, in any state. It used to drop the pivot ONTO the
+    // head socket -- unfiltered, authored offset zeroed -- first whenever the hands were
+    // empty, then only while the body was locked, meaning a ladder or a car.
     //
-    // The follow above exists for the weapon. Filtering the skeleton is what keeps a
-    // stride out of a held barrel, and the price of it is that the view is never
-    // quite where the head is -- which is invisible while something is in frame to
-    // anchor it, and is exactly the thing that makes empty hands feel like a floating
-    // camera. On a ladder or in a car the animation is the whole performance and the
-    // view has no business smoothing it.
+    // The argument for it was that the follow above deliberately lags the skeleton, so
+    // the view is never quite where the head is, and where the animation is the whole
+    // performance that gap is the thing you notice. The argument against it is that the
+    // mount and the follow sit the authored eye offset apart, so every changeover slid
+    // the entire world by that offset -- on a draw, on a holster, and equally on
+    // mounting a ladder or getting into a car. A camera move nobody asked for, in the
+    // middle of an action they did.
     //
-    // The items themselves are unaffected either way: they hang off the pivot and are
-    // carried wherever it goes, and by definition there is nothing there to carry in
-    // any of the three states this covers.
-    [SerializeField] private bool headMountWhenHandsAreFree = true;
+    // The follow is now the only path, everywhere, which is also the path the held item
+    // rides: the pivot trails the socket, and the weapon hangs off the pivot and is
+    // carried wherever it goes. One eye position, one smoothing, nothing to change over
+    // between -- so a ladder and a car keep whatever position the view already had.
+    // Anything the clip's own head motion should still contribute comes through the
+    // follow; if a ladder wants more of it, headFollowSmoothTime is the knob, not a
+    // second mode.
 
-    // How long the changeover takes, in seconds. It cannot be instant: the mount and
-    // the follow are the authored eye offset apart -- the very gap the reference
-    // measures -- so drawing a weapon would snap the view by that much.
-    [SerializeField] private float headMountBlendTime = 0.25f;
+    // How long the pitch limits take to change over between held and empty hands, in
+    // seconds. It cannot be instant: the two bands are tens of degrees apart, so a
+    // draw would clamp the view with a jerk.
+    [SerializeField] private float handsFreeBlendTime = 0.25f;
 
-    // Whose hands they are. Only read to ask whether they are empty; left unassigned
-    // the mount falls back to the ladder and the car, which need no help to answer.
+    // Whose hands they are. Only read to ask whether they are empty, which decides
+    // which pitch limits apply; left unassigned the held-item limits stand.
     [SerializeField] private PlayerItems items;
 
     [Header("Peek")]
@@ -747,6 +752,20 @@ public class PlayerLook : MonoBehaviour
     public float Pitch { get; private set; }
     public float YawDelta { get; private set; }
 
+    // How far the view is turned away from the body, in degrees, while the body is not
+    // allowed to turn with it -- a ladder or a car. Positive is looking right.
+    //
+    // This is the gap nothing else can measure. Off a ladder the body takes the whole
+    // turn, so the view and the body never diverge and there is nothing here; the only
+    // angle the torso has to make up is the one the LEGS introduce when they turn to
+    // face a strafe, which the Animator already knows from its own facing offset. On a
+    // ladder that source dries up -- the legs are holding a rung and the facing offset
+    // is zero -- while this is the entire turn. Read it, don't drive it.
+    //
+    // Already clamped by the climb and car yaw limits, so whatever reads it is bounded
+    // by the same stops the view is.
+    public float BodyLockedYaw => _climbCameraYaw;
+
     // How far the view actually turned this frame, in degrees -- x yaw, y pitch.
     // Applied rather than requested: against a pitch limit or a car's yaw stop the
     // mouse keeps moving but the view does not, and anything following the view
@@ -960,8 +979,6 @@ public class PlayerLook : MonoBehaviour
     private Vector3 _followVelocity;
     private float _crouchDrop;
     private float _crouchDropVelocity;
-    private float _headMountBlend;
-    private float _headMountBlendVelocity;
     private float _handsFreeBlend;
     private float _handsFreeBlendVelocity;
     private InputAction _peekAction;
@@ -1045,16 +1062,14 @@ public class PlayerLook : MonoBehaviour
     // Whether the anchor is a bone of THIS character rather than something left over
     // somewhere else in the scene.
     //
-    // The follow survives a wrong anchor because it only ever reads change, and a
-    // stationary object contributes none. The mount does not: it puts the view where
-    // the anchor is, full stop, so an anchor orphaned by a model swap drops the
-    // camera to wherever that object was left -- usually the scene origin, which
-    // reads as the view falling to the character's feet the moment its hands are
-    // empty, since that is the only time the mount is on.
+    // The follow itself survives a wrong anchor: it only ever reads how far the head
+    // has MOVED since play began, and an orphaned object sitting still contributes
+    // nothing, so the view simply stops breathing with the skeleton. That is the
+    // reason to check rather than a reason not to -- a camera that silently stops
+    // following the head looks like the camera code, while the cause is one reference
+    // in the Inspector that nothing else in the game would ever complain about.
     //
-    // Cheap to check and it fails loudly, which is the whole point: the symptom on
-    // its own points at the camera code, and the cause is a reference in the
-    // Inspector that nothing else in the game would ever complain about.
+    // It is checked once, before the reference is taken, and it fails loudly.
     private bool HeadAnchorIsValid
     {
         get
@@ -1071,9 +1086,8 @@ public class PlayerLook : MonoBehaviour
                 Debug.LogWarning(
                     $"PlayerLook's Head Anchor ('{headAnchor.name}') is not under {name}, so it is " +
                     "not a bone of this character -- most likely it was orphaned by a model swap. " +
-                    "The head mount is off until it is re-parented to the new skeleton's head, " +
-                    "because mounting the view on it would put the camera wherever that object " +
-                    "has been left.", this);
+                    "The view will not follow the head until it is re-parented to the new " +
+                    "skeleton's head.", this);
             }
 
             return false;
@@ -1218,7 +1232,7 @@ public class PlayerLook : MonoBehaviour
         // difference. The limit has to close at the speed the arms come up.
         bool handsFree = items != null && !items.AreHandsBusy;
         _handsFreeBlend = Mathf.SmoothDamp(
-            _handsFreeBlend, handsFree ? 1f : 0f, ref _handsFreeBlendVelocity, headMountBlendTime);
+            _handsFreeBlend, handsFree ? 1f : 0f, ref _handsFreeBlendVelocity, handsFreeBlendTime);
 
         footPitchUpLimit = Mathf.Lerp(footPitchUpLimit, noItemPitchUpLimit, _handsFreeBlend);
         footPitchDownLimit = Mathf.Lerp(footPitchDownLimit, noItemPitchDownLimit, _handsFreeBlend);
@@ -1647,37 +1661,19 @@ public class PlayerLook : MonoBehaviour
             _crouchDrop = Mathf.SmoothDamp(
                 _crouchDrop, targetCrouchDrop, ref _crouchDropVelocity, crouchDropTime);
 
-            // Subtracted after the follow blend rather than folded into its target,
-            // so it applies in full even at a headFollowAmount of 0 -- the two are
-            // separate systems and turning one off should not take the other with
-            // it.
-            Vector3 followedPosition = Vector3.Lerp(
+            // The crouch drop is subtracted after the follow blend rather than folded
+            // into its target, so it applies in full even at a headFollowAmount of 0 --
+            // the two are separate systems and turning one off should not take the other
+            // with it.
+            //
+            // And that is the eye position, in every state: one expression, with nothing
+            // to change over to. The ladder and the car used to drop the pivot onto the
+            // head socket here instead, which slid the view by the authored eye offset on
+            // the way in and again on the way out; they now keep the position they
+            // already had, like every other state. See the retired field above.
+            Vector3 pivotPosition = Vector3.Lerp(
                 _basePivotLocalPosition, _followedLocalPosition, headFollowAmount)
                 - Vector3.up * _crouchDrop;
-
-            // The socket itself, unfiltered and with no authored offset of its own --
-            // the view IS the head rather than something trailing it.
-            //
-            // The crouch drop is left out on purpose. It exists to add a dip the clip
-            // does not have; mounted on the bone, the clip's own dip is already the
-            // whole of it, and adding more would be describing the same crouch twice.
-            // handsFree already answers no when the items reference is unassigned,
-            // which is the safe way round: read the other way, a missing reference
-            // would mount a weapon straight onto an unfiltered head bone and put the
-            // stride back in the barrel -- the exact thing the follow exists to keep
-            // out. A ladder and a car need no help either way; neither has hands to
-            // ask about.
-            bool headMounted = headMountWhenHandsAreFree
-                && HeadAnchorIsValid
-                && (lockBodyYaw || handsFree);
-
-            _headMountBlend = Mathf.SmoothDamp(
-                _headMountBlend, headMounted ? 1f : 0f,
-                ref _headMountBlendVelocity, headMountBlendTime);
-
-            Vector3 pivotPosition = _headMountBlend > 0.0001f && HeadAnchorIsValid
-                ? Vector3.Lerp(followedPosition, HeadLocalPosition, _headMountBlend)
-                : followedPosition;
 
             // Nowhere to step out to while a ladder or a car has the character: the
             // axis is still being read there and would slide the view off a body
@@ -1734,30 +1730,16 @@ public class PlayerLook : MonoBehaviour
             // holding; and the look tilt, because HandMotion already leans the weapon
             // for the same turn.
             //
-            // Rebuilt from the rotation the camera was placed at rather than nudged
-            // from where it was left, so a shake that never quite settles can't walk
-            // the camera off over a landing or two.
-            // Collapsed onto the pivot as the mount takes hold, because the mount puts
-            // the PIVOT on the socket and the camera is what has to end up there.
+            // Rebuilt from the rotation and position the camera was placed at rather
+            // than nudged from where it was left, so a shake that never quite settles
+            // can't walk the camera off over a landing or two.
             //
-            // This rig's camera sits some way up and forward of the pivot, so without
-            // this the view lands that far off the head and the mount looks like it
-            // did nothing. Zeroing the offset rather than compensating for it also
-            // fixes the second half of the same problem: an eye point held out in
-            // front of the pivot swings through an arc every time the view pitches,
-            // and a head that orbits twenty centimetres when it nods is not a head.
-            // The bob's translation goes on AFTER the mount blend, not into it. The blend
-            // is about where the eye is mounted and settles to a fixed point; the bob is
-            // motion about wherever that point turned out to be. Folded inside the Lerp
-            // it would be scaled away to nothing exactly when the head mount takes hold,
-            // which is when the view is most obviously a head.
-            // The bob's translation goes on AFTER the mount blend, not into it. The blend
-            // is about where the eye is mounted and settles to a fixed point; the bob is
-            // motion about wherever that point turned out to be. Folded inside the Lerp
-            // it would be scaled away to nothing exactly when the head mount takes hold,
-            // which is when the view is most obviously a head.
-            cinemachineCamera.transform.localPosition =
-                Vector3.Lerp(_cameraBaseLocalPosition, Vector3.zero, _headMountBlend)
+            // The authored offset stands at all times now. It used to collapse to zero
+            // as the head mount took hold, since the mount put the PIVOT on the socket
+            // and the camera is what had to end up there; with the mount gone there is
+            // nothing to collapse for, and the offset the rig was built with is simply
+            // where the eye belongs.
+            cinemachineCamera.transform.localPosition = _cameraBaseLocalPosition
                 + _currentBobPosition
                 + Vector3.up * _shakeVerticalOffset;
             cinemachineCamera.transform.localRotation = _cameraBaseLocalRotation

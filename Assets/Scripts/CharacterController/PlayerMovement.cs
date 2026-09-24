@@ -188,6 +188,20 @@ public class PlayerMovement : MonoBehaviour
 
     public bool IsSlidingToEntry => _isEnteringCar || _ladderPhase == LadderPhase.Approaching;
 
+    // On a ladder or in a car AND actually there -- the clip is running, the hands are
+    // on the rungs or the wheel.
+    //
+    // Distinct from IsMovementLocked, which is the input question: that one goes false
+    // during the climb itself, because the player is driving it. This is the posture
+    // question, and during the climb the answer is yes.
+    //
+    // It exists because three separate systems were asking it and each phrased the
+    // arrival test itself: the animator's layer weight, the torso's aim weights, and the
+    // arms' layer. Three copies of one fact is three chances for them to disagree about
+    // which frame the character got there, and they have to agree -- the pose, the torso
+    // and the projection all change over on it.
+    public bool IsInBodyAction => (IsClimbingLadder || IsInCar) && !IsSlidingToEntry;
+
     // One-frame pulses for equipped items (e.g. Weapon) to react to with a
     // one-shot effect (a jump/land kick) -- read-only, mirrors IsGrounded etc.
     // The gait speed in force. Negative until the first grounded frame sets it, which is

@@ -17,20 +17,28 @@ public static class GameLayers
 {
     public const string DebrisLayerName = "Debris";
 
-    // The held item. It is drawn like anything else -- same camera, same lens, same
-    // depth, same post-processing -- and this layer exists for one reason only:
-    // keeping it out of the way of gameplay queries.
+    // The held item. This layer carries two jobs, and it is worth knowing both, because
+    // each on its own would look like the whole reason it exists.
     //
-    // Being a few centimetres from the eye puts it in front of every cast the game
-    // makes. A shot would hit its own barrel, a ground check would find the stock, an
-    // interaction probe would stop on the receiver. None of those is a thing that is
-    // really there, so Queryable below takes this layer out.
+    // It keeps the item out of the way of gameplay queries. Being a few centimetres from
+    // the eye puts it in front of every cast the game makes: a shot would hit its own
+    // barrel, a ground check would find the stock, an interaction probe would stop on the
+    // receiver. None of those is a thing that is really there, so Queryable below takes
+    // this layer out.
     //
-    // It used to carry a second job: held items were pulled out of the ordinary pass
-    // and drawn afterwards with depth cleared, so a weapon held at arm's length would
-    // not bury itself in nearby walls. That is gone. The weapon is pulled back when
-    // it nears a wall, which solves the same problem where it actually arises --
-    // in the weapon's position, rather than in the way the frame is assembled.
+    // And it is what ViewModelLensFeature draws. The renderer's opaque, prepass and
+    // transparent masks all leave this layer out; the feature draws it afterwards,
+    // through its own narrower projection and into cleared depth. So an object on this
+    // layer is on a second lens -- it will not bury itself in a nearby wall, and it is
+    // not at the same field of view as the world.
+    //
+    // WHICH MEANS BEING ON THIS LAYER IS ONLY RIGHT WHILE THE OBJECT REALLY IS IN THE
+    // FOREGROUND. The arms live here so they get the tighter lens and cannot push through
+    // a wall, and that is the correct answer for arms holding something up in front of
+    // the eye. It stops being the correct answer the moment they are doing something in
+    // the world instead -- gripping a rung, holding a wheel -- where they have to share
+    // the world's projection and be occluded by what they are holding onto. See
+    // ViewModelWorldLayerSwap, which is what moves them back for the duration.
     public const string ViewModelLayerName = "ViewModel";
 
     private static int _debrisMask;

@@ -22,10 +22,10 @@ public class Item : MonoBehaviour
 
     // Put this item on the view-model layer WHILE IT IS IN HAND.
     //
-    // Nothing about rendering any more -- it is drawn by the ordinary camera like
-    // every other object, and gets the same lens, depth and post-processing. What the
-    // layer buys is being ignored by gameplay queries, which matters only for the
-    // thing held a few centimetres from the eye: a shot must not hit its own barrel.
+    // The layer buys two things, and both only make sense for something held a few
+    // centimetres from the eye: being ignored by gameplay queries, so a shot does not hit
+    // its own barrel, and being drawn by ViewModelLensFeature -- its own narrower
+    // projection, into cleared depth, so the item cannot bury itself in a nearby wall.
     // See GameLayers.
     //
     // While it is in hand is the whole of it. A holstered weapon is an object in the

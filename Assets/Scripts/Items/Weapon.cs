@@ -833,7 +833,8 @@ public class Weapon : Item
             {
                 // The tremor comes in on all three axes, unlike everything else summed
                 // here: a lean has a direction and a tremor does not.
-                leanRotation = handMotion.PeekRotation + handMotion.TremorRotation;
+                leanRotation = handMotion.PeekRotation + handMotion.TremorRotation
+                    + handMotion.BobYawRoll;
 
                 // The turn's lag, in pitch and yaw. The hold has already carried the
                 // weapon across on its own sway; this is the weapon finishing the turn

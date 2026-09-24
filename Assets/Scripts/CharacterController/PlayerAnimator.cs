@@ -67,6 +67,54 @@ public class PlayerAnimator : MonoBehaviour
     [Range(0f, 1f)]
     [SerializeField] private float defaultNeckAimWeight = 0f;
 
+    [Header("Body Action Aim Weights")]
+    // The same four weights again, for the two states where the body is pinned and the
+    // turn has nowhere else to go: a ladder and a car.
+    //
+    // They are a separate set rather than a multiplier on the others because the
+    // problem is a different one. Off a ladder these weights cancel a turn the LEGS
+    // made, so the right answer is however much of that turn has to be taken back --
+    // usually all of it, at the waist. On a ladder the legs are on a rung and make no
+    // turn at all; the whole angle is the view's own, the waist is the last place it
+    // should come from, and what looks right is a glance: mostly neck, some chest, next
+    // to nothing at the spine. Scaling the walking figures could never produce that
+    // shape, only a smaller version of the wrong one.
+    //
+    // Two sets, not one, because the two postures do not allow the same thing. Seated,
+    // the hips are fixed to a seat and the torso can come a long way round; on a ladder
+    // both hands are on the rungs and the shoulders are what is holding the body on, so
+    // turning them is the one thing that cannot happen -- almost all of it is neck.
+    //
+    // They beat a held weapon's weights as well as the defaults. A rifle asking for its
+    // firing posture is asking about a stance the character is not in.
+    //
+    // Chain and ceiling read exactly as they do above: each bone carries everything
+    // over it, they compound rather than divide, and the total is capped where they are
+    // read.
+    [Range(0f, 1f)]
+    [SerializeField] private float ladderSpineAimWeight = 0.05f;
+
+    [Range(0f, 1f)]
+    [SerializeField] private float ladderChestAimWeight = 0.15f;
+
+    [Range(0f, 1f)]
+    [SerializeField] private float ladderUpperChestAimWeight = 0.15f;
+
+    [Range(0f, 1f)]
+    [SerializeField] private float ladderNeckAimWeight = 0.5f;
+
+    [Range(0f, 1f)]
+    [SerializeField] private float carSpineAimWeight = 0.15f;
+
+    [Range(0f, 1f)]
+    [SerializeField] private float carChestAimWeight = 0.25f;
+
+    [Range(0f, 1f)]
+    [SerializeField] private float carUpperChestAimWeight = 0.2f;
+
+    [Range(0f, 1f)]
+    [SerializeField] private float carNeckAimWeight = 0.35f;
+
     [Header("Peek Slide")]
     // The body's share of the lean. PlayerLook steps the view sideways; these three
     // carry the torso the same distance so the model goes with it instead of the
@@ -202,6 +250,7 @@ public class PlayerAnimator : MonoBehaviour
     private bool _isSquaringUpForEntry;
     private float _entryStartFacingOffset;
     private bool _isItemPoseHeld;
+
     private bool _hasAimRigWeightOverride;
     private float _spineAimWeightOverride;
     private float _chestAimWeightOverride;
@@ -249,19 +298,24 @@ public class PlayerAnimator : MonoBehaviour
 
         ApplyItemPose();
 
+        // Held down over the slide to the entry point so the walk on the base
+        // layer is what shows while the character is still on its way there.
+        // Only the weight is held: the flags above have to stay true the whole
+        // time, because the ladder and car states exit on them going false --
+        // gate those and the layer drops straight back to Idle and never
+        // finds its way back in. That is what IsInBodyAction is: still true
+        // throughout, false until the character has arrived.
+        //
+        // Worked out whether or not the layer exists, because it is no longer only the
+        // layer's weight: the aim offset reads it as "how far into the ladder or the car
+        // are we", for both the torso weights and where the torso's angle comes from.
+        // One figure for all three -- the pose, the weights and the angle arrive
+        // together by construction rather than by three rates being tuned to agree.
+        float targetLadderCarWeight = movement.IsInBodyAction ? 1f : 0f;
+        _ladderCarLayerWeight = Mathf.Lerp(_ladderCarLayerWeight, targetLadderCarWeight, layerWeightTransitionSpeed * Time.deltaTime);
+
         if (_ladderCarLayerIndex >= 0)
-        {
-            // Held down over the slide to the entry point so the walk on the base
-            // layer is what shows while the character is still on its way there.
-            // Only the weight is held: the flags above have to stay true the whole
-            // time, because the ladder and car states exit on them going false --
-            // gate those and the layer drops straight back to Idle and never
-            // finds its way back in.
-            bool hasArrived = !movement.IsSlidingToEntry;
-            float targetLadderCarWeight = (movement.IsClimbingLadder || movement.IsInCar) && hasArrived ? 1f : 0f;
-            _ladderCarLayerWeight = Mathf.Lerp(_ladderCarLayerWeight, targetLadderCarWeight, layerWeightTransitionSpeed * Time.deltaTime);
             _animator.SetLayerWeight(_ladderCarLayerIndex, _ladderCarLayerWeight);
-        }
 
 
 
@@ -805,7 +859,8 @@ public class PlayerAnimator : MonoBehaviour
         if (layerIndex != 0 && layerIndex != _ladderCarLayerIndex)
             return;
 
-        // Base layer only, unlike the hand IK below.
+        // EXACTLY ONE LAYER PER FRAME, and which one depends on who is driving the
+        // torso. Unlike the hand IK below, which wants both.
         //
         // OnAnimatorIK is called once per layer with IK Pass ticked, and this rig has
         // it on two -- so anything written here unguarded is written twice a frame.
@@ -814,11 +869,29 @@ public class PlayerAnimator : MonoBehaviour
         // CURRENT rotation, so a second pass composes it onto a bone that has already
         // been turned once and the body ends up rotated twice as far as the view.
         //
+        // The base layer cannot be that one layer while a ladder or a car is on, which
+        // is the other half of why the body did not turn there. LadderCar is an OVERRIDE
+        // layer with a mask over the spine chain: layers are blended in order and each
+        // IK pass writes into the pose accumulated so far, so an offset composed during
+        // layer 0's pass is simply replaced when that layer lands on top at full weight.
+        // The torso was being turned and then un-turned, every frame.
+        //
+        // Composed on the LadderCar layer's pass instead, it is written after the
+        // override rather than under it, so it survives -- and in full, at any layer
+        // weight, because the write happens after the blend rather than into one of its
+        // inputs. The changeover is safe because it happens where the layer has
+        // essentially no weight: there the layer's own animation is not moving those
+        // bones yet and bodyActionBlend is still zero, so both passes would compute and
+        // land the same rotation.
+        int aimOffsetLayer = _ladderCarLayerIndex >= 0 && _ladderCarLayerWeight > 0.0001f
+            ? _ladderCarLayerIndex
+            : 0;
+
         // Before the hands, and that ordering is not optional either: this turns the
         // spine, which carries the shoulders, which carry the arms. Afterwards the
         // hands would already be solved onto the grips against a torso that then moved
         // out from under them, and the weapon would slide out of the hands.
-        if (layerIndex == 0)
+        if (layerIndex == aimOffsetLayer)
             ApplyAimOffset();
 
         ApplyBothHandIK();
@@ -841,6 +914,31 @@ public class PlayerAnimator : MonoBehaviour
         float chestWeight = _hasAimRigWeightOverride ? _chestAimWeightOverride : defaultChestAimWeight;
         float upperChestWeight = _hasAimRigWeightOverride ? _upperChestAimWeightOverride : defaultUpperChestAimWeight;
         float neckWeight = _hasAimRigWeightOverride ? _neckAimWeightOverride : defaultNeckAimWeight;
+
+        // A ladder or a car takes the weights over from both of the above, eased in on
+        // the same figure that eases in the pose itself, so the torso's share of a turn
+        // changes over exactly as the character settles onto the rungs or into the seat.
+        // Nothing steps between frames and there is no second rate to keep in agreement
+        // with the first.
+        //
+        // Lerped rather than switched at a threshold for a second reason as well: the
+        // angle below changes source over the same span, and two things crossing over on
+        // one blend cannot disagree about when the crossover happened.
+        float bodyActionBlend = _ladderCarLayerWeight;
+
+        if (bodyActionBlend > 0.0001f)
+        {
+            bool inCar = movement != null && movement.IsInCar;
+
+            spineWeight = Mathf.Lerp(spineWeight,
+                inCar ? carSpineAimWeight : ladderSpineAimWeight, bodyActionBlend);
+            chestWeight = Mathf.Lerp(chestWeight,
+                inCar ? carChestAimWeight : ladderChestAimWeight, bodyActionBlend);
+            upperChestWeight = Mathf.Lerp(upperChestWeight,
+                inCar ? carUpperChestAimWeight : ladderUpperChestAimWeight, bodyActionBlend);
+            neckWeight = Mathf.Lerp(neckWeight,
+                inCar ? carNeckAimWeight : ladderNeckAimWeight, bodyActionBlend);
+        }
 
         // A CEILING ON THE TOTAL, not a normalisation, and the difference is the whole
         // reason this is safe to add.
@@ -893,6 +991,29 @@ public class PlayerAnimator : MonoBehaviour
         // on the way -- so a walk cycle that swings the pelvis had the torso
         // counter-swinging against it every step.
         float rawYaw = -_facingOffset;
+
+        // AND ON A LADDER OR IN A CAR IT COMES FROM THE OTHER SIDE ENTIRELY.
+        //
+        // Everything above is about undoing a turn the legs made. Pinned to a rung or a
+        // seat the legs make none -- _facingOffset is lerped to zero on the way in and
+        // held there -- so this was zero the whole time and the upper body simply never
+        // turned, however far round the player looked. The view swung, the character did
+        // not move a muscle, and from outside it read as a head on a post.
+        //
+        // The angle that exists there is the opposite measurement: how far the VIEW has
+        // been turned away from a body that was not allowed to come with it, which is
+        // what PlayerLook.BodyLockedYaw is. Positive there is looking right, and
+        // positive here turns the torso right, so it goes in as it comes -- unnegated,
+        // unlike the facing offset, because this one is not a turn being cancelled but a
+        // turn being made.
+        //
+        // Blended between the two rather than picked, on the same figure as the weights,
+        // so the changeover cannot land on a different frame than they do. The two agree
+        // at the ends anyway -- entering, the facing offset has already been taken to
+        // zero and the locked yaw has not started accumulating yet -- which is what
+        // keeps the crossover invisible rather than merely brief.
+        if (bodyActionBlend > 0.0001f)
+            rawYaw = Mathf.LerpAngle(rawYaw, look.BodyLockedYaw, bodyActionBlend);
 
         // Pulled toward zero rather than cut at the threshold, so the body does not
         // jump the width of the deadzone the moment it starts following.

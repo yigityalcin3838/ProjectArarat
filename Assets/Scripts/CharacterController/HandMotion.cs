@@ -602,6 +602,17 @@ public class HandMotion : MonoBehaviour
 
     public float ImpulseShakeRoll => _stepShakeRoll;
 
+    // The bob's yaw and roll, for the item to apply at its own pivot. Pitch is not here --
+    // it stays on the hold.
+    //
+    // WHICH IS A SPLIT DOWN THE MIDDLE OF ONE MOTION, and it is deliberate. The vertical
+    // dip runs at twice the rate and is the arms carrying the weapon up and down, so it
+    // belongs where the arms are. The yaw and roll run at stride rate and are the weapon
+    // rocking in the grip as the body rolls from foot to foot -- and rocking about the
+    // hold point swings the whole thing sideways through an arc instead, which is the
+    // thing the pivot exists to avoid.
+    public Vector3 BobYawRoll => new Vector3(0f, _currentBobRotation.y, _currentBobRotation.z);
+
     // The turn's lag, in pitch and yaw, for the item to apply at its own pivot.
     //
     // X is pitch and Y is yaw, matching the order they are summed into a rotation -- and
@@ -975,7 +986,7 @@ public class HandMotion : MonoBehaviour
         // behind, which is a small sprung displacement rather than a shake.
         transform.localRotation = _baseLocalRotation * Quaternion.Euler(
             _currentBobRotation.x + _currentLookSway.x + look.FreeAim.x + _currentBreathRotation.x,
-            _currentBobRotation.y + _currentLookSway.y + look.FreeAim.y,
-            _currentBobRotation.z + _currentTilt + _currentBreathRotation.y);
+            _currentLookSway.y + look.FreeAim.y,
+            _currentTilt + _currentBreathRotation.y);
     }
 }
