@@ -190,14 +190,31 @@ Material:
     - _NumLayersCount: 1
     - _OcclusionStrength: 1
     - _Parallax: 0.005
-    - _ParallaxScale0: 0.0005
-    - _ParallaxScale1: 0.0005
-    - _ParallaxScale2: 0.000175
-    - _ParallaxScale3: 0.00015
-    - _ParallaxScale4: 0.00015
+    - _ParallaxCavity: 0.735
+    - _ParallaxContrast: 3.5
+    - _ParallaxContrast0: 3.75
+    - _ParallaxContrast1: 1
+    - _ParallaxContrast2: 1.15
+    - _ParallaxContrast3: 1.25
+    - _ParallaxContrast4: 1
+    - _ParallaxContrast5: 1
+    - _ParallaxContrast6: 1
+    - _ParallaxContrast7: 1
+    - _ParallaxFadeDistance: 50
+    - _ParallaxMaxSteps: 10
+    - _ParallaxMinSteps: 15
+    - _ParallaxRaise: 1
+    - _ParallaxScale0: 0.0135
+    - _ParallaxScale1: 0
+    - _ParallaxScale2: 0.035
+    - _ParallaxScale3: 0.07
+    - _ParallaxScale4: 0
     - _ParallaxScale5: 0
     - _ParallaxScale6: 0
     - _ParallaxScale7: 0
+    - _ParallaxShadowHardness: 1
+    - _ParallaxShadowSteps: 2
+    - _ParallaxShadowStrength: 0
     - _QueueOffset: 0
     - _ReceiveShadows: 1
     - _Smoothness: 0.5
@@ -220,7 +237,7 @@ Material:
     - _StochasticScale: 1
     - _StochasticTilingEnabled: 1
     - _Surface: 0
-    - _VariationScale0: 0.75
+    - _VariationScale0: 0.59
     - _VariationScale1: 0.2
     - _VariationScale2: 1.67
     - _VariationScale3: 1.67
@@ -240,8 +257,8 @@ Material:
     - _Color3: {r: 1, g: 1, b: 1, a: 1}
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
     - _SpecColor: {r: 0.19999996, g: 0.19999996, b: 0.19999996, a: 1}
-    - _TintColor0: {r: 0.6780788, g: 0.6886792, b: 0.5035155, a: 1}
-    - _TintColor0B: {r: 0.754717, g: 0.754717, b: 0.754717, a: 1}
+    - _TintColor0: {r: 1, g: 1, b: 1, a: 1}
+    - _TintColor0B: {r: 0.9860457, g: 1, b: 0.8632076, a: 1}
     - _TintColor1: {r: 1, g: 1, b: 1, a: 1}
     - _TintColor1B: {r: 1, g: 1, b: 1, a: 1}
     - _TintColor2: {r: 0.7830189, g: 0.7830189, b: 0.7830189, a: 1}

@@ -515,19 +515,106 @@ void SplatmapFragment(
     // layer -- rather than the sharp height-based transition.
     half alpha = dot(splatControl, 1.0h);
 
-    // Parallax: shift the albedo/normal sampling UVs per layer using that
-    // layer's Mask Map height (already sampled above by ComputeMasks), so a
-    // Terrain Layer with a taller Height value visually bulges toward the
-    // camera. The un-shifted IN.uvSplat01/23 are used everywhere else
-    // (blend weights, mask lookups) so the blend boundary itself doesn't
-    // swim with camera movement -- only the surface detail parallaxes.
-    half3 viewDirWS = GetWorldSpaceNormalizeViewDir(IN.positionWS);
+    // Parallax: march the blended height of all four layers along the view ray
+    // ONCE, and shift every layer by the crossing it finds, so a Terrain Layer
+    // with a taller Height value has real relief rather than a slid texture.
+    // The un-shifted IN.uvSplat01/23 are used everywhere else (blend weights,
+    // mask lookups) so the blend boundary itself doesn't swim with camera
+    // movement -- only the surface detail parallaxes.
+    //
+    // The view direction is permuted into the surface's tangent frame the way
+    // EnvironmentPBR does it for its Y projection, and for the same reason it
+    // can: a Terrain's UV is world X/Z, so the frame is (x, z) across and world
+    // Y up.
+    //
+    // The march reads the Mask Maps themselves rather than masks[].b: a march
+    // needs the height at every step it takes, and masks[] is one value, already
+    // read at the un-shifted UV and already through its remap.
     float4 uvSplat01Parallax = IN.uvSplat01;
     float4 uvSplat23Parallax = IN.uvSplat23;
-    uvSplat01Parallax.xy += TerrainParallaxOffset(masks[0].b, LAYER_PARALLAX_0, viewDirWS) * _Splat0_ST.xy;
-    uvSplat01Parallax.zw += TerrainParallaxOffset(masks[1].b, LAYER_PARALLAX_1, viewDirWS) * _Splat1_ST.xy;
-    uvSplat23Parallax.xy += TerrainParallaxOffset(masks[2].b, LAYER_PARALLAX_2, viewDirWS) * _Splat2_ST.xy;
-    uvSplat23Parallax.zw += TerrainParallaxOffset(masks[3].b, LAYER_PARALLAX_3, viewDirWS) * _Splat3_ST.xy;
+
+#ifdef _MASKMAP
+    half3 viewDirWS = GetWorldSpaceNormalizeViewDir(IN.positionWS);
+    half3 viewTS = half3(viewDirWS.x, viewDirWS.z, viewDirWS.y);
+
+    // NORMALIZED, because the march wants an average and splatControl is a share.
+    //
+    // These weights do not have to sum to one. In the Add Pass they sum to however
+    // much of the pixel this pass owns, and the height blend above can take them
+    // further from one still. Fed in raw, a pixel the pass half owns would march a
+    // height field of half the amplitude and half the depth -- shallower relief on
+    // exactly the pixels where two passes meet, which is a seam. Divided through,
+    // the march sees the surface this pass draws, at full strength, and how much of
+    // the pixel that surface is worth stays alpha's business.
+    half splatSum = max(dot(splatControl, 1.0h), 1e-4h);
+    half4 marchWeights = splatControl / splatSum;
+
+    TerrainParallaxSurface surface;
+    surface.uvSplat01 = IN.uvSplat01;
+    surface.uvSplat23 = IN.uvSplat23;
+    surface.dSplat01dx = ddx(IN.uvSplat01);
+    surface.dSplat01dy = ddy(IN.uvSplat01);
+    surface.dSplat23dx = ddx(IN.uvSplat23);
+    surface.dSplat23dy = ddy(IN.uvSplat23);
+    surface.splatControl = marchWeights;
+    surface.hasMask = hasMask;
+    surface.contrast = half4(LAYER_CONTRAST_0, LAYER_CONTRAST_1, LAYER_CONTRAST_2, LAYER_CONTRAST_3);
+
+    // THE FOUR SCALES BECOME ONE DEPTH, and this is where that has to happen,
+    // because it is the only place that knows both the scales and the tilings.
+    //
+    // Each Parallax Scale is a fraction of ITS OWN layer's tile, which is the
+    // reading that makes it tunable per layer -- a tenth of a gravel tile means
+    // the same visual depth whatever the gravel is tiled at. The march is in main
+    // terrain UV, so each one is divided by its layer's tiling to get there, and
+    // the four are mixed by the same splat weights that mix the heights. Where one
+    // layer covers the pixel its own figure applies unchanged; across a boundary
+    // the depth crosses over as smoothly as the surface does.
+    // The tiling taken as the mean of its two axes rather than off x alone, which is the
+    // one place the four layers were not being treated identically -- a layer tiled
+    // unevenly had its depth set by its horizontal tiling and its vertical ignored. Even
+    // tiling is the normal case and there the mean is x, so this changes nothing for
+    // anyone who has not set one unevenly, and stops being silently wrong for anyone who
+    // has. A single scalar cannot carry an uneven tiling properly; the mean is the
+    // closest one number gets.
+    half4 layerTiling = half4(
+        (_Splat0_ST.x + _Splat0_ST.y) * 0.5h,
+        (_Splat1_ST.x + _Splat1_ST.y) * 0.5h,
+        (_Splat2_ST.x + _Splat2_ST.y) * 0.5h,
+        (_Splat3_ST.x + _Splat3_ST.y) * 0.5h);
+
+    half4 depthPerLayer = half4(
+        LAYER_PARALLAX_0, LAYER_PARALLAX_1, LAYER_PARALLAX_2, LAYER_PARALLAX_3)
+        / max(layerTiling, 1e-4h);
+
+    // FADED OUT WITH DISTANCE, which a terrain needs and a prop does not.
+    //
+    // One draw covers everything from underfoot to the horizon. Out there the relief is
+    // smaller than a pixel, so the march is paying eighty taps to produce sub-pixel
+    // detail that can only alias -- it costs the most exactly where it shows the least.
+    // Taken to nothing over the last quarter of the fade distance so there is no line on
+    // the ground where it stops, and at zero depth the march returns on its first
+    // instruction.
+    float parallaxDistance = length(GetCurrentViewPosition() - IN.positionWS);
+    half distanceFade = (half)saturate((_ParallaxFadeDistance - parallaxDistance)
+                                       / max(_ParallaxFadeDistance * 0.25, 1e-4));
+
+    half depthMain = dot(marchWeights, depthPerLayer) * distanceFade;
+
+    float crossingDepth;
+    float2 parallaxMain = TerrainParallaxOffsetMain(surface, viewTS, depthMain, crossingDepth);
+
+    // One displacement, worn by all four. The conversion back out of main UV is
+    // the same multiply the height lookups used going in.
+    uvSplat01Parallax.xy += parallaxMain * _Splat0_ST.xy;
+    uvSplat01Parallax.zw += parallaxMain * _Splat1_ST.xy;
+    uvSplat23Parallax.xy += parallaxMain * _Splat2_ST.xy;
+    uvSplat23Parallax.zw += parallaxMain * _Splat3_ST.xy;
+
+    // Faded with the same figure as the depth, so the relief and its shading stop
+    // together rather than leaving a ring of shading around a terrain that has gone flat.
+    half parallaxShade = lerp(1.0h, TerrainParallaxCavity(crossingDepth), distanceFade);
+#endif
 
     half weight;
     half4 mixedDiffuse;
@@ -550,6 +637,24 @@ void SplatmapFragment(
     half4 maskOcclusion = half4(masks[0].g, masks[1].g, masks[2].g, masks[3].g);
     defaultOcclusion = lerp(defaultOcclusion, maskOcclusion, hasMask);
     half occlusion = dot(splatControl, defaultOcclusion);
+
+#ifdef _MASKMAP
+    // INTO THE ALBEDO, NOT THE OCCLUSION, and that swap is the whole reason this became
+    // visible.
+    //
+    // occlusion looks like the right channel and in URP it is not: UniversalFragmentPBR
+    // hands it to GlobalIllumination and nowhere else, so it scales indirect light only.
+    // On a terrain under a sun, indirect is the small term -- the shading was being
+    // applied to a few percent of the pixel's brightness and then wondered about. Nothing
+    // was wrong with the march; it was being routed into a channel that could not show it.
+    //
+    // Darkening the albedo is an approximation and worth naming as one: it scales diffuse
+    // correctly and leaves specular alone, where a real shadow would take both. On a
+    // rough ground surface that difference is small, and doing it properly means taking
+    // over the lighting call to attenuate one light -- a lot of restated URP for a
+    // highlight nobody will miss in a pit.
+    albedo *= parallaxShade;
+#endif
 #endif
 
     InputData inputData;

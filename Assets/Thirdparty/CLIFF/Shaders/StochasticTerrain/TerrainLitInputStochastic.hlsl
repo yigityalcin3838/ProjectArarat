@@ -54,6 +54,14 @@ CBUFFER_START(_Terrain)
     half _VariationScale4, _VariationScale5, _VariationScale6, _VariationScale7;
     half _ParallaxScale0, _ParallaxScale1, _ParallaxScale2, _ParallaxScale3;
     half _ParallaxScale4, _ParallaxScale5, _ParallaxScale6, _ParallaxScale7;
+    // Shared by every layer and both passes, unlike the scales. The step count is a
+    // quality-versus-cost figure for the march, not a property of a surface, and eight
+    // of them would be eight ways to make the same terrain cost more.
+    half _ParallaxMinSteps, _ParallaxMaxSteps;
+    half _ParallaxContrast0, _ParallaxContrast1, _ParallaxContrast2, _ParallaxContrast3;
+    half _ParallaxContrast4, _ParallaxContrast5, _ParallaxContrast6, _ParallaxContrast7;
+    half _ParallaxCavity;
+    float _ParallaxFadeDistance;
     half _HeightTransition;
     half _NumLayersCount;
     float _TerrainBasemapDistance;
@@ -235,6 +243,10 @@ float _GlobalLayerCount;
     #define LAYER_PARALLAX_1    _ParallaxScale5
     #define LAYER_PARALLAX_2    _ParallaxScale6
     #define LAYER_PARALLAX_3    _ParallaxScale7
+    #define LAYER_CONTRAST_0    _ParallaxContrast4
+    #define LAYER_CONTRAST_1    _ParallaxContrast5
+    #define LAYER_CONTRAST_2    _ParallaxContrast6
+    #define LAYER_CONTRAST_3    _ParallaxContrast7
 #else
     #define LAYER_TINT_0        _TintColor0
     #define LAYER_TINT_1        _TintColor1
@@ -252,6 +264,10 @@ float _GlobalLayerCount;
     #define LAYER_PARALLAX_1    _ParallaxScale1
     #define LAYER_PARALLAX_2    _ParallaxScale2
     #define LAYER_PARALLAX_3    _ParallaxScale3
+    #define LAYER_CONTRAST_0    _ParallaxContrast0
+    #define LAYER_CONTRAST_1    _ParallaxContrast1
+    #define LAYER_CONTRAST_2    _ParallaxContrast2
+    #define LAYER_CONTRAST_3    _ParallaxContrast3
 #endif
 
 // The global max height and normalization sum across every layer, matching
@@ -430,7 +446,7 @@ void TerrainInstancing(inout float4 positionOS)
 }
 
 // ------------------------------------------------------------------------
-// PER-LAYER PARALLAX
+// PARALLAX OCCLUSION MAPPING, ONE MARCH FOR THE WHOLE SURFACE
 //
 // Terrain has no per-layer heightmap of its own -- each layer's Mask Map
 // already carries a height value in its Blue channel (used above for
@@ -441,17 +457,255 @@ void TerrainInstancing(inout float4 positionOS)
 // (GPU-instanced, per-pixel-normal) case, but it doesn't need one: a
 // Terrain's UV already maps 1:1 onto world X/Z, so the surface's local
 // tangent-space X/Y axes for parallax purposes just ARE world X/Z, and the
-// "normal" axis is world Y. That lets Unity's own ParallaxOffset formula
-// (Built-in's Parallax Mapping.cginc) be reused verbatim with world-space
-// view direction standing in for tangent-space view direction.
+// "normal" axis is world Y.
+//
+// ── ONE SURFACE, NOT FOUR, AND THAT IS THE POINT ────────────────────────
+//
+// This has been through two wrong shapes and the second one is the
+// instructive one.
+//
+// First it was Unity's built-in ParallaxOffset: read the height once and
+// slide the UV by height * (v.xz/v.y). That is offset-limited parallax,
+// close only for a nearly flat height field seen nearly head-on, and
+// everywhere else it slides the UV by an amount unrelated to where the
+// surface is. Raising the scale did not deepen the ground, it dissolved it.
+//
+// Then it became a proper occlusion march -- but one march PER LAYER, each
+// layer displacing its own height field independently, with the four
+// results blended afterwards by splat weight. Each march was correct in
+// isolation and the blend of them was not a surface at all. Averaging four
+// independently displaced illusions does not add up to one coherent
+// displaced surface; it averages the displacement away, which is why the
+// depth would not read no matter what the scale was set to. Most of a
+// terrain is a transition between two layers, so most of a terrain was
+// getting the averaged-away version. EnvironmentPBR has the same problem
+// between its three triplanar axes and says so in its own comment -- there
+// it is mitigated by weighting each axis by its own dominance, because
+// three projections of one texture cannot be unified. Four terrain layers
+// can be: they are four textures on ONE surface.
+//
+// So the height field is blended FIRST -- the splat-weighted mix of the
+// four layers' heights, which is the one surface the player is actually
+// looking at -- and that single field is marched once. What comes back is
+// one displacement, applied to all four layers. At a boundary the two
+// layers are displaced together, by the same amount, because they are the
+// same ground.
+//
+// The march itself is EnvironmentPBR's: step along the view ray sampling
+// the height, stop at the step that went under the surface, interpolate
+// between that step and the one before it for the crossing. It SEARCHES for
+// the surface rather than estimating it, so the answer is bounded and
+// raising the scale deepens the relief instead of scattering UVs.
+//
+// Cost is unchanged rather than improved, and it is worth being clear about
+// that: four marches of one tap each and one march of four taps are the
+// same number of taps. What changed is that they now describe one thing.
+//
+// Two things are adapted from EnvironmentPBR rather than copied, both
+// because a terrain is not a prop:
+//
+//   -- Heights are sampled with explicit gradients from the entry UVs, not
+//      at LOD 0. A prop is looked at from across a room; a terrain fills
+//      the frame from underfoot to the horizon in one draw, and marching
+//      the top mip out there is both severe aliasing and a texture cache
+//      thrashed by taps landing nowhere near each other. One footprint per
+//      pixel, held for every step of its march.
+//   -- Layers with no Mask Map contribute a flat mid height rather than
+//      whatever the fallback texture happens to hold.
 // ------------------------------------------------------------------------
 
-float2 TerrainParallaxOffset(half height, half heightScale, half3 viewDirWS)
+// Everything the march needs about this pixel, gathered once so the height
+// lookup inside the loop takes one argument that changes.
+//
+// The four sets of derivatives are not four measurements -- they are the one
+// main-space footprint seen through each layer's tiling. Passed in rather than
+// taken here because ddx/ddy must be evaluated outside any branch the march
+// might not reach.
+struct TerrainParallaxSurface
 {
-    height = height * heightScale - heightScale * 0.5h;
-    half3 v = normalize(viewDirWS);
-    v.y += 0.42h; // matches Unity's own ParallaxOffset bias, avoids blowup at grazing angles
-    return height * (v.xz / v.y);
+    float4 uvSplat01;
+    float4 uvSplat23;
+    float4 dSplat01dx;
+    float4 dSplat01dy;
+    float4 dSplat23dx;
+    float4 dSplat23dy;
+    half4  splatControl;
+    half4  hasMask;
+
+    // One per layer, resolved at the call site where the LAYER_* aliases pick the right
+    // four for this pass.
+    half4  contrast;
+};
+
+// The surface the player sees, as one height, at a displacement expressed in
+// MAIN terrain UV -- the space the four layers have in common. Each layer's own
+// tiling converts that offset into its own UV, which is the same conversion the
+// final result goes through, so what is marched and what is drawn agree.
+half TerrainBlendedHeight(TerrainParallaxSurface s, float2 offsetMain)
+{
+    // A LAYER THAT IS NOT THERE IS NOT SAMPLED, and this is where most of the march's
+    // cost went.
+    //
+    // Every tap here happens inside the loop, so one skipped layer is one tap saved per
+    // step -- up to twenty. Most of a terrain is covered by one layer, or two where they
+    // meet, so two of these four contribute nothing to the dot product below on the great
+    // majority of pixels. They were being fetched anyway and multiplied by zero.
+    //
+    // Branched rather than masked because a mask does not stop a fetch. The branch is
+    // divergent -- splat weights are per pixel -- but coherent, which is what matters:
+    // neighbouring pixels are on the same layers, so a wave almost always agrees, and
+    // where it does not it pays what it used to pay anyway.
+    //
+    // Safe to skip because the dot product weights them by the same figure the branch
+    // tests. A layer at zero weight contributes zero whatever height is read for it, so
+    // this changes no pixel's value -- it only stops paying for the ones it discards.
+    //
+    // 0.002 rather than 0, because a weight that small cannot move the blended height by
+    // enough to change which step the ray crosses on.
+    half4 heights = 0.5h;
+
+    [branch] if (s.splatControl.x > 0.002h)
+        heights.x = SAMPLE_TEXTURE2D_GRAD(_Mask0, sampler_Mask0,
+            s.uvSplat01.xy + offsetMain * _Splat0_ST.xy, s.dSplat01dx.xy, s.dSplat01dy.xy).b;
+
+    [branch] if (s.splatControl.y > 0.002h)
+        heights.y = SAMPLE_TEXTURE2D_GRAD(_Mask1, sampler_Mask0,
+            s.uvSplat01.zw + offsetMain * _Splat1_ST.xy, s.dSplat01dx.zw, s.dSplat01dy.zw).b;
+
+    [branch] if (s.splatControl.z > 0.002h)
+        heights.z = SAMPLE_TEXTURE2D_GRAD(_Mask2, sampler_Mask0,
+            s.uvSplat23.xy + offsetMain * _Splat2_ST.xy, s.dSplat23dx.xy, s.dSplat23dy.xy).b;
+
+    [branch] if (s.splatControl.w > 0.002h)
+        heights.w = SAMPLE_TEXTURE2D_GRAD(_Mask3, sampler_Mask0,
+            s.uvSplat23.zw + offsetMain * _Splat3_ST.xy, s.dSplat23dx.zw, s.dSplat23dy.zw).b;
+
+    // A layer with no Mask Map is flat, not whatever its fallback texture holds.
+    heights = lerp(0.5h, heights, s.hasMask);
+
+    // Stretched about the middle, PER LAYER, before they are mixed.
+    //
+    // A Mask Map's Blue channel is authored as a blend height, not as relief, and on
+    // most of them it sits in a narrow band around the middle -- a field that tells the
+    // height blend which stone is on top perfectly well and has almost no range for a
+    // ray to intersect. No depth setting can find relief that is not in the texture, so
+    // the honest place to add it is here, before the field is used for anything.
+    //
+    // Per layer rather than once on the mix, because how much range a mask map wastes is
+    // a fact about that texture: a gravel map authored with real relief needs none of
+    // this and a cliff map packed into a tenth of the range needs a lot. One figure for
+    // all four meant the flattest layer set it and the rest were over-stretched into
+    // hard edges.
+    //
+    // It costs a half4 multiply-add where it used to cost a scalar one, and no taps at
+    // all -- which is the only reason it can be per layer. Applied BEFORE the mix for the
+    // same reason: after it, there is only one number left and nothing to tell apart.
+    //
+    // About the middle rather than from zero, so raising it deepens the hollows and
+    // raises the bumps together instead of sinking the whole layer.
+    heights = saturate((heights - 0.5h) * s.contrast + 0.5h);
+
+    return dot(s.splatControl, heights);
+}
+
+// Returns the displacement to add to the MAIN terrain UV. Callers convert it
+// into each layer's UV with that layer's own tiling.
+//
+// depthMain is that same main-UV distance: how far the surface may be pushed.
+// The caller works it out from the per-layer Parallax Scales, which are each a
+// fraction of THEIR OWN tile, so the conversion has to happen where the tilings
+// are -- see the call site.
+float2 TerrainParallaxOffsetMain(TerrainParallaxSurface s, half3 viewTS, half depthMain,
+                                 out float crossingDepth)
+{
+    crossingDepth = 0.0;
+
+    if (depthMain <= 0.0h)
+        return float2(0.0, 0.0);
+
+    // More steps the more grazing the view, because that is where a march has
+    // the furthest to travel and where too few steps show up as banding.
+    float numSteps = lerp(_ParallaxMaxSteps, _ParallaxMinSteps, saturate(abs(viewTS.z)));
+    float stepSize = 1.0 / numSteps;
+
+    // The floor on |viewTS.z| is what the old formula's 0.42 bias was reaching
+    // for, and it is honest here in a way it was not there: it caps how far one
+    // step may travel rather than quietly bending the whole offset.
+    float2 uvDelta = (viewTS.xy / max(abs(viewTS.z), 0.05)) * depthMain / numSteps;
+
+    // Entered at the geometric surface, which is the top of the height slab: the
+    // tall parts sit on the mesh and everything lower is pushed away from the eye,
+    // so the relief reads as depth carved into the ground.
+    //
+    // There was briefly a raise here that moved the entry up the slab, pinning the
+    // low parts instead so the tall ones displaced toward the eye and the same
+    // height map read as stones standing on the ground. It is gone. Worth knowing
+    // that it is only ever a choice of where zero is -- parallax cannot raise
+    // anything, since it has no way to cover a pixel the geometry does not already
+    // cover, and the relief between any two heights is identical either way.
+    float2 currentOffset = float2(0.0, 0.0);
+    float currentDepth = 0.0;
+    float currentHeight = 1.0 - TerrainBlendedHeight(s, currentOffset);
+
+    float2 prevOffset = currentOffset;
+    float prevHeight = currentHeight;
+    float prevDepth = currentDepth;
+
+    int maxIterations = (int)_ParallaxMaxSteps;
+    [loop]
+    for (int i = 0; i < maxIterations; i++)
+    {
+        if (currentDepth >= currentHeight || i >= (int)numSteps)
+            break;
+
+        prevOffset = currentOffset;
+        prevHeight = currentHeight;
+        prevDepth = currentDepth;
+
+        currentOffset -= uvDelta;
+        currentHeight = 1.0 - TerrainBlendedHeight(s, currentOffset);
+        currentDepth += stepSize;
+    }
+
+    // Where the ray crossed the surface, between the step that went under and
+    // the one that did not.
+    float afterDepth = currentDepth - currentHeight;
+    float beforeDepth = prevHeight - prevDepth;
+    float weight = saturate(afterDepth / max(afterDepth - beforeDepth, 1e-5));
+
+    // How far down the slab that crossing was. Handed back rather than recovered
+    // afterwards with another height lookup, because the march already knows it and
+    // a second lookup would be a second answer to the same question.
+    crossingDepth = lerp(currentDepth, prevDepth, weight);
+
+    return lerp(currentOffset, prevOffset, weight);
+}
+
+// How far down the relief the visible point sits, as a darkening in 0..1.
+//
+// ── THE ONE THAT PAYS FOR ITSELF ────────────────────────────────────────────────────
+//
+// There was a directional self-shadow here as well -- a second march from the crossing
+// toward the light, looking for blockers. It looked correct and it was removed for what
+// it cost: up to twelve steps of four taps each, on top of a view march already paying
+// twenty of four, for a cue that only shows where the sun happens not to reach. At noon
+// it darkened almost nothing and it charged for the march regardless.
+//
+// This is what the eye actually reads as depth in a rocky surface anyway, and it is
+// closer to cavity occlusion than to shadow: the bottom of a pit is darker than its rim
+// whatever the light is doing, because less of the sky reaches it. It holds at every sun
+// angle and at night.
+//
+// And the march has already measured it. crossingDepth is how far into the slab the
+// visible surface was found -- 0 on the parts standing proud, 1 at the bottom of the
+// deepest hole. Not a true neighbourhood occlusion, but on a tiling detail texture,
+// where the slab IS the range of the relief, absolute depth and cavity depth are the
+// same measurement.
+//
+// No taps, no march, one multiply on a number that was already in hand.
+half TerrainParallaxCavity(float crossingDepth)
+{
+    return 1.0h - saturate((half)crossingDepth) * _ParallaxCavity;
 }
 
 #endif

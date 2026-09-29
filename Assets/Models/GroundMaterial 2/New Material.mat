@@ -25,7 +25,6 @@ Material:
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
   m_ValidKeywords:
-  - _NOTILE_ON
   - _PARALLAX_ON
   m_InvalidKeywords:
   - _GROUNDBLEND_ON
@@ -152,16 +151,18 @@ Material:
     - _GroundBlendHeight: 0.2
     - _GroundLevel: 0
     - _Metallic: 0
-    - _NormalStrength: 1
+    - _NormalStrength: 0.325
     - _OcclusionStrength: 1
     - _Parallax: 0.005
+    - _ParallaxCavity: 0
+    - _ParallaxContrast: 3.25
     - _ParallaxEdgeFadeRange: 0.3
     - _ParallaxLodFadeRange: 2
     - _ParallaxLodThreshold: 1
-    - _ParallaxMaxSteps: 20
-    - _ParallaxMinSteps: 20
+    - _ParallaxMaxSteps: 64
+    - _ParallaxMinSteps: 32
     - _ParallaxShadowStrength: 1
-    - _ParallaxStrength: 0.0175
+    - _ParallaxStrength: 0.0135
     - _QueueOffset: 0
     - _ReceiveShadows: 1
     - _Roughness: 1
@@ -173,7 +174,7 @@ Material:
     - _Surface: 0
     - _Tiling: 1
     - _UseGroundBlend: 1
-    - _UseNoTile: 1
+    - _UseNoTile: 0
     - _UseOffsetLimiting: 0
     - _UseParallax: 1
     - _UseParallaxShadow: 0

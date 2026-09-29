@@ -136,13 +136,13 @@ MonoBehaviour:
   active: 1
   intensity:
     m_OverrideState: 1
-    m_Value: 0.05
+    m_Value: 0.115
   shaftColor:
     m_OverrideState: 1
-    m_Value: {r: 1, g: 1, b: 1, a: 1}
+    m_Value: {r: 1, g: 0.82818514, b: 0.7028302, a: 1}
   density:
     m_OverrideState: 1
-    m_Value: 0.1
+    m_Value: 0.15
   forwardScattering:
     m_OverrideState: 1
     m_Value: 0.75
@@ -260,7 +260,7 @@ MonoBehaviour:
     m_Value: {r: 0.5330188, g: 0.7305561, b: 1, a: 1}
   density:
     m_OverrideState: 1
-    m_Value: 0.0015
+    m_Value: 0.0025
   heightFalloff:
     m_OverrideState: 1
     m_Value: 0.01
@@ -421,7 +421,7 @@ MonoBehaviour:
   active: 1
   distance:
     m_OverrideState: 1
-    m_Value: 0
+    m_Value: 0.075
   cropToFit:
     m_OverrideState: 1
     m_Value: 1
@@ -554,7 +554,7 @@ MonoBehaviour:
     m_Value: 1
   intensity:
     m_OverrideState: 1
-    m_Value: 0
+    m_Value: 0.5
   response:
     m_OverrideState: 1
     m_Value: 0.035
@@ -604,7 +604,7 @@ MonoBehaviour:
     m_Value: 0
   saturation:
     m_OverrideState: 1
-    m_Value: 15
+    m_Value: 25
 --- !u!114 &5530443416288443775
 MonoBehaviour:
   m_ObjectHideFlags: 3
@@ -696,13 +696,13 @@ MonoBehaviour:
   active: 1
   shadows:
     m_OverrideState: 1
-    m_Value: {x: 1, y: 1, z: 1, w: 0}
+    m_Value: {x: 1, y: 1, z: 1, w: -0.1495327}
   midtones:
     m_OverrideState: 1
     m_Value: {x: 1, y: 1, z: 1, w: 0}
   highlights:
     m_OverrideState: 1
-    m_Value: {x: 1, y: 1, z: 1, w: 0}
+    m_Value: {x: 1, y: 1, z: 1, w: 0.07476635}
   shadowsStart:
     m_OverrideState: 1
     m_Value: 0

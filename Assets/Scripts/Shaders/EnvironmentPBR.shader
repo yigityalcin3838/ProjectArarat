@@ -22,6 +22,8 @@ Shader "Custom/EnvironmentPBR"
         _ParallaxStrength("Parallax Strength", Range(0, 0.1)) = 0.02
         _ParallaxMinSteps("Parallax Min Steps", Range(1, 32)) = 4
         _ParallaxMaxSteps("Parallax Max Steps", Range(1, 64)) = 20
+        _ParallaxContrast("Parallax Height Contrast", Range(1, 6)) = 1.0
+        _ParallaxCavity("Parallax Cavity Darkening", Range(0, 1)) = 0.6
 
         _Tiling("Tiling", Float) = 1
         [Toggle(_NOTILE_ON)] _UseNoTile("Break Up Tiling (Stochastic Sampling)", Float) = 1
@@ -131,6 +133,8 @@ Shader "Custom/EnvironmentPBR"
                 float _ParallaxStrength;
                 float _ParallaxMinSteps;
                 float _ParallaxMaxSteps;
+                half  _ParallaxContrast;
+                half  _ParallaxCavity;
                 float _Tiling;
                 float _BlendSharpness;
             CBUFFER_END
@@ -248,7 +252,28 @@ Shader "Custom/EnvironmentPBR"
             // Scaling each axis's offset by its own dominance means axes only push hard
             // where they're already the main contributor, so conflicting displacement from
             // a blended second/third axis is proportionally weaker instead of full-strength.
-            float2 ParallaxOffset(float2 uv, float3 viewDirTS, float axisWeight)
+            // The height the march reads, stretched about its middle.
+            //
+            // A height map authored for blending rather than for relief sits in a narrow
+            // band around the middle, and a ray has almost nothing to intersect there.
+            // No strength setting can find relief that is not in the texture, so it is
+            // added here, once, in the one place every step of every march goes through.
+            //
+            // About the middle rather than from zero, so raising it deepens the hollows
+            // and raises the bumps together instead of sinking the whole surface.
+            float SampleParallaxHeight(float2 uv)
+            {
+                float height = SAMPLE_TEXTURE2D_LOD(_HeightMap, sampler_HeightMap, uv, 0).r;
+
+                return saturate((height - 0.5) * _ParallaxContrast + 0.5);
+            }
+
+            // crossingDepth: how far into the height slab the visible surface was found --
+            // 0 on the parts standing proud, 1 at the bottom of the deepest hollow. Handed
+            // back because the march is the only thing that knows it and it is what the
+            // cavity darkening is made of; recovering it afterwards would mean a second
+            // lookup and a second answer to the same question.
+            float2 ParallaxOffset(float2 uv, float3 viewDirTS, float axisWeight, out float crossingDepth)
             {
                 float numSteps = lerp(_ParallaxMaxSteps, _ParallaxMinSteps, saturate(abs(viewDirTS.z)));
                 float stepSize = 1.0 / numSteps;
@@ -257,7 +282,7 @@ Shader "Custom/EnvironmentPBR"
 
                 float2 currentUV = uv;
                 float currentDepth = 0.0;
-                float currentHeight = 1.0 - SAMPLE_TEXTURE2D_LOD(_HeightMap, sampler_HeightMap, currentUV, 0).r;
+                float currentHeight = 1.0 - SampleParallaxHeight(currentUV);
 
                 float2 prevUV = currentUV;
                 float prevHeight = currentHeight;
@@ -275,15 +300,17 @@ Shader "Custom/EnvironmentPBR"
                     prevDepth = currentDepth;
 
                     currentUV -= uvDelta;
-                    currentHeight = 1.0 - SAMPLE_TEXTURE2D_LOD(_HeightMap, sampler_HeightMap, currentUV, 0).r;
+                    currentHeight = 1.0 - SampleParallaxHeight(currentUV);
                     currentDepth += stepSize;
                 }
 
                 float afterDepth = currentDepth - currentHeight;
                 float beforeDepth = prevHeight - prevDepth;
-                float weight = afterDepth / max(afterDepth - beforeDepth, 1e-5);
+                float weight = saturate(afterDepth / max(afterDepth - beforeDepth, 1e-5));
 
-                return lerp(currentUV, prevUV, saturate(weight));
+                crossingDepth = lerp(currentDepth, prevDepth, weight);
+
+                return lerp(currentUV, prevUV, weight);
             }
 
             // ---- Per-axis channel sample -------------------------------------------------
@@ -297,6 +324,11 @@ Shader "Custom/EnvironmentPBR"
                 half  metallic;
                 half  roughness;
                 half  ao;
+
+                // How far down the relief this axis found the surface, 0..1. Blended with
+                // the axis weights like everything else here and turned into a darkening
+                // once, after the blend.
+                half  cavityDepth;
             };
 
             AxisSample SampleAxis(float2 uv, float3 viewDirTS, float axisWeight)
@@ -304,7 +336,9 @@ Shader "Custom/EnvironmentPBR"
                 AxisSample s = (AxisSample)0;
 
                 #if defined(_PARALLAX_ON)
-                    uv = ParallaxOffset(uv, viewDirTS, axisWeight);
+                    float crossingDepth;
+                    uv = ParallaxOffset(uv, viewDirTS, axisWeight, crossingDepth);
+                    s.cavityDepth = (half)crossingDepth;
                 #endif
 
                 #if defined(_NOTILE_ON)
@@ -348,6 +382,39 @@ Shader "Custom/EnvironmentPBR"
                 AxisSample sz = SampleAxis(uvZ, viewTSZ, blendWeights.z);
 
                 half3 albedo = sx.albedo * blendWeights.x + sy.albedo * blendWeights.y + sz.albedo * blendWeights.z;
+
+                #if defined(_PARALLAX_ON)
+                    // ── THE DEPTH DARKENING, AND WHY IT IS ON THE ALBEDO ────────────────
+                    //
+                    // A parallax surface with no shading of its own reads as a texture
+                    // that slides, however deep the march goes, because sliding is the
+                    // only cue it gives. What tells the eye a hollow is a hollow is that
+                    // the inside of it is darker than the lip beside it -- less of the sky
+                    // reaches the bottom of a pit, whatever the light is doing.
+                    //
+                    // The march already measured exactly that and used to throw it away.
+                    // crossingDepth is how far into the slab the visible point sits, so
+                    // this costs no taps and no second march: one multiply on a number
+                    // that was already in hand.
+                    //
+                    // NOT INTO THE AO CHANNEL, which is where this belongs by name and
+                    // does not work. URP hands occlusion to GlobalIllumination and nowhere
+                    // else, so it scales indirect light only -- under a sun, indirect is
+                    // the small term and the shading is applied to a few percent of the
+                    // pixel. It is an approximation on the albedo instead: diffuse scales
+                    // correctly, specular is left alone where a real occlusion would take
+                    // both, and on a rough surface that difference is not worth taking
+                    // over the lighting call for.
+                    //
+                    // Blended across the three axes before it is applied, so a surface
+                    // facing two projections gets one darkening rather than a product of
+                    // two partial ones.
+                    half cavityDepth = sx.cavityDepth * blendWeights.x
+                                     + sy.cavityDepth * blendWeights.y
+                                     + sz.cavityDepth * blendWeights.z;
+
+                    albedo *= 1.0h - saturate(cavityDepth) * _ParallaxCavity;
+                #endif
                 half metallicSample = sx.metallic * blendWeights.x + sy.metallic * blendWeights.y + sz.metallic * blendWeights.z;
                 half roughnessSample = sx.roughness * blendWeights.x + sy.roughness * blendWeights.y + sz.roughness * blendWeights.z;
                 half aoSample = sx.ao * blendWeights.x + sy.ao * blendWeights.y + sz.ao * blendWeights.z;

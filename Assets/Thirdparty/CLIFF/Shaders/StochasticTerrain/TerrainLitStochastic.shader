@@ -97,6 +97,20 @@ Shader "Custom/URP/Terrain/Lit (Stochastic)"
         _ParallaxScale5 ("Parallax Scale 5", Range(0, 0.1)) = 0.0
         _ParallaxScale6 ("Parallax Scale 6", Range(0, 0.1)) = 0.0
         _ParallaxScale7 ("Parallax Scale 7", Range(0, 0.1)) = 0.0
+
+        _ParallaxMinSteps ("Parallax Min Steps", Range(1, 32)) = 4
+        _ParallaxMaxSteps ("Parallax Max Steps", Range(1, 64)) = 20
+        _ParallaxContrast0 ("Parallax Contrast 0", Range(1, 6)) = 1.0
+        _ParallaxContrast1 ("Parallax Contrast 1", Range(1, 6)) = 1.0
+        _ParallaxContrast2 ("Parallax Contrast 2", Range(1, 6)) = 1.0
+        _ParallaxContrast3 ("Parallax Contrast 3", Range(1, 6)) = 1.0
+        _ParallaxContrast4 ("Parallax Contrast 4", Range(1, 6)) = 1.0
+        _ParallaxContrast5 ("Parallax Contrast 5", Range(1, 6)) = 1.0
+        _ParallaxContrast6 ("Parallax Contrast 6", Range(1, 6)) = 1.0
+        _ParallaxContrast7 ("Parallax Contrast 7", Range(1, 6)) = 1.0
+
+        _ParallaxCavity ("Parallax Cavity Darkening", Range(0, 1)) = 0.6
+        _ParallaxFadeDistance ("Parallax Fade Distance", Range(5, 500)) = 60.0
     }
 
     HLSLINCLUDE

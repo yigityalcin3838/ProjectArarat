@@ -16,6 +16,7 @@
 [DefaultExecutionOrder(60)]
 public class HandMotion : MonoBehaviour
 {
+
     // One figure per stance, for whichever of the two things it is describing: how
     // far a layer moves, or how fast it settles.
     //
@@ -59,38 +60,21 @@ public class HandMotion : MonoBehaviour
     // decides, and those can differ freely without costing anything.
     [SerializeField] private PlayerLook look;
 
-    [Header("Chest Follow")]
-    // The socket on the upper chest bone. The hold follows where the animation puts
-    // it, but only slowly -- a low-pass on the skeleton rather than a hard mount to
-    // it. The same arrangement PlayerLook uses to follow the head, and for the same
-    // reason: a shoulder rolling into a turn, a body leaning into a car, the drop of
-    // a crouch are all already in the clips, and following the bone is how that
-    // reaches the hands without anyone restating it in code. The clips also carry
-    // per-frame stride jitter, which is what the damping is for -- the two live at
-    // different frequencies, so one filter separates them.
+    // THE CHEST FOLLOW IS GONE, and the reason is worth keeping: it was the second of
+    // two filters on one signal.
     //
-    // The upper chest rather than the hands themselves. What is wanted is where the
-    // weapon is being carried from, and that is the torso the arms hang off; the hand
-    // bones are already committed to gripping the model and following them would
-    // simply restate the item's own animation.
+    // It trailed the upper chest bone through its own smoothed filter so the skeleton's
+    // breathing, its shoulder roll and the drop of a crouch reached whatever was being
+    // held. All of that still arrives -- the hold hangs off the camera pivot and the
+    // pivot follows the skeleton itself -- so this was re-filtering a signal that had
+    // already been filtered once, at a different smoothTime, one level up. Two
+    // first-order filters in series are not twice the filtering; they are a phase
+    // relationship nobody picked, and what it produced was a weapon reaching its stride
+    // peak on a different frame than the view did. A weapon swimming against the head
+    // rather than riding it.
     //
-    // Empty leaves the hold exactly where the scene put it.
-    [SerializeField] private Transform chestAnchor;
-
-    // Where the hold sits relative to that socket is the scene's to decide: the
-    // offset is measured once at startup from wherever the hold has been dragged to,
-    // so it can be placed by eye in the viewport rather than typed in. Edit it in
-    // Edit mode -- nudging it mid-play does nothing.
-    //
-    // 0 pins the hold to the camera rig and ignores the skeleton entirely; 1 follows
-    // the chest in full. Between the two it follows part of the way, which is the
-    // usual answer for a walk cycle with more shoulder in it than the hands want.
-    [SerializeField, Range(0f, 1f)] private float chestFollowAmount = 1f;
-
-    // Roughly how long the hold takes to catch up, in seconds. This is the whole
-    // filter: too short and the stride comes through, too long and a crouch turns
-    // into a slow sink. A few tenths is the usual band.
-    [SerializeField] private float chestFollowSmoothTime = 0.35f;
+    // PlayerLook's follow is now the only one, and it tracks the NECK rather than the
+    // head socket. See neckAnchor there.
 
     [Header("Bob")]
     // Metres and degrees at a walk. Roll carries the most of it: a swinging arm
@@ -101,6 +85,168 @@ public class HandMotion : MonoBehaviour
     [SerializeField] private float bobPitchAmount = 3f;
     [SerializeField] private float bobYawAmount = 4f;
     [SerializeField] private float bobRollAmount = 6f;
+
+    [Header("Shouldering")]
+    // The weapon being re-settled against the shoulder. Fired whenever the way the
+    // character is carrying itself changes: dropping into a crouch or standing back up,
+    // raising or lowering the sights, breaking into a run or falling out of one -- and by
+    // the held item when it comes out of its walking carry.
+    //
+    // Also at the END of a draw and the END of a reload, both halves, when the clip has
+    // stopped moving the weapon and the hands actually have it. During either it would be a
+    // second opinion about where the weapon is, which is why an earlier attempt at firing
+    // only the view's half on those two read as the camera twitching for no visible cause.
+    // The end of them is not that moment: nothing is animating any more.
+    //
+    // Not on an item swap. A swap has no single instant to answer -- the stow and the draw
+    // are two clips with the hands empty between them -- and the draw's own landing above
+    // already covers the half that arrives.
+    //
+    // One jolt at a time: a trigger arriving before the last has settled is refused rather
+    // than restarting it. See TriggerShouldering.
+    //
+    // One motion for all of them, not a value per event. They are the same physical thing
+    // -- a grip adjusting to a body that has just moved under it -- and giving each its own
+    // would only be the same settle authored several times, drifting apart as they were
+    // tuned.
+    //
+    // ── TWO PHASES, BECAUSE THAT IS WHAT THE GESTURE IS ──────────────────────────────
+    //
+    // The weapon comes OFF the shoulder and is then seated back into it better than it was.
+    // Away, then in. That is the motion being described, and it is the reason a spring was
+    // never going to produce it: an impulse into a spring is one displacement decaying, so
+    // the return is whatever the damping leaves and the settle is a consequence rather than
+    // a beat. There is no number on a spring that means "and then press it home".
+    //
+    // These are that shape written out. Every figure is a distance, an angle or a duration,
+    // so what is on the screen is what happens.
+    //
+    //   1. AWAY   -- over shoulderingAwayTime, the weapon travels to shoulderingAwayOffset
+    //                and shoulderingAwayRotation. This is the lift off the shoulder.
+    //   2. SEAT   -- over shoulderingSeatTime it comes back, pressing PAST home by
+    //                shoulderingSeatOvershoot of the away amount halfway through, then
+    //                landing on it. That press is the weapon being set in properly.
+    //
+    // TIMED TO SPAN THE AIM TRANSITION, which is what it is for. The jolt fires when the
+    // sights start coming up or going down, and the two together are one action: the weapon
+    // is being re-seated because the pose is moving. The two times should add up to about
+    // however long the weapon's own aim transition takes -- shorter and the settle finishes
+    // while the pose is still travelling, longer and it is still fidgeting after the sights
+    // have arrived.
+    [SerializeField] private Vector3 shoulderingAwayOffset = new Vector3(0f, -0.01f, 0.03f);
+    [SerializeField] private Vector3 shoulderingAwayRotation = new Vector3(5f, 0f, -2f);
+    [SerializeField] private float shoulderingAwayTime = 0.12f;
+    [SerializeField] private float shoulderingSeatTime = 0.22f;
+
+    // How far past home the seat presses, as a fraction of the away amount. 0 is a plain
+    // return; this is the beat that makes it read as being set in rather than let go of.
+    [SerializeField, Range(0f, 1f)] private float shoulderingSeatOvershoot = 0.4f;
+
+    // A SPRING CHASING THE TWO PHASES RATHER THAN REPLACING THEM.
+    //
+    // The phases above are what the weapon is being ASKED to do; this is how a heavy thing
+    // in two hands actually follows an instruction. On their own the phases are exact -- the
+    // weapon is wherever the timings say on the frame they say, which is why an authored
+    // gesture can read as animation rather than as mass. A spring on its own has the mass
+    // and no opinion about the gesture. The phases as a target and a spring as the follower
+    // gives both: the shape is still the one written above, and it is arrived at with
+    // weight, a little lag, and whatever overshoot the ratio allows on top of the seat's own.
+    //
+    // Frequency and damping RATIO rather than stiffness and drag, the same pair the look
+    // sway tilt uses: ratio is how bouncy, frequency is how quick, and neither disturbs the
+    // other. As stiffness and drag, changing the speed changes the bounciness the wrong way
+    // round.
+    //
+    // ZERO FREQUENCY MEANS NO SPRING -- the offsets are the phases, to the frame. A real
+    // setting rather than an off switch: a gesture timed against an aim transition wants to
+    // land when it says it lands, and a spring can only blur that.
+    //
+    // IT DOES NOT LENGTHEN THE LOCKOUT, deliberately. The spring's tail outlives the phases,
+    // and a new gesture starting during it is not a problem here the way restarting an
+    // impulse would be: this spring chases a target, so it simply starts chasing the new one
+    // from wherever it had got to. That is a handover rather than a cancellation, and it is
+    // what keeps back-to-back stance changes from being refused.
+    [SerializeField] private float shoulderingFollowFrequency = 26f;
+
+    [SerializeField, Range(0f, 2f)] private float shoulderingFollowDamping = 0.8f;
+
+    // Read off this component and applied by whatever is held, at ITS own pivot -- see
+    // ShoulderingOffset. The hold does not move.
+
+    // The view's share, FIRED WHEN THE ITEM'S IS FINISHED rather than alongside it.
+    //
+    // Which is a sequence, not a coincidence, and it is the sequence the motion has: the
+    // weapon is lifted and set in, and the head registers it once it lands. Fired together
+    // the two read as one shove with a camera wobble on it; fired after, the view answers
+    // the weapon -- the thing has been seated and the body felt it arrive.
+    //
+    // Still an impulse rather than a distance, unlike the item's phases above. PlayerLook
+    // strikes its own spring with whatever arrives, and a settle IS what the head does here,
+    // so there is nothing to author -- the figures are smaller than they look, though:
+    // divided by the square root of the spring, 0.1 is about seven millimetres.
+    //
+    // Tuned HERE rather than in PlayerLook. One motion, one
+    // place to set it: split across two components the halves would be adjusted separately
+    // and end up disagreeing about a thing that only ever happens once.
+    // PlayerLook.AddShoulderingKick takes the spring as well as the impulse for exactly
+    // that reason.
+    //
+    // Far smaller figures than the hands'. A stance change moves a weapon held out at
+    // arm's length several centimetres; it moves the head a few millimetres, and matching
+    // the two reads as the camera being shoved rather than the body resettling under it.
+    [SerializeField] private Vector3 cameraShoulderingPosition = new Vector3(0f, -0.1f, 0.08f);
+    [SerializeField] private Vector3 cameraShoulderingRotation = new Vector3(-12f, 0f, 4f);
+    [SerializeField] private float cameraShoulderingSpring = 220f;
+    [SerializeField] private float cameraShoulderingDamping = 22f;
+
+    [Header("Bob (Sprint)")]
+    // The same five again, for a run, and REPLACING the ones above rather than scaling
+    // them.
+    //
+    // bobIntensity already has a sprint figure, and one figure is all it can ever be: a
+    // sprint could only be the walk's shape drawn larger or smaller. Which is the same
+    // objection StanceValues was written to answer, one level down -- a run is not a walk
+    // at a different size. The arm travels further and swings from a different place, so
+    // what wants to be mostly vertical at a walk can want to be mostly lateral at a run,
+    // and no single multiplier gets from one to the other.
+    //
+    // Five numbers say it directly. The cadence is not among them: that comes from the
+    // animator's own phase and is one decision for the whole player, so a run's bob is
+    // faster because the run is, not because anything here says so.
+    //
+    // There was briefly a mirror here instead -- one axis chosen, the other two exchanged
+    // while sprinting -- which got a vertical swing to read as lateral without a second
+    // set of figures. It is gone: exchanging axes can only ever produce the walk's own
+    // amplitudes in a different order, so the run was still the walk, just rotated.
+    [SerializeField] private float sprintBobHorizontalAmount = 0.05f;
+    [SerializeField] private float sprintBobVerticalAmount = 0.02f;
+    [SerializeField] private float sprintBobPitchAmount = 2f;
+    [SerializeField] private float sprintBobYawAmount = 7f;
+    [SerializeField] private float sprintBobRollAmount = 9f;
+
+    // How long the changeover takes, in seconds. It cannot be instant: the two sets are
+    // different motions, not one motion at two sizes, so switching between them on the
+    // frame the sprint key goes down snaps the weapon across. Eased, the two cross over,
+    // and every point in between is a swing in its own right because each channel is
+    // being interpolated on the same phase.
+    //
+    // Its own figure rather than bobSmoothing's, which is the envelope's -- that one
+    // decides how quickly the bob starts and stops, and this decides how quickly it
+    // changes shape. Sharing one meant a gait change that read well made a standing start
+    // read badly.
+    [SerializeField] private float sprintBobBlendTime = 0.25f;
+
+    // ── ONE THING TO KNOW BEFORE TUNING THESE ───────────────────────────────────────
+    //
+    // bobIntensity's SPRINT entry still multiplies everything below, because the envelope
+    // is shared by all four stances and crouch and aim have no amount set of their own to
+    // replace it with. So while a run's shape now lives here, its overall size is decided
+    // in two places, and that is one quantity with two owners -- which is the thing this
+    // file's other comments keep warning about.
+    //
+    // Set Bob Intensity -> Sprint to the same value as Walk and the figures above are the
+    // run, exactly as written. Left different, every one of them is being scaled by a
+    // number somewhere else, and tuning one will feel like the other is fighting it.
 
     // THERE WAS A SHARPNESS KNOB HERE AND IT WAS THE WRONG OPERATOR. It raised each
     // channel to a power -- |s|^k -- to gather the motion into the footfall, and the
@@ -385,20 +531,19 @@ public class HandMotion : MonoBehaviour
 
 
 
-    [Header("Peek")]
-    // Degrees at a full lean, mirrored the other way for the other side. On top of
-    // whatever the camera pivot's own peek roll already gives the weapon by carrying
-    // it -- this is the hands doing something of their own, not a restatement of
-    // that: bringing the weapon in tighter or turning it into the corner while the
-    // view leans past it.
+    // THERE IS NO SHARED PEEK ANGLE HERE ANY MORE. It was a cant in degrees, mirrored per
+    // side, applied by whatever was held at its own pivot -- one figure tuned on the
+    // character and reaching every item.
     //
-    // Unsmoothed on purpose. PeekAmount is already eased into over peekSpeed, so
-    // this follows a curve that has been shaped once rather than filtering a filter.
+    // It is gone because it made a weapon's own peek figure the second of two. An item has
+    // its own offset and its own poses, all of them facts about that model's build and
+    // parenting, and a lean is no different: how far a barrel has to come round to clear a
+    // corner is a fact about its length. With both in play, tuning the weapon's meant
+    // working against a number in another component, and there was no set of three degrees
+    // that meant the same thing on a pistol and a rifle anyway.
     //
-    // Read by the held item and applied at its own pivot, not written here -- see
-    // PeekRotation below for why.
-    [SerializeField] private Vector3 peekRotation = new Vector3(0f, 0f, -6f);
-
+    // Weapon.peekRotation is the whole of it now -- magnitude on X and Y, signed on Z,
+    // because the cant is the one axis a lean has a side on.
 
     [Header("Look Tilt")]
     // Degrees of roll into the turn -- the same bank the strafe tilt gives, off the
@@ -436,10 +581,36 @@ public class HandMotion : MonoBehaviour
     private float _currentLookTilt;
     private Vector3 _currentBreathOffset;
     private Vector2 _currentBreathRotation;
-    private Vector3 _chestReference;
-    private bool _hasChestReference;
-    private Vector3 _followedLocalPosition;
-    private Vector3 _followVelocity;
+    private Vector3 _shoulderingPositionOffset;
+    private Vector3 _shoulderingRotationOffset;
+
+    // The follow spring's state -- how far behind the phases the weapon currently is, not
+    // anything about the gesture itself. The gesture is the clock below.
+    private Vector3 _shoulderingPositionVelocity;
+    private Vector3 _shoulderingRotationVelocity;
+
+    // Seconds into the gesture, and the clock both halves are sequenced off: the item's
+    // phases are read from it, and the view's kick is fired when it crosses the end.
+    //
+    // Parked past the end at startup so nothing plays on the first frame, when every edge
+    // flag is still at its default and all three would read as having just changed.
+    private float _shoulderingTime = 999f;
+    private bool _cameraShoulderingPending;
+
+    // Set by anyone asking for a gesture and consumed at one point in the frame, so the
+    // asker's execution order cannot change where the gesture starts. See
+    // TriggerShouldering.
+    private bool _shoulderingRequested;
+
+
+    // Edge trackers for the states the gesture fires on. See UpdateShouldering.
+    private bool _wasCrouching;
+    private bool _wasAiming;
+    private bool _wasSprinting;
+    private bool _wasPeeking;
+
+    // 0 walking, 1 sprinting -- how far through the changeover between the two bob sets.
+    private float _sprintBobBlend;
     private Vector3 _currentBobOffset;
     private Vector3 _currentBobRotation;
 
@@ -477,12 +648,241 @@ public class HandMotion : MonoBehaviour
             : movement.IsSprintingStable ? values.sprint
             : values.walk;
 
-    // Public, because a jolt in the hands is not only a stance thing: a reload, a
-    // melee, a door shouldered open all want the same spring, and all of them would
-    // otherwise grow one of their own. Set rather than added, so two in quick
-    // succession read as the second replacing the first instead of stacking into a
-    // throw neither asked for -- which matters here, since crouching while already
-    // moving fires two of these a frame apart.
+    // How long the weapon's two phases take together. The end of this is also when the
+    // view's kick fires, so it is the one figure the whole sequence is hung off.
+    private float ShoulderingItemTime => Mathf.Max(shoulderingAwayTime, 0f) + Mathf.Max(shoulderingSeatTime, 0f);
+
+    // And how long before another may start: THE WEAPON'S PHASES, and nothing else.
+    //
+    // This used to add the view's settle on top, on the reasoning that the view has not even
+    // begun when the weapon finishes so the whole sequence is not over until it has. Which
+    // is true and was the wrong rule: the lockout came out at twice the length of anything
+    // visible, so a second stance change a third of a second after the weapon had plainly
+    // finished did nothing at all. That is the "sometimes it does not trigger" -- not a
+    // missed edge, a refused one.
+    //
+    // The view's spring being restarted mid-settle is not a problem worth a lockout for. It
+    // is a spring struck again, which is what every other spring in this rig does and reads
+    // as a second event rather than as a glitch.
+    private float ShoulderingLockout => ShoulderingItemTime;
+
+    // ASKS FOR A GESTURE, RATHER THAN STARTING ONE. The request is honoured in
+    // UpdateShouldering, at one fixed point in the frame.
+    //
+    // Starting it here was the other half of the trouble, and it had nothing to do with the
+    // motion. Two places ask for this -- the stance edges below, and the held item when it
+    // leaves its walking carry -- and the item runs at a different execution order, so it
+    // was setting the clock to zero BEFORE this component's own update, which then advanced
+    // it by a frame before the phases were read. So the same gesture started at zero when
+    // the stance asked for it and a frame in when the weapon did, and which of the two won
+    // depended on who happened to ask first for a change that fired both. That is the
+    // "sometimes it is faster": not a different duration, a different starting point.
+    //
+    // As a request it cannot happen: whoever asks, the gesture begins where
+    // UpdateShouldering begins it, and the phases are read from exactly zero on that frame.
+    //
+    // REFUSED WHILE ONE IS STILL RUNNING, and a refusal is DROPPED rather than queued --
+    // restarting mid-gesture would read as the first being cancelled, and honouring it later
+    // would jolt for a stance change the player has already finished making.
+    public void TriggerShouldering() => _shoulderingRequested = true;
+
+    // Edges, not states. What is wanted is the moment the character changes how it is
+    // carrying itself, and a flag that is simply true for a while has two of those in it.
+    //
+    // Raising or lowering the sights, dropping into a crouch or coming back up, breaking
+    // into a run or falling out of one, leaning out past a corner or coming back. Crouching
+    // counts down the sights as much as off them -- the whole body drops half a metre either
+    // way, and a weapon held against a shoulder that has just moved is exactly what this is
+    // for.
+    //
+    // Leaning was left out once, on the grounds that a peek moves the whole body sideways
+    // without changing how anything is held. That is true of the body and not of the arms:
+    // the weapon is pulled in to clear the corner and pushed back out afterwards, so the grip
+    // really is re-taken twice.
+    //
+    // Walking is still not here. Setting off is the legs' business and the arms carry on as
+    // they were; what does re-take the grip is the weapon coming out of its walking carry,
+    // which is a different moment entirely and comes in through TriggerShouldering when the
+    // item decides it -- along with the frame a draw lands and the end of a reload, both for
+    // the same reason: the clip has stopped moving the weapon and the hands now have it.
+    private void UpdateShouldering()
+    {
+        // Advanced before the trigger is considered, so a gesture starting this frame is
+        // read at exactly zero rather than one frame in. Clamped so the clock cannot run
+        // away over a long session and lose precision against the lockout.
+        _shoulderingTime = Mathf.Min(_shoulderingTime + Time.deltaTime, 1000f);
+
+        bool isCrouching = movement.IsCrouching;
+        bool isAiming = movement.IsAiming;
+        bool isSprinting = movement.IsSprintingStable;
+
+        // THE COMMAND, NOT THE ANGLE. PeekAmount is the lean actually in force and is eased,
+        // so it only crosses back under a threshold once the body has finished unwinding --
+        // a fifth of a second after the key came up, by which time the gesture is answering
+        // nothing the player did. PeekCommand moves on the frame the key does.
+        //
+        // Still a threshold rather than a comparison with zero, because the axis is a float
+        // and a stick can rest just off centre.
+        bool isPeeking = Mathf.Abs(look.PeekCommand) > 0.01f;
+
+        // EMPTY HANDS HAVE NOTHING TO RE-SEAT, so nothing in this block runs. Every figure in
+        // it describes a weapon being pulled off a shoulder and set back into it, and with
+        // nothing held the gesture is describing an object that is not there -- while the
+        // view's half would go on kicking for crouches and leans taken bare-handed, which is
+        // a camera twitching for no cause on screen.
+        //
+        // BEFORE the pending kick below, not after, so holstering mid-gesture cancels the
+        // answer rather than letting it land on an empty pair of hands a moment later.
+        //
+        // The edges are consumed here rather than skipped, so a stance change made with empty
+        // hands cannot be sitting there waiting to fire the instant something is drawn. What
+        // the draw itself deserves it gets from the draw -- see Weapon's own trigger.
+        if (look.HandsFree)
+        {
+            _wasAiming = isAiming;
+            _wasCrouching = isCrouching;
+            _wasSprinting = isSprinting;
+            _wasPeeking = isPeeking;
+
+            _shoulderingRequested = false;
+            _cameraShoulderingPending = false;
+
+            _shoulderingPositionOffset = Vector3.zero;
+            _shoulderingRotationOffset = Vector3.zero;
+            _shoulderingPositionVelocity = Vector3.zero;
+            _shoulderingRotationVelocity = Vector3.zero;
+
+            return;
+        }
+
+        // THE VIEW'S HALF, ON THE FRAME THE WEAPON'S FINISHES -- and checked here, before a
+        // new gesture can be started below, not after.
+        //
+        // After, a request arriving on exactly the frame the weapon lands resets the clock
+        // first and this test then reads the NEW gesture's time, which is zero: the finished
+        // gesture's kick is swallowed and only goes off at the end of the chain. Checked
+        // first, every gesture that completes gets its answer on the frame it completes,
+        // however soon the next one begins.
+        if (_cameraShoulderingPending && _shoulderingTime >= ShoulderingItemTime)
+        {
+            _cameraShoulderingPending = false;
+
+            look.AddShoulderingKick(
+                cameraShoulderingPosition,
+                cameraShoulderingRotation,
+                cameraShoulderingSpring,
+                cameraShoulderingDamping);
+        }
+
+        bool changed = isAiming != _wasAiming
+            || isCrouching != _wasCrouching
+            || isSprinting != _wasSprinting
+            || isPeeking != _wasPeeking;
+
+        // Consumed whether or not a gesture results, which is what makes a refusal a drop
+        // rather than a delay. Left unconsumed the flag would still differ next frame and
+        // the gesture would go off the instant the lockout expired.
+        _wasAiming = isAiming;
+        _wasCrouching = isCrouching;
+        _wasSprinting = isSprinting;
+        _wasPeeking = isPeeking;
+
+        if (changed)
+            _shoulderingRequested = true;
+
+        // Spent whether or not it is honoured, for the same reason the edges are. Every
+        // gesture in the game starts on this line, so none of them can start anywhere else.
+        if (_shoulderingRequested)
+        {
+            _shoulderingRequested = false;
+
+            if (_shoulderingTime >= ShoulderingLockout)
+            {
+                _shoulderingTime = 0f;
+                _cameraShoulderingPending = true;
+            }
+        }
+
+        // AWAY, THEN SEAT. One scalar drives both the offset and the rotation, so the twist
+        // and the travel are one gesture -- authored apart they would be two motions that
+        // happen to overlap, and nothing keeps them from drifting out of step as either is
+        // tuned.
+        //
+        // Smoothstepped within each phase rather than linear: a lift that starts and stops
+        // instantly is a slide, and the ease is most of what gives the shape its shoulders
+        // before the follow spring below adds any weight of its own.
+        float away = Mathf.Max(shoulderingAwayTime, 0f);
+        float seat = Mathf.Max(shoulderingSeatTime, 0f);
+        float amount;
+
+        if (_shoulderingTime >= away + seat || away + seat <= 0f)
+        {
+            amount = 0f;
+        }
+        else if (_shoulderingTime < away)
+        {
+            // Out of the shoulder, reaching the full away figure exactly as the phase ends.
+            amount = away > 0f ? Mathf.SmoothStep(0f, 1f, _shoulderingTime / away) : 1f;
+        }
+        else
+        {
+            float s = seat > 0f ? (_shoulderingTime - away) / seat : 1f;
+
+            // Back in, and PAST home on the way -- the sine is zero at both ends and peaks
+            // in the middle, so the press happens during the return and lands on nothing
+            // rather than leaving the weapon parked past its pose.
+            amount = Mathf.SmoothStep(1f, 0f, s)
+                - Mathf.Sin(s * Mathf.PI) * shoulderingSeatOvershoot;
+        }
+
+        // Where the phases say to be, which is a target rather than the answer.
+        Vector3 targetPosition = shoulderingAwayOffset * amount;
+        Vector3 targetRotation = shoulderingAwayRotation * amount;
+
+        // No spring asked for: the phases ARE the motion, to the frame.
+        if (shoulderingFollowFrequency <= 0f)
+        {
+            _shoulderingPositionOffset = targetPosition;
+            _shoulderingRotationOffset = targetRotation;
+            _shoulderingPositionVelocity = Vector3.zero;
+            _shoulderingRotationVelocity = Vector3.zero;
+
+            return;
+        }
+
+        // Rebuilt from the frequency and the ratio each frame rather than stored, the same
+        // way the look sway tilt does it -- two multiplies, and nothing to keep in step with
+        // the fields.
+        float omega = shoulderingFollowFrequency;
+        float stiffness = omega * omega;
+        float drag = 2f * shoulderingFollowDamping * omega;
+
+        _shoulderingPositionVelocity += ((targetPosition - _shoulderingPositionOffset) * stiffness
+            - _shoulderingPositionVelocity * drag) * Time.deltaTime;
+        _shoulderingPositionOffset += _shoulderingPositionVelocity * Time.deltaTime;
+
+        _shoulderingRotationVelocity += ((targetRotation - _shoulderingRotationOffset) * stiffness
+            - _shoulderingRotationVelocity * drag) * Time.deltaTime;
+        _shoulderingRotationOffset += _shoulderingRotationVelocity * Time.deltaTime;
+    }
+
+    // The shouldering jolt, for the item to apply AT ITS OWN PIVOT -- worked out here and
+    // deliberately not applied here, the same arrangement the peek, the look tilt, the
+    // tremor and the impulse shake are in.
+    //
+    // A re-settle is the weapon being pulled back against the shoulder and twisting in the
+    // hands as it goes. Both of those are about the weapon, and the hold point is not on
+    // the weapon: rotating there swings the whole thing through an arc around the grip,
+    // which reads as the gun being waved rather than shouldered, and translating there
+    // moves the hold and everything hanging off it. At the item's pivot it draws back down
+    // its own line and turns in place, which is what the motion is.
+    //
+    // The view's half stays on the rendered camera, where the item is not parented -- so
+    // the two halves cannot end up applying to the same transform.
+    public Vector3 ShoulderingOffset => _shoulderingPositionOffset;
+
+    public Vector3 ShoulderingRotation => _shoulderingRotationOffset;
+
     // Seconds the character has been walking without anything taking the hands away
     // from it.
     //
@@ -572,17 +972,6 @@ public class HandMotion : MonoBehaviour
     // never asks, and nothing here has to know which items those are.
     public float LookTilt => _currentLookTilt;
 
-    // Degrees of lean from the peek, on the same terms and for the same reason as
-    // LookTilt: computed here, where the figures live, and turned about the item's
-    // own pivot rather than about the hold point.
-    //
-    // Which pivot it turns about is the whole of the difference. Rotating the hold
-    // swings the item through an arc around the grip, so a lean reads as the weapon
-    // being waved sideways; rotating at the item's pivot turns it in place, which is
-    // what leaning into a corner actually looks like. The two are the same numbers
-    // and completely different motions.
-    public Vector3 PeekRotation => look != null ? peekRotation * look.PeekAmount : Vector3.zero;
-
     // Every impulse the hands take -- footfalls, jumps, landings -- as one displacement
     // and one roll, for whatever is held to apply at its own pivot.
     //
@@ -630,42 +1019,15 @@ public class HandMotion : MonoBehaviour
 
     public Vector3 TremorRotation => _tremorRotation;
 
-    // The chest socket in whatever space the hold's localPosition is written in.
-    // Taken from the hold's actual parent rather than assuming anything about the
-    // rig, so it can be nested a level deeper without this quietly reading the wrong
-    // space and throwing the hands off into the world.
-    private Vector3 ChestLocalPosition
-    {
-        get
-        {
-            Transform holdSpace = transform.parent != null ? transform.parent : transform;
-            return holdSpace.InverseTransformPoint(chestAnchor.position);
-        }
-    }
-
     private void Awake()
     {
         _baseLocalPosition = transform.localPosition;
         _baseLocalRotation = transform.localRotation;
-        _followedLocalPosition = _baseLocalPosition;
     }
 
-    // The one job here: catch where the chest starts, once.
-    //
-    // It has to be here rather than in Awake because the Animator poses the skeleton
-    // between Update and LateUpdate, so this is the first moment the bone is where
-    // the animation actually puts it. Taken in Awake the reference would be the bind
-    // pose, and the gap between that and the idle pose would be read as movement the
-    // chest had already made -- dragging the hold off the position it was placed at
-    // the instant play began.
-    private void LateUpdate()
-    {
-        if (!_hasChestReference && chestAnchor != null)
-        {
-            _chestReference = ChestLocalPosition;
-            _hasChestReference = true;
-        }
-    }
+    // No LateUpdate any more. It existed for one job -- catching where the chest bone
+    // started, once, after the Animator had posed the skeleton -- and with the follow
+    // gone there is nothing here that needs to run after the pose.
 
     private void Update()
     {
@@ -825,15 +1187,36 @@ public class HandMotion : MonoBehaviour
         // that they exist to create.
         float bobScale = _bobWeight * stepBias * wander;
 
+        // THE AMOUNTS ARE BLENDED, NOT THE FINISHED WAVES, and it is the same distinction
+        // the envelope is built on. Each channel keeps its own phase -- the vertical and
+        // the pitch run at double rate, the rest at single -- so interpolating the figures
+        // and then building one wave gives a single coherent swing at every point in the
+        // changeover. Building two waves and crossfading them would be two swings at once
+        // wherever the blend is not at an end, and two sines of the same frequency summed
+        // out of amplitude produce a beat rather than a stride.
+        _sprintBobBlend = sprintBobBlendTime > 0f
+            ? Mathf.MoveTowards(
+                _sprintBobBlend,
+                movement.IsSprintingStable ? 1f : 0f,
+                Time.deltaTime / sprintBobBlendTime)
+            : (movement.IsSprintingStable ? 1f : 0f);
+
+        float horizontalAmount = Mathf.Lerp(bobHorizontalAmount, sprintBobHorizontalAmount, _sprintBobBlend);
+        float verticalAmount = Mathf.Lerp(bobVerticalAmount, sprintBobVerticalAmount, _sprintBobBlend);
+        float pitchAmount = Mathf.Lerp(bobPitchAmount, sprintBobPitchAmount, _sprintBobBlend);
+        float yawAmount = Mathf.Lerp(bobYawAmount, sprintBobYawAmount, _sprintBobBlend);
+        float rollAmount = Mathf.Lerp(bobRollAmount, sprintBobRollAmount, _sprintBobBlend);
+
         Vector3 targetBobOffset = new Vector3(
-            Mathf.Cos(bobPhase) * bobHorizontalAmount,
-            Mathf.Sin(bobPhase * 2f) * bobVerticalAmount,
+            Mathf.Cos(bobPhase) * horizontalAmount,
+            Mathf.Sin(bobPhase * 2f) * verticalAmount,
             0f) * bobScale;
 
         Vector3 targetBobRotation = new Vector3(
-            Mathf.Sin(bobPhase * 2f) * bobPitchAmount,
-            Mathf.Sin(bobPhase) * bobYawAmount,
-            Mathf.Cos(bobPhase) * bobRollAmount) * bobScale;
+            Mathf.Sin(bobPhase * 2f) * pitchAmount,
+            Mathf.Sin(bobPhase) * yawAmount,
+            Mathf.Cos(bobPhase) * rollAmount) * bobScale;
+
 
         // Gated on the same isMoving the bob is, inverted -- so the two hand over to
         // each other on the same frame and never overlap. Vertical runs at half the
@@ -935,32 +1318,34 @@ public class HandMotion : MonoBehaviour
         // smoothTime measured in tenths of a second the lag is far below what the
         // filter is already removing.
         //
-        // Position only. The head follow takes nothing but position either, and for a
-        // sharper reason here: the hold's rotation is the aim, and letting the chest
-        // turn it would put the skeleton in an argument with where the player is
-        // pointing.
+        // THERE IS NO CHEST FOLLOW HERE ANY MORE. The hold sits at the position the scene
+        // placed it and moves only by the offsets below.
         //
-        // The scene's position plus however far the chest has MOVED since play began
-        // -- not the chest's position with an offset bolted on. The two are the same
-        // arithmetic and a completely different result: where the hold was dragged to
-        // is kept exactly, and the skeleton only ever contributes change.
-        Vector3 followTarget = _hasChestReference
-            ? _baseLocalPosition + (ChestLocalPosition - _chestReference)
-            : _baseLocalPosition;
-
-        _followedLocalPosition = Vector3.SmoothDamp(
-            _followedLocalPosition, followTarget, ref _followVelocity, chestFollowSmoothTime);
-
-        // Rebuilt from the scene's base every frame rather than nudged from where it
-        // was left, so nothing can accumulate an offset here over time.
+        // It used to trail the upper chest bone through its own smoothed filter, so the
+        // skeleton's breathing and stride reached whatever was being held. That was a
+        // second follow doing the same job as PlayerLook's, one level down -- the hold
+        // hangs off the camera pivot, so the pivot's own follow was already carrying the
+        // skeleton into it, and this one added its own lag and its own smoothing on top.
+        // Two filters in series on one signal is not twice the filtering, it is a phase
+        // relationship nobody chose: the hold reached a stride peak at a different moment
+        // than the view did, which is a weapon that swims against the head rather than
+        // riding it.
+        //
+        // One follow now, on the pivot, and it follows the NECK -- see PlayerLook's. The
+        // neck is the joint the head turns on, so a pivot that tracks it is tracking the
+        // base of the view rather than the view itself, and everything under the pivot,
+        // this hold included, is carried by it for free.
+        //
+        // Rebuilt from the scene's base every frame rather than nudged from where it was
+        // left, so nothing can accumulate an offset here over time.
         //
         // No peek slide here. The hold is shared by everything that gets picked up,
         // and how far a thing has to be pulled in to clear a corner is a fact about
         // that thing -- so it lives on the item, beside its other poses.
         UpdateTremor();
+        UpdateShouldering();
 
-        transform.localPosition =
-            Vector3.Lerp(_baseLocalPosition, _followedLocalPosition, chestFollowAmount)
+        transform.localPosition = _baseLocalPosition
             + _currentBobOffset + _currentSway + _currentBreathOffset;
 
         // Every rotational layer summed into one Euler off the base rather than

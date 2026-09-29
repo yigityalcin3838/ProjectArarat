@@ -1,4 +1,4 @@
-﻿using Unity.Cinemachine;
+using Unity.Cinemachine;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -75,16 +75,31 @@ public class PlayerLook : MonoBehaviour
     [SerializeField] private float noItemPitchUpLimit = 85f;
     [SerializeField] private float noItemPitchDownLimit = 85f;
 
-    [Header("Head Follow")]
-    // The socket on the head bone. The view follows where the animation puts it,
-    // but only slowly: a low-pass on the skeleton rather than a hard mount to it.
+    [Header("Neck Follow")]
+    // THE NECK BONE, not the head. The view follows where the animation puts it, but
+    // only slowly: a low-pass on the skeleton rather than a hard mount to it.
     //
     // Crouching, climbing, leaning into a car -- all of it is already in the
     // clips, and following the bone is how that reaches the view without anyone
     // restating it in code. What the clips also carry is per-frame stride jitter,
     // and that is what the damping is for. Both live at different frequencies, so
     // one filter separates them: slow gestures pass, shake does not.
-    [SerializeField] private Transform headAnchor;
+    //
+    // The neck rather than the head, and the difference is which joint is upstream of
+    // the look. The head is where the CLIP decided to point -- it carries the animator's
+    // own turns and nods, which are a second opinion about a direction the player is
+    // already giving with the mouse. The neck is the base the head turns ON: it goes
+    // where the body takes it and leaves the aiming to the aiming. Following it means
+    // the view inherits the torso's travel and none of the clip's head motion.
+    //
+    // THIS IS ALSO THE ONLY FOLLOW LEFT IN THE RIG. HandMotion used to trail the upper
+    // chest with a filter of its own so a held item got the skeleton too, and that was
+    // this same signal filtered a second time one level down -- the hold hangs off the
+    // pivot, so whatever the pivot follows is already carrying it. Two first-order
+    // filters in series at different smoothTimes put the weapon's stride peak on a
+    // different frame than the view's, which reads as a weapon swimming against the head.
+    // One follow, here, and everything under the pivot rides it.
+    [SerializeField] private Transform neckAnchor;
 
     // Where the eyes sit relative to that socket is the scene's to decide: the
     // pivot's offset from the head is measured once at startup from wherever it
@@ -94,16 +109,16 @@ public class PlayerLook : MonoBehaviour
     // 0 pins the view to the capsule and ignores the skeleton entirely; 1 follows
     // the head in full. Between the two it follows part of the way, which is the
     // usual answer for a walk cycle with more shoulder in it than the view wants.
-    [SerializeField, Range(0f, 1f)] private float headFollowAmount = 1f;
+    [SerializeField, Range(0f, 1f)] private float neckFollowAmount = 1f;
 
     // Roughly how long the view takes to catch up with the head, in seconds. This is
     // the whole filter: too short and the stride comes through, too long and the
     // skeleton stops reaching the view at all. A few tenths is the usual band.
-    [SerializeField] private float headFollowSmoothTime = 0.35f;
+    [SerializeField] private float neckFollowSmoothTime = 0.35f;
 
     // An extra drop while crouched, on top of whatever the crouch clip already
     // gives, in metres. Still applied on its own rather than folded into the
-    // follow target, so it lands in full even at a headFollowAmount of 0 -- the
+    // follow target, so it lands in full even at a neckFollowAmount of 0 -- the
     // two are separate systems and turning one off should not take the other with
     // it. Leave at 0 if the clip's own drop is enough.
     [SerializeField] private float crouchEyeDrop = 0.2f;
@@ -134,7 +149,7 @@ public class PlayerLook : MonoBehaviour
     // carried wherever it goes. One eye position, one smoothing, nothing to change over
     // between -- so a ladder and a car keep whatever position the view already had.
     // Anything the clip's own head motion should still contribute comes through the
-    // follow; if a ladder wants more of it, headFollowSmoothTime is the knob, not a
+    // follow; if a ladder wants more of it, neckFollowSmoothTime is the knob, not a
     // second mode.
 
     // How long the pitch limits take to change over between held and empty hands, in
@@ -781,6 +796,32 @@ public class PlayerLook : MonoBehaviour
     // the rig to match. Read it, don't drive it.
     public float PeekAmount => EffectivePeek;
 
+    // Whether there is nothing in the hands -- counting a swap in progress as busy, since a
+    // weapon halfway out of a holster is still being held.
+    //
+    // Here rather than read off PlayerItems by everyone who needs it, because it is one fact
+    // about the character and this component already owns the reference. Two readers so far:
+    // the pitch limits below, which open up when the arms are down, and the shouldering
+    // gesture, which is about a weapon and has nothing to re-seat without one.
+    //
+    // No items reference at all reads as "always holding something", which is the safer of
+    // the two defaults: the alternative is a rig with the field unassigned quietly losing
+    // every feature that depends on this.
+    public bool HandsFree => items != null && !items.AreHandsBusy;
+
+    // WHAT THE PLAYER IS ASKING FOR, unsmoothed: -1, 0 or 1 the frame the key moves.
+    //
+    // PeekAmount above is the lean actually in force and is eased, so it crosses zero some
+    // way AFTER the key was released -- which is the right value for anything that has to
+    // agree with where the body currently is, and the wrong one for anything that wants the
+    // moment the decision was made. A jolt belongs to the decision: the hands begin
+    // re-seating the weapon when the player stops leaning, not when the lean has finished
+    // unwinding.
+    //
+    // Already gated by the ladder and the car, so it is the command as honoured rather than
+    // as pressed -- nothing reading it can act on a lean that was refused.
+    public float PeekCommand { get; private set; }
+
     // The lean actually in force: what the player asked for, less whatever the pitch
     // has taken back. Everything that reads a peek reads this, so nothing can end up
     // leaning by a different amount than everything else.
@@ -904,6 +945,16 @@ public class PlayerLook : MonoBehaviour
     private float _shakeVelocity;
     private float _shakeRollOffset;
     private float _shakeRollVelocity;
+
+    // The spring figures are fields rather than serialized because they are pushed in
+    // with the impulse -- see AddShoulderingKick. The defaults only matter until the
+    // first one arrives.
+    private Vector3 _shoulderingPositionOffset;
+    private Vector3 _shoulderingPositionVelocity;
+    private Vector3 _shoulderingRotationOffset;
+    private Vector3 _shoulderingRotationVelocity;
+    private float _shoulderingSpring = 220f;
+    private float _shoulderingDamping = 22f;
     private Vector3 _cameraBaseLocalPosition;
     private float _fireKickOffset;
     private float _fireKickVelocity;
@@ -972,9 +1023,9 @@ public class PlayerLook : MonoBehaviour
     private float _reloadProgress = -1f;
     private Vector3 _reloadRotation;
     private Vector3 _basePivotLocalPosition;
-    private Vector3 _headReference;
-    private bool _hasHeadReference;
-    private bool _warnedAboutHeadAnchor;
+    private Vector3 _neckReference;
+    private bool _hasNeckReference;
+    private bool _warnedAboutNeckAnchor;
     private Vector3 _followedLocalPosition;
     private Vector3 _followVelocity;
     private float _crouchDrop;
@@ -1006,6 +1057,24 @@ public class PlayerLook : MonoBehaviour
     public void SetReloadProgress(float progress) => _reloadProgress = Mathf.Clamp01(progress);
 
     public void ClearReload() => _reloadProgress = -1f;
+
+    // The view's share of a shouldering jolt, fired by HandMotion at the same moment as
+    // the hands' own so the two are one event rather than two that happen to coincide.
+    // Everything about it -- the impulses and the spring it settles on -- is pushed in
+    // from there, because a stance change is one motion and splitting its tuning across
+    // two components is how the halves start disagreeing.
+    //
+    // Set rather than added, like the fire kick's velocities: two of these in quick
+    // succession read as the second replacing the first instead of stacking into a throw
+    // neither asked for. Crouching while already sprinting fires two a frame apart.
+    public void AddShoulderingKick(Vector3 positionImpulse, Vector3 rotationImpulse,
+                                   float spring, float damping)
+    {
+        _shoulderingPositionVelocity = positionImpulse;
+        _shoulderingRotationVelocity = rotationImpulse;
+        _shoulderingSpring = spring;
+        _shoulderingDamping = damping;
+    }
 
     // The rattle's figures, pushed the same way and for the same reason as the kick's.
     public void SetFireShakeProfile(float rollAmount, float frequency, float decay)
@@ -1046,48 +1115,48 @@ public class PlayerLook : MonoBehaviour
         _fireKickYawVelocity = Random.Range(-1f, 1f) * horizontalKickAmount;
     }
 
-    // The head socket in whatever space the pivot's localPosition is written in.
+    // The neck bone in whatever space the pivot's localPosition is written in.
     // Taken from the pivot's actual parent rather than assuming it is this object,
     // so the rig can be nested a level deeper without this quietly reading the
     // wrong space and putting the eyes somewhere off in the world.
-    private Vector3 HeadLocalPosition
+    private Vector3 NeckLocalPosition
     {
         get
         {
             Transform pivotSpace = cameraPivot.parent != null ? cameraPivot.parent : transform;
-            return pivotSpace.InverseTransformPoint(headAnchor.position);
+            return pivotSpace.InverseTransformPoint(neckAnchor.position);
         }
     }
 
     // Whether the anchor is a bone of THIS character rather than something left over
     // somewhere else in the scene.
     //
-    // The follow itself survives a wrong anchor: it only ever reads how far the head
+    // The follow itself survives a wrong anchor: it only ever reads how far the neck
     // has MOVED since play began, and an orphaned object sitting still contributes
     // nothing, so the view simply stops breathing with the skeleton. That is the
     // reason to check rather than a reason not to -- a camera that silently stops
-    // following the head looks like the camera code, while the cause is one reference
+    // following the body looks like the camera code, while the cause is one reference
     // in the Inspector that nothing else in the game would ever complain about.
     //
     // It is checked once, before the reference is taken, and it fails loudly.
-    private bool HeadAnchorIsValid
+    private bool NeckAnchorIsValid
     {
         get
         {
-            if (headAnchor == null)
+            if (neckAnchor == null)
                 return false;
 
-            if (headAnchor.IsChildOf(transform))
+            if (neckAnchor.IsChildOf(transform))
                 return true;
 
-            if (!_warnedAboutHeadAnchor)
+            if (!_warnedAboutNeckAnchor)
             {
-                _warnedAboutHeadAnchor = true;
+                _warnedAboutNeckAnchor = true;
                 Debug.LogWarning(
-                    $"PlayerLook's Head Anchor ('{headAnchor.name}') is not under {name}, so it is " +
+                    $"PlayerLook's Neck Anchor ('{neckAnchor.name}') is not under {name}, so it is " +
                     "not a bone of this character -- most likely it was orphaned by a model swap. " +
-                    "The view will not follow the head until it is re-parented to the new " +
-                    "skeleton's head.", this);
+                    "The view will not follow the skeleton until it is re-parented to the new " +
+                    "rig's neck bone.", this);
             }
 
             return false;
@@ -1126,20 +1195,20 @@ public class PlayerLook : MonoBehaviour
         Cursor.visible = false;
     }
 
-    // The one job here: catch where the head starts, once.
+    // The one job here: catch where the neck starts, once.
     //
     // It has to be here rather than in Awake because the Animator poses the skeleton
     // between Update and LateUpdate, so this is the first moment the bone is where
     // the animation actually puts it. Taken in Awake the reference would be the bind
     // pose, and the gap between that and the idle pose would be read as movement the
-    // head had already made -- which is exactly what used to drag the view off the
+    // neck had already made -- which is exactly what used to drag the view off the
     // position it was placed at, over the first fraction of a second of play.
     private void LateUpdate()
     {
-        if (!_hasHeadReference && cameraPivot != null && HeadAnchorIsValid)
+        if (!_hasNeckReference && cameraPivot != null && NeckAnchorIsValid)
         {
-            _headReference = HeadLocalPosition;
-            _hasHeadReference = true;
+            _neckReference = NeckLocalPosition;
+            _hasNeckReference = true;
         }
     }
 
@@ -1222,15 +1291,11 @@ public class PlayerLook : MonoBehaviour
         float footPitchUpLimit = Mathf.Lerp(standingPitchUpLimit, crouchPitchUpLimit, crouchBlend);
         float footPitchDownLimit = Mathf.Lerp(standingPitchDownLimit, crouchPitchDownLimit, crouchBlend);
 
-        // Worked out once here and used twice -- for the limits below and for the head
-        // mount further down -- because it is one fact about the character and both
-        // are answers to it.
-        //
         // Eased rather than switched, and this is the half that has to be. Drawing a
         // weapon while craned right back would otherwise clamp the pitch to the
         // tighter limit on the frame the key went in, snapping the view down by the
         // difference. The limit has to close at the speed the arms come up.
-        bool handsFree = items != null && !items.AreHandsBusy;
+        bool handsFree = HandsFree;
         _handsFreeBlend = Mathf.SmoothDamp(
             _handsFreeBlend, handsFree ? 1f : 0f, ref _handsFreeBlendVelocity, handsFreeBlendTime);
 
@@ -1588,6 +1653,16 @@ public class PlayerLook : MonoBehaviour
         _shakeRollVelocity += (-shakeSpring * _shakeRollOffset - shakeDamping * _shakeRollVelocity) * Time.deltaTime;
         _shakeRollOffset += _shakeRollVelocity * Time.deltaTime;
 
+        // Shouldering -- impulse and spring both pushed in by HandMotion when the stance
+        // changes, so the view settles on exactly the terms the hands do.
+        _shoulderingPositionVelocity += (-_shoulderingSpring * _shoulderingPositionOffset
+            - _shoulderingDamping * _shoulderingPositionVelocity) * Time.deltaTime;
+        _shoulderingPositionOffset += _shoulderingPositionVelocity * Time.deltaTime;
+
+        _shoulderingRotationVelocity += (-_shoulderingSpring * _shoulderingRotationOffset
+            - _shoulderingDamping * _shoulderingRotationVelocity) * Time.deltaTime;
+        _shoulderingRotationOffset += _shoulderingRotationVelocity * Time.deltaTime;
+
         // On the same spring and damping as the angular ones above, so a step settles as
         // one event rather than as a dip and a nod that finish at different times.
         _shakeVerticalVelocity +=
@@ -1640,21 +1715,21 @@ public class PlayerLook : MonoBehaviour
             // so a crouch settles onto its new height instead of dipping past it
             // and coming back. smoothTime is then an honest "how long to catch up"
             // rather than a rate whose meaning changes with the distance.
-            // The scene's position plus however far the head has MOVED since play
-            // began -- not the head's position with an offset bolted on. The two are
+            // The scene's position plus however far the neck has MOVED since play
+            // began -- not the neck's position with an offset bolted on. The two are
             // the same arithmetic and a completely different result: where the pivot
             // was dragged to is kept exactly, and the skeleton only ever contributes
             // change. Nothing pulls the view off the pose that was authored.
-            Vector3 followTarget = _hasHeadReference
-                ? _basePivotLocalPosition + (HeadLocalPosition - _headReference)
+            Vector3 followTarget = _hasNeckReference
+                ? _basePivotLocalPosition + (NeckLocalPosition - _neckReference)
                 : _basePivotLocalPosition;
 
             _followedLocalPosition = Vector3.SmoothDamp(
-                _followedLocalPosition, followTarget, ref _followVelocity, headFollowSmoothTime);
+                _followedLocalPosition, followTarget, ref _followVelocity, neckFollowSmoothTime);
 
             // Rebuilt from the scene's base every frame rather than nudged from
             // where it was, so nothing can accumulate an offset here over time.
-            // The head is the only thing allowed to move the view at all: every
+            // The neck is the only thing allowed to move the view at all: every
             // other motion it has -- bob, breath, kick -- is rotational and goes
             // in below, where no amount of it can shift the eye point.
             float targetCrouchDrop = movement != null && movement.IsCrouching ? crouchEyeDrop : 0f;
@@ -1662,7 +1737,7 @@ public class PlayerLook : MonoBehaviour
                 _crouchDrop, targetCrouchDrop, ref _crouchDropVelocity, crouchDropTime);
 
             // The crouch drop is subtracted after the follow blend rather than folded
-            // into its target, so it applies in full even at a headFollowAmount of 0 --
+            // into its target, so it applies in full even at a neckFollowAmount of 0 --
             // the two are separate systems and turning one off should not take the other
             // with it.
             //
@@ -1672,16 +1747,16 @@ public class PlayerLook : MonoBehaviour
             // the way in and again on the way out; they now keep the position they
             // already had, like every other state. See the retired field above.
             Vector3 pivotPosition = Vector3.Lerp(
-                _basePivotLocalPosition, _followedLocalPosition, headFollowAmount)
+                _basePivotLocalPosition, _followedLocalPosition, neckFollowAmount)
                 - Vector3.up * _crouchDrop;
 
             // Nowhere to step out to while a ladder or a car has the character: the
             // axis is still being read there and would slide the view off a body
             // that has no way to follow it.
-            float targetPeek = _peekAction != null && (movement == null || !movement.IsMovementLocked)
+            PeekCommand = _peekAction != null && (movement == null || !movement.IsMovementLocked)
                 ? Mathf.Clamp(_peekAction.ReadValue<float>(), -1f, 1f)
                 : 0f;
-            _currentPeek = Mathf.MoveTowards(_currentPeek, targetPeek, peekSpeed * Time.deltaTime);
+            _currentPeek = Mathf.MoveTowards(_currentPeek, PeekCommand, peekSpeed * Time.deltaTime);
 
             // Sideways in the capsule's own frame, so the slide follows the body
             // rather than the pitch -- stepping out while looking up should still
@@ -1739,14 +1814,21 @@ public class PlayerLook : MonoBehaviour
             // and the camera is what had to end up there; with the mount gone there is
             // nothing to collapse for, and the offset the rig was built with is simply
             // where the eye belongs.
+            // Shouldering lands on the rendered camera rather than the pivot, which is
+            // what keeps it off the weapon: the hands have their own version of this and
+            // would otherwise take both. Same division as the jump, the landing and the
+            // fire roll -- what happens to the head goes here, what the weapon has to
+            // share goes on the pivot.
             cinemachineCamera.transform.localPosition = _cameraBaseLocalPosition
                 + _currentBobPosition
-                + Vector3.up * _shakeVerticalOffset;
+                + Vector3.up * _shakeVerticalOffset
+                + _shoulderingPositionOffset;
             cinemachineCamera.transform.localRotation = _cameraBaseLocalRotation
                 * Quaternion.Euler(
                     _shakeOffset + _reloadRotation.x,
                     _reloadRotation.y,
-                    _shakeRollOffset + _currentLookTilt + _fireShakeRoll + _reloadRotation.z);
+                    _shakeRollOffset + _currentLookTilt + _fireShakeRoll + _reloadRotation.z)
+                * Quaternion.Euler(_shoulderingRotationOffset);
         }
 
         if (cinemachineCamera != null)

@@ -16,7 +16,7 @@ MonoBehaviour:
   viewModelLayers:
     serializedVersion: 2
     m_Bits: 512
-  viewModelFov: 40
+  viewModelFov: 25
   lensFovSmoothTime: 0.12
   nearFieldAOShader: {fileID: 4800000, guid: 13cefe5947a4ba742b53f2ff526c416b, type: 3}
   occludeHeldItem: 1

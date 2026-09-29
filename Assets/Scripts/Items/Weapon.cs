@@ -140,6 +140,22 @@ public class Weapon : Item
     // HandMotion -- all this supplies is the timing.
     [SerializeField] private HandMotion handMotion;
 
+    // How long BEFORE the draw and the reload clips end the re-seat starts, in seconds.
+    //
+    // At zero it begins on the frame the clip lands, which is late: the weapon is already
+    // where the animation left it and the gesture then moves it again afterwards, so the two
+    // read as one motion followed by a second one rather than as a hand settling into a grip
+    // it is in the act of taking. Started a little early, the clip's last moments and the
+    // seat overlap and it becomes one arrival.
+    //
+    // Two figures because they are two clips with nothing in common: a draw is a second of
+    // the weapon swinging up from the hip, a reload ends with a magazine being pushed home,
+    // and how much of each is worth overlapping is a fact about that animation. Clamped to
+    // the clip's own length where it is used, so a lead longer than the clip simply fires at
+    // the start of it.
+    [SerializeField] private float drawShoulderingLead = 0.15f;
+    [SerializeField] private float reloadShoulderingLead = 0.2f;
+
     [Header("Fire Camera Kick")]
     // A shot's whole recoil. It lands on the camera pivot, which is where the aim is
     // taken from, so it throws the shot off target and has to be brought back --
@@ -282,25 +298,32 @@ public class Weapon : Item
     [SerializeField] private Vector3 aimRotation;
     [SerializeField] private float aimTransitionSpeed = 8f;
 
-    // Where this weapon goes at a full lean, in metres, on top of the slide the
-    // camera already gives it by carrying it.
+    // WHERE THIS WEAPON IS HELD AT A FULL LEAN -- a pose in its own right, alongside hip,
+    // aim, walk, run and the wall block, and read the same way they are: these numbers are
+    // where the weapon ends up, not a delta added to wherever it already was.
     //
-    // The same either way, not mirrored: leaning is signed, but what the weapon does
-    // about it is not. Pulling a barrel in to clear a corner is the same movement to
-    // the left as to the right -- mirroring it would send the weapon out into the
-    // wall on one of the two sides, which is the opposite of the point.
+    // It used to be an offset composed on top, and that could only ever turn the weapon
+    // FURTHER. A figure of zero on an axis left whatever the hip or the walk pose had put
+    // there, so leaning out of a hip pose with pitch and yaw in it kept that pitch and yaw
+    // and there was no way to ask for a lean that straightened the weapon out. An additive
+    // layer cannot say "and none of that", only "and a bit more". Zero now means zero.
     //
-    // Per weapon rather than shared with the hands, for the same reason the wall
-    // block pose is: this pivot's local axes are whatever the model's build and
-    // parenting made them, and there is no set of three numbers that means the same
-    // thing on a pistol and on a rifle. It is also the honest place for it -- a long
-    // gun has to be pulled in much harder to clear a corner than a handgun does, and
-    // one figure for both can only ever be wrong for one of them.
+    // The position and the X and Y of the rotation are the same either way, not mirrored:
+    // leaning is signed, but pulling a barrel in to clear a corner is the same movement and
+    // the same pitch and yaw to the left as to the right -- mirroring them would send the
+    // weapon out into the wall on one of the two sides, which is the opposite of the point.
+    // Z is the exception and flips, because a cant is the one part of a lean that has a side.
     //
-    // Composed on top of the pose rather than blended into it, like the leans: it is
-    // a thing happening TO whatever the weapon is doing, not another pose competing
-    // with it.
-    [SerializeField] private Vector3 peekOffset;
+    // Per weapon rather than shared with the hands, for the same reason the wall block pose
+    // is: this pivot's local axes are whatever the model's build and parenting made them, and
+    // there is no set of three numbers that means the same thing on a pistol and on a rifle.
+    // A long gun has to be brought in much harder to clear a corner than a handgun does.
+    //
+    // ON TOP OF THE CAMERA'S OWN SLIDE, which is a separate thing: PlayerLook steps the whole
+    // pivot sideways and the weapon is carried with it. This is what the weapon does about
+    // being carried there.
+    [SerializeField] private Vector3 peekPosition;
+    [SerializeField] private Vector3 peekRotation;
 
     [Header("Hand IK")]
     [SerializeField] private PlayerAnimator playerAnimator;
@@ -333,6 +356,12 @@ public class Weapon : Item
     private float _drawTimer;
     private bool _wasInWalkPose;
     private bool _isInWalkPose;
+
+    // One-shot latches for the lead triggers. The lead is a crossing, and a crossing stays
+    // crossed -- without these the re-seat would be asked for on every frame from the lead
+    // to the end of the clip.
+    private bool _drawShoulderingFired;
+    private bool _reloadShoulderingFired;
 
     // The weapon's own recoil, one spring per axis it moves on. Impulses are SET rather
     // than added, the same rule the camera kick uses: rapid fire would otherwise stack
@@ -404,6 +433,7 @@ public class Weapon : Item
         // isn't reached until the crossfade into it has finished and the draw is
         // already visibly under way before then.
         _drawTimer = GetClipLength(takeTrigger);
+        _drawShoulderingFired = false;
 
         // Pushed here as well as every frame in Update, so the hands have somewhere
         // to be from the moment this is equipped. Update alone is a frame late when
@@ -488,7 +518,11 @@ public class Weapon : Item
         // key is ignored from then on.
         if (IsResetting)
         {
+            // Latched as already fired, not cleared: the draw is being abandoned, and a
+            // cleared latch would let the next frame of a re-equip fire for a clip that
+            // never played.
             _drawTimer = 0f;
+            _drawShoulderingFired = true;
             SnapTo(holster);
             playerAnimator?.ClearHandIKTargets();
             return;
@@ -522,7 +556,18 @@ public class Weapon : Item
         playerLook?.SetFireShakeProfile(cameraShakeRollAmount, cameraShakeFrequency, cameraShakeDecay);
 
         if (_drawTimer > 0f)
+        {
             _drawTimer -= Time.deltaTime;
+
+            // A LEAD BEFORE THE DRAW LANDS, so the seat and the clip's last moments are one
+            // arrival rather than two motions in a row. Fired once, on the crossing, which is
+            // why the flag exists: the condition stays true for every frame afterwards.
+            if (!_drawShoulderingFired && _drawTimer <= drawShoulderingLead)
+            {
+                _drawShoulderingFired = true;
+                handMotion?.TriggerShouldering();
+            }
+        }
 
         if (_fireHipTimer > 0f)
             _fireHipTimer -= Time.deltaTime;
@@ -532,6 +577,16 @@ public class Weapon : Item
         if (_reloadTimer > 0f)
         {
             _reloadTimer -= Time.deltaTime;
+
+            // Same lead as the draw's, and only on the step that ends the reload -- a
+            // shotgun feeding shells would otherwise seat itself once per round. Which step
+            // that is has to be asked BEFORE the round goes in, which is exactly when this
+            // runs; CompleteReloadStep asks the same property for the same reason.
+            if (!_reloadShoulderingFired && _reloadTimer <= reloadShoulderingLead && IsFinalReloadStep)
+            {
+                _reloadShoulderingFired = true;
+                handMotion?.TriggerShouldering();
+            }
 
             if (_reloadTimer <= 0f)
                 CompleteReloadStep();
@@ -711,6 +766,20 @@ public class Weapon : Item
                 _isInWalkPose = IsCharacterInWalkPose;
             }
 
+            // Leaving the walking carry only, never settling into it. The two are not the
+            // same event despite being the same transition: the weapon eases INTO the walk
+            // pose over walkTransitionSpeed, slowly enough that there is no moment for a
+            // jolt to belong to, and comes OUT of it the instant something takes priority
+            // -- a shot, a sprint, the sights going up -- at the far quicker rate those
+            // poses use. That instant is the grip being re-taken.
+            if (_isInWalkPose != _wasInWalkPose)
+            {
+                _wasInWalkPose = _isInWalkPose;
+
+                if (!_isInWalkPose)
+                    handMotion?.TriggerShouldering();
+            }
+
             // WHICH CARRY THIS IS, for the depth of field to soften the item in.
             //
             // Pushed from here rather than measured from movement, and that distinction is
@@ -784,7 +853,8 @@ public class Weapon : Item
             // over peekSpeed and already scaled back by how far the view is pitched,
             // so this follows a curve that has been shaped twice already rather than
             // filtering a filter.
-            float peekAmount = playerLook != null ? Mathf.Abs(playerLook.PeekAmount) : 0f;
+            float signedPeek = playerLook != null ? playerLook.PeekAmount : 0f;
+            float peekAmount = Mathf.Abs(signedPeek);
 
             // The hands' impulses -- a footfall, a jump, a landing -- ride on top of the
             // pose for the same reason the leans below do: they are motion about wherever
@@ -804,16 +874,41 @@ public class Weapon : Item
             Vector3 impulseShake = Vector3.zero;
 
             if (handMotion != null)
-                impulseShake = handMotion.ImpulseShake + handMotion.Tremor;
+            {
+                // The shouldering pull joins them here rather than at the hold for the
+                // reason the tremor does: a weapon drawn back against the shoulder retreats
+                // along its own line. Translated at the hold it would drag the hold and
+                // everything under it, which is the arm moving rather than the gun settling.
+                impulseShake = handMotion.ImpulseShake + handMotion.Tremor
+                    + handMotion.ShoulderingOffset;
+            }
 
             // Back along the weapon's own forward, which is what makes this a recoil
             // rather than a slide: the pivot's local Z is the barrel, so the gun retreats
             // down its own line whatever angle it is being held at.
             impulseShake += Vector3.forward * _kickBackOffset;
 
+            // THE PEEK IS A POSE, NOT AN OFFSET, and that is the whole of what it means for
+            // the figures to be absolute.
+            //
+            // It used to be added on top: the pose's rotation times the peek's. Which meant a
+            // peek could only ever turn the weapon FURTHER, and a peek figure of zero on an
+            // axis left whatever the hip or the walk pose had put there -- so leaning out of a
+            // hip pose with pitch and yaw in it kept that pitch and yaw, and there was no way
+            // to ask for a lean that straightened the weapon out. An additive layer cannot
+            // express "and none of that", only "and a bit more".
+            //
+            // Blended like the wall block instead, and for the same reason that one is: a
+            // lean is a HOLD, not a nudge. The weapon is brought in against the body, and
+            // where it ends up is where it ends up, not wherever it happened to be plus a
+            // delta. Zero on an axis now means zero on that axis.
+            //
+            // Before the wall block, so the wall still wins: a barrel against a wall is
+            // physical and a lean is a choice.
+            Vector3 posePosition = Vector3.Lerp(_currentAdsPosition, peekPosition, peekAmount);
+
             posDeltaPivot.localPosition =
-                Vector3.Lerp(_currentAdsPosition, wallBlockPosition, _wallBlockAmount)
-                + peekOffset * peekAmount
+                Vector3.Lerp(posePosition, wallBlockPosition, _wallBlockAmount)
                 + impulseShake;
 
             // The two leans -- into a turn, and out past a corner -- composed on top
@@ -828,13 +923,22 @@ public class Weapon : Item
             // The impulse roll joins them on Z, and it belongs in exactly this company:
             // rolls from several causes, none of which should be swinging the weapon
             // around the hold point in an arc.
+            // NOTHING FROM THE PEEK IN HERE ANY MORE -- it is in the pose above. What is left
+            // is the layers that genuinely are additive: things happening TO the weapon
+            // wherever the pose put it.
             Vector3 leanRotation = Vector3.zero;
+
             if (handMotion != null)
             {
-                // The tremor comes in on all three axes, unlike everything else summed
-                // here: a lean has a direction and a tremor does not.
-                leanRotation = handMotion.PeekRotation + handMotion.TremorRotation
-                    + handMotion.BobYawRoll;
+                // NO PEEK ANGLE FROM HERE EITHER. HandMotion used to contribute one of its own,
+                // a shared cant for every item, and it is gone: a weapon then got two opinions
+                // about how far a lean turns it, one of them tuned on the character and
+                // reaching every item whether it suited them or not.
+                //
+                // The tremor and the shouldering come in on all three axes, unlike the leans
+                // summed here: a lean has a direction, and neither of those does.
+                leanRotation += handMotion.TremorRotation
+                    + handMotion.BobYawRoll + handMotion.ShoulderingRotation;
 
                 // The turn's lag, in pitch and yaw. The hold has already carried the
                 // weapon across on its own sway; this is the weapon finishing the turn
@@ -851,8 +955,23 @@ public class Weapon : Item
             leanRotation.x += _kickRiseOffset;
             leanRotation.z += _kickRollOffset;
 
+            // The peek blended in the same order the position is, so the two halves of one
+            // pose cannot arrive at different times.
+            //
+            // Z IS THE ONE AXIS THE LEAN'S DIRECTION REACHES. X and Y are the same pose
+            // whichever side is being leaned to -- a barrel pulled in to clear a corner is
+            // pitched and yawed the same way either way round, and mirroring them would send
+            // it out into the wall on one of the two. A cant has a side, so Z flips.
+            Vector3 peekPoseRotation = new Vector3(
+                peekRotation.x,
+                peekRotation.y,
+                signedPeek < 0f ? -peekRotation.z : peekRotation.z);
+
+            Quaternion poseRotation = Quaternion.Slerp(
+                _currentAdsRotation, Quaternion.Euler(peekPoseRotation), peekAmount);
+
             posDeltaPivot.localRotation =
-                Quaternion.Slerp(_currentAdsRotation, Quaternion.Euler(wallBlockRotation), _wallBlockAmount)
+                Quaternion.Slerp(poseRotation, Quaternion.Euler(wallBlockRotation), _wallBlockAmount)
                 * Quaternion.Euler(leanRotation);
         }
     }
@@ -992,11 +1111,21 @@ public class Weapon : Item
     // shotgun's feed loop would never end.
     private bool HasRoomToReload => _loadedAmmo < magazineCapacity;
 
+    // Whether the step currently running is the last one of this reload.
+    //
+    // Asked before the round goes in, which is what makes it answerable: a magazine reload is
+    // always its own last step, and a shell feed is on its last when the round about to be
+    // seated fills the tube or somebody has cut in. Both the lead trigger and
+    // CompleteReloadStep read it, so the two cannot disagree about which step is final.
+    private bool IsFinalReloadStep =>
+        !FeedsSingleShells || _feedInterrupted || _loadedAmmo + 1 >= magazineCapacity;
+
     private void BeginReloadStep()
     {
         SetTriggerIfPresent(reloadTrigger);
         _reloadTimer = GetClipLength(reloadTrigger);
         _isFeedingShells = FeedsSingleShells;
+        _reloadShoulderingFired = false;
 
         // No clip to wait on -- finish on the spot rather than leaving a shotgun
         // asking for a round it will never be given.
@@ -1006,6 +1135,12 @@ public class Weapon : Item
 
     private void CompleteReloadStep()
     {
+        // Asked before the ammo changes, because that is the only point the question has an
+        // answer -- afterwards the round is in and there is nothing left to predict. The
+        // lead trigger reads the same property, so neither can decide a different step was
+        // the last one.
+        bool finalStep = IsFinalReloadStep;
+
         // A shotgun takes one round, everything else takes a full magazine. That is
         // the entire difference between the two reloads: one is a gesture repeated
         // until the tube is full, the other is a gesture that fills it.
@@ -1016,7 +1151,17 @@ public class Weapon : Item
         // Asks for the next one only while there is still room and nobody has cut in.
         // The interruption is checked here rather than acted on the moment it
         // arrives, which is what lets the round already going in finish going in.
-        _isFeedingShells = FeedsSingleShells && HasRoomToReload && !_feedInterrupted;
+        _isFeedingShells = !finalStep;
+
+        // The re-seat has usually already fired by now, reloadShoulderingLead before this
+        // frame. This is the fallback for the one case that skips the countdown entirely: a
+        // weapon whose reload trigger has no clip, where BeginReloadStep finishes on the spot
+        // and there was never a lead to lead.
+        if (finalStep && !_reloadShoulderingFired)
+        {
+            _reloadShoulderingFired = true;
+            handMotion?.TriggerShouldering();
+        }
     }
 
     // Every trigger this weapon's controller actually declares, cached because
@@ -1106,6 +1251,11 @@ public class Weapon : Item
         {
             Vector3 direction = ApplySpread(aimRay.direction);
 
+            // Where the round ended up, whether or not it found anything. Seeded with the
+            // far end of the trace rather than read back off the hit, because the trail
+            // below wants an answer on a miss too and a miss has no hit to read.
+            Vector3 impactPoint = aimRay.origin + direction * maxRange;
+
             // Not ~0. Two things have to be skipped, and GameLayers is where the
             // project agrees on them: a character's movement capsule, which wraps the
             // whole body and would otherwise sit in front of every per-bone hitbox
@@ -1118,9 +1268,13 @@ public class Weapon : Item
             // invisible door interaction zone or fog volume instead of the wall
             // behind it. Passed per-call rather than switching the project setting,
             // because the interaction raycasts elsewhere DO want to find triggers.
-            if (Physics.Raycast(aimRay.origin, direction, out RaycastHit hit, maxRange,
-                    GameLayers.Queryable, QueryTriggerInteraction.Ignore))
+            bool hitSomething = Physics.Raycast(aimRay.origin, direction, out RaycastHit hit,
+                maxRange, GameLayers.Queryable, QueryTriggerInteraction.Ignore);
+
+            if (hitSomething)
             {
+                impactPoint = hit.point;
+
                 SpawnImpactEffect(hit);
                 SpawnHitMarker(hit);
 
@@ -1129,6 +1283,20 @@ public class Weapon : Item
                 // the hitbox's own ceiling is what stops that becoming absurd.
                 hit.collider.GetComponent<EnemyHitbox>()?.ApplyImpact(direction, impactForce);
             }
+
+            // AFTER the shot has been resolved in full, and only ever told about it.
+            //
+            // The round is the raycast above and nothing else: it is instantaneous, it
+            // decided what was hit, and it has already finished. This hands the visual
+            // system two points and a yes or no. It cannot cast, cannot block and cannot
+            // reach what was hit -- the bool is why it does not need to, and why it gets
+            // a bool rather than the hit. A streak that is late, or switched off, changes
+            // what the player sees and nothing about the shot. See BulletTrailSystem for
+            // why that separation is worth keeping.
+            //
+            // Per pellet, like the impact: a shotgun's pattern is the thing worth seeing,
+            // and one streak up the middle of a spread reads as a rifle.
+            BulletTrailSystem.Instance?.Report(aimRay.origin, impactPoint, hitSomething);
         }
     }
 
